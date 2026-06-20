@@ -394,14 +394,7 @@ export function updateHumans(
       }
 
       if (currentActionState !== 'sitting' && currentActionState !== 'punching' && currentActionState !== 'kicking') {
-        // Rotate camera horizontally when moving left/right
-        const rotationSpeed = 1.8;
-        if (keysPressed['a'] || keysPressed['arrowleft']) {
-          ctx.controls.rotateLeft(rotationSpeed * delta);
-        }
-        if (keysPressed['d'] || keysPressed['arrowright']) {
-          ctx.controls.rotateLeft(-rotationSpeed * delta);
-        }
+
 
         // Camera-relative movement
         const camDir = new THREE.Vector3();
@@ -486,6 +479,14 @@ export function updateHumans(
       // Camera target follow Y=0
       const targetPos = new THREE.Vector3(h.mesh.position.x, 0, h.mesh.position.z);
       ctx.controls.target.copy(targetPos);
+
+      // Camera position follow (X and Z only)
+      if (syncStates.lastPlayerPosition) {
+        const deltaPos = new THREE.Vector3().copy(h.mesh.position).sub(syncStates.lastPlayerPosition);
+        deltaPos.y = 0; // Keep camera height independent of character jumps/vertical movement
+        ctx.camera.position.add(deltaPos);
+        syncStates.lastPlayerPosition.copy(h.mesh.position);
+      }
 
       // Periodic database sync
       syncStates.positionSyncTimer -= delta;

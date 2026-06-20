@@ -739,7 +739,7 @@ export class ThreeCity {
       targetCellZ: cellZ,
       path: [],
       pathIndex: 0,
-      speed: 3.5,
+      speed: 4.5,
       bounceTimer: 0,
       workTimer: 0,
       jobCellX: null,
@@ -761,11 +761,15 @@ export class ThreeCity {
     this.humans.push(playerAgent);
     this.player = playerAgent;
 
+    // Position camera at a beautiful diagonal perspective relative to player
+    this.camera.position.set(worldX + 25, 20, worldZ + 25);
+    this.controls.target.set(worldX, 0, worldZ);
+    this.controls.update();
+
     this.lastSyncedPosition.copy(humanGroup.position);
     this.lastPlayerPosition = new THREE.Vector3().copy(humanGroup.position);
 
-    this.controls.enableRotate = true;
-    (this.controls.mouseButtons as any).LEFT = -1;
+    this.updateCameraControls();
 
     this.audio.playSpawn();
 
@@ -1210,6 +1214,16 @@ export class ThreeCity {
       this.player.actionState = "idle";
       this.spawnParticle(foundCell.x, foundCell.z, "#00ff00", 10);
       this.audio.playSpawn();
+    }
+  }
+
+  public updateCameraControls() {
+    if (!this.controls) return;
+    this.controls.enableRotate = true;
+    if (this.isAdmin && this.buildMode) {
+      (this.controls.mouseButtons as any).LEFT = -1;
+    } else {
+      (this.controls.mouseButtons as any).LEFT = THREE.MOUSE.ROTATE;
     }
   }
 

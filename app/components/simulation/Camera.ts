@@ -40,24 +40,7 @@ export class CameraManager {
   }
 
   public rotateCameraOnHover(event: PointerEvent, playerExists: boolean, buildMode: any, isAdmin: boolean) {
-    const canRotateCamera = playerExists && (!isAdmin || !buildMode);
-    if (canRotateCamera) {
-      if (this.prevClientX !== null && this.prevClientY !== null) {
-        const movementX = event.clientX - this.prevClientX;
-        const movementY = event.clientY - this.prevClientY;
-
-        if (Math.abs(movementX) < 100 && Math.abs(movementY) < 100) {
-          const sensitivity = 0.0025;
-          this.controls.rotateLeft(-movementX * sensitivity);
-          this.controls.rotateUp(-movementY * sensitivity);
-        }
-      }
-      this.prevClientX = event.clientX;
-      this.prevClientY = event.clientY;
-    } else {
-      this.prevClientX = null;
-      this.prevClientY = null;
-    }
+    // Disabled hover rotation for a more natural click-and-drag control scheme
   }
 
   public resetPrevMouse() {

@@ -277,6 +277,7 @@ export default function CitySimulator() {
     setBuildMode(mode);
     if (cityRef.current) {
       cityRef.current.buildMode = mode;
+      cityRef.current.updateCameraControls();
     }
   };
 

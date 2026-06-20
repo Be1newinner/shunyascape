@@ -164,26 +164,28 @@ export default function CitySimulator() {
 
   // Poll database to synchronize other users' coordinates and registrations
   useEffect(() => {
-    if (!hasSpawned || !currentUser) return;
-
     const fetchUsers = async () => {
       try {
         const res = await fetch('/api/users');
         if (res.status === 401) {
-          window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+          if (currentUser) {
+            window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+          }
           return;
         }
         const data = await res.json();
         if (res.ok && cityRef.current) {
-          cityRef.current.loadAllDatabaseUsers(data.users, currentUser.email);
+          const playerEmail = currentUser?.email || '';
+          cityRef.current.loadAllDatabaseUsers(data.users, playerEmail);
 
           // Synchronize global environment settings from DB
           if (data.settings) {
             const { timeOfDay: dbTime, timeSpeed: dbSpeed, isPlaying: dbPlaying } = data.settings;
             
             // Only update if there is a substantial difference or not admin
+            const isAdmin = currentUser?.role === 'admin';
             const isDifferent = Math.abs(cityRef.current.timeOfDay - dbTime) > 0.5 || isPlaying !== dbPlaying;
-            if (currentUser.role !== 'admin' || isDifferent) {
+            if (!isAdmin || isDifferent) {
               cityRef.current.timeOfDay = dbTime;
               cityRef.current.timeSpeed = dbPlaying ? dbSpeed : 0.0;
               setTimeOfDay(dbTime);
@@ -196,7 +198,9 @@ export default function CitySimulator() {
         // Synchronize grid cells
         const gridRes = await fetch('/api/grid');
         if (gridRes.status === 401) {
-          window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+          if (currentUser) {
+            window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+          }
           return;
         }
         const gridData = await gridRes.json();
@@ -207,12 +211,15 @@ export default function CitySimulator() {
         // Synchronize NPCs
         const npcsRes = await fetch('/api/npcs');
         if (npcsRes.status === 401) {
-          window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+          if (currentUser) {
+            window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+          }
           return;
         }
         const npcsData = await npcsRes.json();
         if (npcsRes.ok && cityRef.current && npcsData.npcs) {
-          cityRef.current.syncNpcs(npcsData.npcs, currentUser.role === 'admin');
+          const isAdmin = currentUser?.role === 'admin';
+          cityRef.current.syncNpcs(npcsData.npcs, isAdmin);
         }
       } catch (err) {
         console.error('Failed to sync other users, settings, grid, and NPCs:', err);
@@ -222,7 +229,7 @@ export default function CitySimulator() {
     fetchUsers();
     const interval = setInterval(fetchUsers, 4000);
     return () => clearInterval(interval);
-  }, [hasSpawned, currentUser, isPlaying]);
+  }, [currentUser, isPlaying]);
 
   // Initialize Simulation Engine
   useEffect(() => {
@@ -428,125 +435,123 @@ export default function CitySimulator() {
           )}
 
           {/* Time & Environment Controller */}
-          {hasSpawned && currentUser && (
-            currentUser.role === 'admin' ? (
-              <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 flex flex-col gap-3 w-64 text-left">
-                {/* Clock & Sun icon */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {timeOfDay >= 6 && timeOfDay < 18 ? (
-                      <Sun className="w-5 h-5 text-amber-400 animate-spin-slow" />
-                    ) : (
-                      <Moon className="w-5 h-5 text-indigo-400" />
-                    )}
-                    <span className="text-sm font-bold">{formatTime(timeOfDay)}</span>
-                  </div>
-                  
-                  {/* Play / Pause time */}
-                  <div className="flex items-center gap-1">
-                    <button 
-                      onClick={handleTogglePlay}
-                      className={`p-1.5 rounded-lg border transition-all ${
-                        isPlaying 
-                          ? 'bg-sky-500/20 border-sky-400/40 text-sky-300 hover:bg-sky-500/30' 
-                          : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
-                      }`}
-                      title={isPlaying ? "Pause Cycle" : "Play Cycle"}
-                    >
-                      {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                    </button>
-
-                    <button 
-                      onClick={handleToggleSound}
-                      className={`p-1.5 rounded-lg border transition-all ${
-                        soundEnabled 
-                          ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300 hover:bg-emerald-500/30' 
-                          : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
-                      }`}
-                      title={soundEnabled ? "Mute Sounds" : "Unmute Sounds"}
-                    >
-                      {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Time of Day Slider */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex justify-between text-[10px] text-slate-400 font-medium">
-                    <span>Time of Day</span>
-                    <span>{Math.floor(timeOfDay)}:00</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="0" 
-                    max="23.9" 
-                    step="0.1"
-                    value={timeOfDay}
-                    onChange={handleTimeChange}
-                    className="w-full h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-sky-400"
-                  />
-                </div>
-
-                {/* Speed slider */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex justify-between text-[10px] text-slate-400 font-medium">
-                    <span>Day Cycle Speed</span>
-                    <span>{isPlaying ? `${timeSpeed.toFixed(1)}x` : 'Paused'}</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="0.1" 
-                    max="3.0" 
-                    step="0.1"
-                    value={timeSpeed}
-                    onChange={handleSpeedChange}
-                    disabled={!isPlaying}
-                    className="w-full h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-sky-400 disabled:opacity-30"
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-3 flex items-center justify-between gap-4 w-44">
+          {currentUser?.role === 'admin' ? (
+            <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 flex flex-col gap-3 w-64 text-left">
+              {/* Clock & Sun icon */}
+              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   {timeOfDay >= 6 && timeOfDay < 18 ? (
-                    <Sun className="w-4 h-4 text-amber-400 animate-spin-slow" />
+                    <Sun className="w-5 h-5 text-amber-400 animate-spin-slow" />
                   ) : (
-                    <Moon className="w-4 h-4 text-indigo-400" />
+                    <Moon className="w-5 h-5 text-indigo-400" />
                   )}
-                  <span className="text-xs font-bold">{formatTime(timeOfDay)}</span>
+                  <span className="text-sm font-bold">{formatTime(timeOfDay)}</span>
                 </div>
-                <button 
-                  onClick={handleToggleSound}
-                  className={`p-1.5 rounded-lg border transition-all ${
-                    soundEnabled 
-                      ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300 hover:bg-emerald-500/30' 
-                      : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
-                  }`}
-                  title={soundEnabled ? "Mute Sounds" : "Unmute Sounds"}
-                >
-                  {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                </button>
+                
+                {/* Play / Pause time */}
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={handleTogglePlay}
+                    className={`p-1.5 rounded-lg border transition-all ${
+                      isPlaying 
+                        ? 'bg-sky-500/20 border-sky-400/40 text-sky-300 hover:bg-sky-500/30' 
+                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                    }`}
+                    title={isPlaying ? "Pause Cycle" : "Play Cycle"}
+                  >
+                    {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                  </button>
+
+                  <button 
+                    onClick={handleToggleSound}
+                    className={`p-1.5 rounded-lg border transition-all ${
+                      soundEnabled 
+                        ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300 hover:bg-emerald-500/30' 
+                        : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
+                    }`}
+                    title={soundEnabled ? "Mute Sounds" : "Unmute Sounds"}
+                  >
+                    {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
-            )
+
+              {/* Time of Day Slider */}
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] text-slate-400 font-medium">
+                  <span>Time of Day</span>
+                  <span>{Math.floor(timeOfDay)}:00</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="23.9" 
+                  step="0.1"
+                  value={timeOfDay}
+                  onChange={handleTimeChange}
+                  className="w-full h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-sky-400"
+                />
+              </div>
+
+              {/* Speed slider */}
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] text-slate-400 font-medium">
+                  <span>Day Cycle Speed</span>
+                  <span>{isPlaying ? `${timeSpeed.toFixed(1)}x` : 'Paused'}</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="0.1" 
+                  max="3.0" 
+                  step="0.1"
+                  value={timeSpeed}
+                  onChange={handleSpeedChange}
+                  disabled={!isPlaying}
+                  className="w-full h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-sky-400 disabled:opacity-30"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-3 flex items-center justify-between gap-4 w-44">
+              <div className="flex items-center gap-2">
+                {timeOfDay >= 6 && timeOfDay < 18 ? (
+                  <Sun className="w-4 h-4 text-amber-400 animate-spin-slow" />
+                ) : (
+                  <Moon className="w-4 h-4 text-indigo-400" />
+                )}
+                <span className="text-xs font-bold">{formatTime(timeOfDay)}</span>
+              </div>
+              <button 
+                onClick={handleToggleSound}
+                className={`p-1.5 rounded-lg border transition-all ${
+                  soundEnabled 
+                    ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300 hover:bg-emerald-500/30' 
+                    : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
+                }`}
+                title={soundEnabled ? "Mute Sounds" : "Unmute Sounds"}
+              >
+                {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           )}
         </div>
 
       </div>
 
       {/* Bottom Interface: Tool Drawer & Quick Instructions */}
-      {currentUser?.role === 'admin' && (
-        <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none z-10">
-          
-          {/* Instructions Banner */}
-          <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/40 rounded-xl px-4 py-2 flex items-center gap-4 text-xs text-slate-300 shadow-xl max-w-lg pointer-events-auto">
-            <div className="flex items-center gap-1.5">
-              <Compass className="w-3.5 h-3.5 text-sky-400 animate-spin-slow" />
-              <span className="font-semibold text-slate-200">3D Navigation:</span>
-            </div>
-            <span>Drag Left-Click to rotate | Drag Right-Click to pan | Scroll to zoom</span>
+      <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none z-10">
+        
+        {/* Instructions Banner */}
+        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/40 rounded-xl px-4 py-2 flex items-center gap-4 text-xs text-slate-300 shadow-xl max-w-lg pointer-events-auto">
+          <div className="flex items-center gap-1.5">
+            <Compass className="w-3.5 h-3.5 text-sky-400 animate-spin-slow" />
+            <span className="font-semibold text-slate-200">3D Navigation:</span>
           </div>
+          <span>Drag Left-Click to rotate | Drag Right-Click to pan | Scroll to zoom</span>
+        </div>
 
-          {/* Construction Tool Selector Drawer */}
+        {/* Construction Tool Selector Drawer */}
+        {currentUser?.role === 'admin' && hasSpawned && (
           <div className="bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-2xl p-3 flex items-center gap-2 pointer-events-auto max-w-full overflow-x-auto">
             
             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest px-3 border-r border-slate-800 hidden sm:inline-block">
@@ -634,8 +639,8 @@ export default function CitySimulator() {
             </button>
 
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Onboarding Login / Register Modal */}
       {!hasSpawned && showAuthModal && (

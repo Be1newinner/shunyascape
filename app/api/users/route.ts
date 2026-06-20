@@ -9,10 +9,8 @@ export async function GET() {
     await connectDB();
 
     const authResult = await getAuthenticatedUser();
-    if (!authResult) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const { user: authenticatedUser, newAccessToken } = authResult;
+    const authenticatedUser = authResult?.user || null;
+    const newAccessToken = authResult?.newAccessToken || null;
 
     // Fetch all users, omitting their hashed passwords
     const users = await User.find({}, { password: 0 }).sort({ createdAt: -1 });

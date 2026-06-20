@@ -42,6 +42,17 @@ interface HumanAgent {
   jobCellX: number | null;
   jobCellZ: number | null;
   clothingColor: number;
+  isPlayer?: boolean;
+  playerName?: string;
+  playerEmail?: string;
+  upperBody?: THREE.Group;
+  leftLegPivot?: THREE.Group;
+  rightLegPivot?: THREE.Group;
+  leftArmPivot?: THREE.Group;
+  rightArmPivot?: THREE.Group;
+  actionState?: 'idle' | 'walking' | 'jumping' | 'punching' | 'kicking' | 'sitting';
+  actionTimer?: number;
+  jumpVelocity?: number;
 }
 
 interface VehicleAgent {
@@ -186,6 +197,70 @@ class CityAudio {
     osc2.stop(this.ctx.currentTime + 0.15);
   }
 
+  playPunch() {
+    if (!this.enabled || !this.ctx) return;
+    this.resume();
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.15);
+
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.15);
+  }
+
+  playKick() {
+    if (!this.enabled || !this.ctx) return;
+    this.resume();
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(100, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(20, this.ctx.currentTime + 0.2);
+
+    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.25);
+
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.25);
+  }
+
+  playSpawn() {
+    if (!this.enabled || !this.ctx) return;
+    this.resume();
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(200, this.ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(800, this.ctx.currentTime + 0.4);
+
+    gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.1, this.ctx.currentTime + 0.2);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.4);
+  }
+
   private resume() {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
@@ -229,6 +304,8 @@ export class ThreeCity {
   public audio = new CityAudio();
   private onStatsChange: (stats: CityStats) => void;
   private isDestroyed = false;
+  public isAdmin = false;
+  private npcSyncTimer = 1.0;
 
   // Agents & Animations
   private humans: HumanAgent[] = [];
@@ -236,6 +313,16 @@ export class ThreeCity {
   private particles: Particle[] = [];
   private animationFrameId: number | null = null;
   private clock = new THREE.Clock();
+
+  // Player Controls
+  public player: HumanAgent | null = null;
+  private keysPressed: { [key: string]: boolean } = {};
+  private hasKeyboardListeners = false;
+  private lastSyncedPosition = new THREE.Vector3();
+  private positionSyncTimer = 0.5;
+  private lastPlayerPosition: THREE.Vector3 | null = null;
+  private prevClientX: number | null = null;
+  private prevClientY: number | null = null;
 
   // Materials & Geometries caching
   private materialsCache: { [key: string]: THREE.Material } = {};
@@ -300,6 +387,11 @@ export class ThreeCity {
     this.controls.minDistance = 5;
     this.controls.maxDistance = 150;
     this.controls.target.set(0, 0, 0);
+    this.controls.mouseButtons = {
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.PAN
+    };
 
     // Lights
     this.ambientLight = new THREE.AmbientLight('#ffffff', 0.4);
@@ -510,6 +602,27 @@ export class ThreeCity {
   }
 
   private onPointerMove = (event: PointerEvent) => {
+    // Camera rotation on mouse move without clicking (when not in build/demolish mode)
+    const canRotateCamera = this.player && (!this.isAdmin || !this.buildMode);
+    if (canRotateCamera) {
+      if (this.prevClientX !== null && this.prevClientY !== null) {
+        const movementX = event.clientX - this.prevClientX;
+        const movementY = event.clientY - this.prevClientY;
+
+        // Capping huge jumps (e.g. if focus was lost)
+        if (Math.abs(movementX) < 100 && Math.abs(movementY) < 100) {
+          const sensitivity = 0.0025;
+          this.controls.rotateLeft(-movementX * sensitivity);
+          this.controls.rotateUp(-movementY * sensitivity);
+        }
+      }
+      this.prevClientX = event.clientX;
+      this.prevClientY = event.clientY;
+    } else {
+      this.prevClientX = null;
+      this.prevClientY = null;
+    }
+
     // Get mouse position relative to canvas container
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -518,7 +631,7 @@ export class ThreeCity {
     this.raycaster.setFromCamera(this.mouse, this.camera);
     const intersects = this.raycaster.intersectObject(this.gridPlane);
 
-    if (intersects.length > 0 && this.buildMode) {
+    if (intersects.length > 0 && this.buildMode && this.isAdmin) {
       const point = intersects[0].point;
       const halfGrid = (this.gridSize * this.cellSize) / 2;
 
@@ -568,6 +681,8 @@ export class ThreeCity {
   private onPointerLeave = () => {
     this.buildPreview.visible = false;
     this.currentHoverCell = null;
+    this.prevClientX = null;
+    this.prevClientY = null;
   };
 
   // Immediate placements on initial generation
@@ -618,6 +733,23 @@ export class ThreeCity {
     // Alert human workers to come build it!
     this.dispatchWorkerTo(x, z);
     this.updateStats();
+
+    // Persist to database if we are admin
+    if (this.isAdmin && this.player && this.player.playerEmail) {
+      fetch('/api/grid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requesterEmail: this.player.playerEmail,
+          x,
+          z,
+          type: 'construction',
+          targetType: type,
+          constructionProgress: 0,
+          height: cell.height
+        })
+      }).catch(err => console.error('Failed to save grid construction:', err));
+    }
   }
 
   private demolishCell(x: number, z: number) {
@@ -654,6 +786,23 @@ export class ThreeCity {
     });
 
     this.updateStats();
+
+    // Persist to database if we are admin
+    if (this.isAdmin && this.player && this.player.playerEmail) {
+      fetch('/api/grid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requesterEmail: this.player.playerEmail,
+          x,
+          z,
+          type: 'empty',
+          targetType: 'empty',
+          constructionProgress: 0,
+          height: 0
+        })
+      }).catch(err => console.error('Failed to save grid demolition:', err));
+    }
   }
 
   private createMeshForType(type: 'road' | 'tree' | 'house' | 'skyscraper', x: number, z: number): THREE.Group {
@@ -1032,8 +1181,473 @@ export class ThreeCity {
   }
 
   // Human Simulation Logic
+  private createRefinedHumanMesh(
+    clothingColor: number,
+    isPlayer: boolean,
+    agent: Partial<HumanAgent>
+  ): THREE.Group {
+    const group = new THREE.Group();
+
+    // Skin Tone
+    const skinTone = ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524'][Math.floor(Math.random() * 5)];
+    const skinMat = this.getMaterial(`skin_${skinTone}`, { color: skinTone, roughness: 0.85 });
+
+    // Pants Color
+    const pantsColor = isPlayer ? '#111111' : ['#2b2b2b', '#1a2a3a', '#444444'][Math.floor(Math.random() * 3)];
+    const pantsMat = this.getMaterial(`pants_${pantsColor}`, { color: pantsColor, roughness: 0.9 });
+
+    // Shoes Color
+    const shoeMat = this.getMaterial('shoes_black', { color: '#111111', roughness: 0.95 });
+
+    // Hair Color
+    const hairColor = ['#1a1a1a', '#4a2f13', '#d9a752', '#b83b1d'][Math.floor(Math.random() * 4)];
+    const hairMat = this.getMaterial(`hair_${hairColor}`, { color: hairColor, roughness: 0.9, flatShading: true });
+
+    // Eye Material
+    const eyeMat = this.getMaterial('eye_black', { color: '#000000', roughness: 0.1 });
+    const mouthMat = this.getMaterial('mouth_pink', { color: '#e57373', roughness: 0.9 });
+
+    // Left Leg
+    const leftLegPivot = new THREE.Group();
+    leftLegPivot.position.set(-0.07, 0.24, 0);
+    const legGeom = this.getGeometry('limb_leg', () => new THREE.BoxGeometry(0.08, 0.24, 0.08));
+    const leftLeg = new THREE.Mesh(legGeom, pantsMat);
+    leftLeg.position.y = -0.12;
+    leftLeg.castShadow = true;
+    leftLegPivot.add(leftLeg);
+    
+    // Shoe to left leg
+    const shoeGeom = this.getGeometry('limb_shoe', () => new THREE.BoxGeometry(0.09, 0.04, 0.12));
+    const leftShoe = new THREE.Mesh(shoeGeom, shoeMat);
+    leftShoe.position.set(0, -0.24 + 0.02, 0.02);
+    leftShoe.castShadow = true;
+    leftLegPivot.add(leftShoe);
+
+    group.add(leftLegPivot);
+    agent.leftLegPivot = leftLegPivot;
+
+    // Right Leg
+    const rightLegPivot = new THREE.Group();
+    rightLegPivot.position.set(0.07, 0.24, 0);
+    const rightLeg = new THREE.Mesh(legGeom, pantsMat);
+    rightLeg.position.y = -0.12;
+    rightLeg.castShadow = true;
+    rightLegPivot.add(rightLeg);
+
+    // Shoe to right leg
+    const rightShoe = new THREE.Mesh(shoeGeom, shoeMat);
+    rightShoe.position.set(0, -0.24 + 0.02, 0.02);
+    rightShoe.castShadow = true;
+    rightLegPivot.add(rightShoe);
+
+    group.add(rightLegPivot);
+    agent.rightLegPivot = rightLegPivot;
+
+    // Upper Body Group
+    const upperBody = new THREE.Group();
+    upperBody.position.set(0, 0.24, 0);
+    group.add(upperBody);
+    agent.upperBody = upperBody;
+
+    // Torso
+    const torsoGeom = this.getGeometry('torso_box', () => new THREE.BoxGeometry(0.24, 0.32, 0.16));
+    const torsoMat = this.getMaterial(`shirt_${clothingColor}`, { color: clothingColor, roughness: 0.8 });
+    const torso = new THREE.Mesh(torsoGeom, torsoMat);
+    torso.position.y = 0.16;
+    torso.castShadow = true;
+    torso.receiveShadow = true;
+    upperBody.add(torso);
+
+    // Head
+    const headGeom = this.getGeometry('head_box', () => new THREE.BoxGeometry(0.18, 0.18, 0.18));
+    const head = new THREE.Mesh(headGeom, skinMat);
+    head.position.set(0, 0.41, 0);
+    head.castShadow = true;
+    upperBody.add(head);
+
+    // Eyes
+    const eyeGeom = this.getGeometry('eye_box', () => new THREE.BoxGeometry(0.03, 0.03, 0.015));
+    const leftEye = new THREE.Mesh(eyeGeom, eyeMat);
+    leftEye.position.set(-0.045, 0.03, 0.091);
+    head.add(leftEye);
+
+    const rightEye = new THREE.Mesh(eyeGeom, eyeMat);
+    rightEye.position.set(0.045, 0.03, 0.091);
+    head.add(rightEye);
+
+    // Nose
+    const noseGeom = this.getGeometry('nose_box', () => new THREE.BoxGeometry(0.025, 0.04, 0.025));
+    const nose = new THREE.Mesh(noseGeom, skinMat);
+    nose.position.set(0, -0.01, 0.095);
+    head.add(nose);
+
+    // Mouth
+    const mouthGeom = this.getGeometry('mouth_box', () => new THREE.BoxGeometry(0.05, 0.015, 0.01));
+    const mouth = new THREE.Mesh(mouthGeom, mouthMat);
+    mouth.position.set(0, -0.045, 0.091);
+    head.add(mouth);
+
+    // Hair
+    const hairGeom = this.getGeometry('hair_box', () => new THREE.BoxGeometry(0.19, 0.1, 0.19));
+    const hairMain = new THREE.Mesh(hairGeom, hairMat);
+    hairMain.position.set(0, 0.06, 0);
+    head.add(hairMain);
+
+    const hairBackGeom = this.getGeometry('hair_back_box', () => new THREE.BoxGeometry(0.19, 0.14, 0.08));
+    const hairBack = new THREE.Mesh(hairBackGeom, hairMat);
+    hairBack.position.set(0, 0.01, -0.055);
+    head.add(hairBack);
+
+    // Special crown for player
+    if (isPlayer) {
+      const crownMat = this.getMaterial('crown_gold', { color: '#ffbd03', metalness: 0.8, roughness: 0.1 });
+      const crownGeom = this.getGeometry('player_crown', () => new THREE.CylinderGeometry(0.1, 0.11, 0.06, 6));
+      const crown = new THREE.Mesh(crownGeom, crownMat);
+      crown.position.set(0, 0.13, 0);
+      head.add(crown);
+    }
+
+    // Left Arm
+    const armGeom = this.getGeometry('limb_arm', () => new THREE.BoxGeometry(0.07, 0.24, 0.07));
+    const leftArmPivot = new THREE.Group();
+    leftArmPivot.position.set(-0.16, 0.24, 0);
+    const leftArm = new THREE.Mesh(armGeom, torsoMat);
+    leftArm.position.y = -0.12;
+    leftArm.castShadow = true;
+    leftArmPivot.add(leftArm);
+
+    const handGeom = this.getGeometry('limb_hand', () => new THREE.BoxGeometry(0.07, 0.05, 0.07));
+    const leftHand = new THREE.Mesh(handGeom, skinMat);
+    leftHand.position.y = -0.24 - 0.025;
+    leftHand.castShadow = true;
+    leftArmPivot.add(leftHand);
+
+    upperBody.add(leftArmPivot);
+    agent.leftArmPivot = leftArmPivot;
+
+    // Right Arm
+    const rightArmPivot = new THREE.Group();
+    rightArmPivot.position.set(0.16, 0.24, 0);
+    const rightArm = new THREE.Mesh(armGeom, torsoMat);
+    rightArm.position.y = -0.12;
+    rightArm.castShadow = true;
+    rightArmPivot.add(rightArm);
+
+    const rightHand = new THREE.Mesh(handGeom, skinMat);
+    rightHand.position.y = -0.24 - 0.025;
+    rightHand.castShadow = true;
+    rightArmPivot.add(rightHand);
+
+    upperBody.add(rightArmPivot);
+    agent.rightArmPivot = rightArmPivot;
+
+    return group;
+  }
+
+  private createNameTag(name: string): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+      ctx.beginPath();
+      const x = 4;
+      const y = 4;
+      const w = 248;
+      const h = 56;
+      const r = 12;
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.font = 'bold 22px "Outfit", sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(name, 128, 32);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: true
+    });
+
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(1.5, 0.375, 1);
+    sprite.position.set(0, 0.9, 0); // floats above character head
+    return sprite;
+  }
+
+  public spawnPlayer(
+    name: string,
+    x: number = 0,
+    z: number = 0,
+    email?: string,
+    clothingColor?: number
+  ) {
+    if (this.isDestroyed) return;
+
+    if (this.player) {
+      this.scene.remove(this.player.mesh);
+      this.humans = this.humans.filter(h => h.id !== this.player!.id);
+      this.player = null;
+    }
+
+    const halfGrid = (this.gridSize * this.cellSize) / 2;
+    let worldX = x;
+    let worldZ = z;
+
+    // Fallback to center if coordinates are uninitialized defaults (0,0)
+    if (x === 0 && z === 0) {
+      const center = Math.floor(this.gridSize / 2);
+      worldX = (center * this.cellSize) - halfGrid + this.cellSize / 2;
+      worldZ = (center * this.cellSize) - halfGrid + this.cellSize / 2;
+    }
+
+    const col = clothingColor ?? 0xff3b30; // distinct player crimson
+
+    const humanGroup = new THREE.Group();
+    // Spawn in the air for a cool drop animation
+    humanGroup.position.set(worldX, 3.5, worldZ);
+
+    const agent: Partial<HumanAgent> = {};
+    const mesh = this.createRefinedHumanMesh(col, true, agent);
+    humanGroup.add(mesh);
+
+    const nameTag = this.createNameTag(name);
+    humanGroup.add(nameTag);
+
+    this.scene.add(humanGroup);
+
+    const cellX = Math.max(0, Math.min(this.gridSize - 1, Math.floor((worldX + halfGrid) / this.cellSize)));
+    const cellZ = Math.max(0, Math.min(this.gridSize - 1, Math.floor((worldZ + halfGrid) / this.cellSize)));
+
+    const playerAgent: HumanAgent = {
+      id: `player_${Math.random().toString(36).substr(2, 9)}`,
+      mesh: humanGroup,
+      x: worldX,
+      z: worldZ,
+      targetX: worldX,
+      targetZ: worldZ,
+      state: 'idle',
+      targetCellX: cellX,
+      targetCellZ: cellZ,
+      path: [],
+      pathIndex: 0,
+      speed: 3.5,
+      bounceTimer: 0,
+      workTimer: 0,
+      jobCellX: null,
+      jobCellZ: null,
+      clothingColor: col,
+      isPlayer: true,
+      playerName: name,
+      playerEmail: email ? email.toLowerCase().trim() : undefined,
+      upperBody: agent.upperBody,
+      leftLegPivot: agent.leftLegPivot,
+      rightLegPivot: agent.rightLegPivot,
+      leftArmPivot: agent.leftArmPivot,
+      rightArmPivot: agent.rightArmPivot,
+      actionState: 'jumping', // start falling
+      actionTimer: 0,
+      jumpVelocity: 0,
+    };
+
+    this.humans.push(playerAgent);
+    this.player = playerAgent;
+
+    // Save initial coordinates to sync-checker
+    this.lastSyncedPosition.copy(humanGroup.position);
+    this.lastPlayerPosition = new THREE.Vector3().copy(humanGroup.position);
+
+    // Keep OrbitControls enabled but disable left click actions, only allow hover rotation
+    this.controls.enableRotate = true;
+    (this.controls.mouseButtons as any).LEFT = -1;
+
+    this.audio.playSpawn();
+
+    const pCellX = Math.max(0, Math.min(this.gridSize - 1, Math.floor((worldX + halfGrid) / this.cellSize)));
+    const pCellZ = Math.max(0, Math.min(this.gridSize - 1, Math.floor((worldZ + halfGrid) / this.cellSize)));
+    this.spawnParticle(pCellX, pCellZ, '#ffbd03', 25);
+    this.spawnParticle(pCellX, pCellZ, '#38bdf8', 15);
+
+    this.initKeyboardListeners();
+    this.updateStats();
+  }
+
+  public loadAllDatabaseUsers(users: any[], currentPlayerEmail: string) {
+    if (this.isDestroyed) return;
+
+    const emailLowerPlayer = currentPlayerEmail.toLowerCase().trim();
+
+    users.forEach(u => {
+      const emailLower = u.email.toLowerCase().trim();
+
+      // Skip player
+      if (emailLower === emailLowerPlayer) {
+        return;
+      }
+
+      // If user already exists in simulator, update their coordinate positions (supports admin teleport in real-time)
+      const existing = this.humans.find(h => h.playerEmail === emailLower);
+      if (existing) {
+        const dx = Math.abs(existing.mesh.position.x - u.x);
+        const dz = Math.abs(existing.mesh.position.z - u.z);
+        if (dx > 8.0 || dz > 8.0) {
+          existing.mesh.position.set(u.x, 0, u.z);
+          existing.x = u.x;
+          existing.z = u.z;
+          existing.targetX = u.x;
+          existing.targetZ = u.z;
+          const halfGrid = (this.gridSize * this.cellSize) / 2;
+          const cx = Math.max(0, Math.min(this.gridSize - 1, Math.floor((u.x + halfGrid) / this.cellSize)));
+          const cz = Math.max(0, Math.min(this.gridSize - 1, Math.floor((u.z + halfGrid) / this.cellSize)));
+          this.spawnParticle(cx, cz, '#38bdf8', 6);
+        } else {
+          existing.targetX = u.x;
+          existing.targetZ = u.z;
+        }
+        return;
+      }
+
+      // Spawn user avatar NPC
+      const clothingColor = u.clothingColor || 0x4287f5;
+      const humanGroup = new THREE.Group();
+      humanGroup.position.set(u.x, 0, u.z);
+
+      const agent: Partial<HumanAgent> = {};
+      const mesh = this.createRefinedHumanMesh(clothingColor, false, agent);
+      humanGroup.add(mesh);
+
+      const nameTag = this.createNameTag(u.name);
+      humanGroup.add(nameTag);
+
+      this.scene.add(humanGroup);
+
+      const halfGrid = (this.gridSize * this.cellSize) / 2;
+      const cellX = Math.max(0, Math.min(this.gridSize - 1, Math.floor((u.x + halfGrid) / this.cellSize)));
+      const cellZ = Math.max(0, Math.min(this.gridSize - 1, Math.floor((u.z + halfGrid) / this.cellSize)));
+
+      const npcAgent: HumanAgent = {
+        id: `db_user_${u._id || Math.random().toString(36).substr(2, 9)}`,
+        mesh: humanGroup,
+        x: u.x,
+        z: u.z,
+        targetX: u.x,
+        targetZ: u.z,
+        state: 'idle',
+        targetCellX: cellX,
+        targetCellZ: cellZ,
+        path: [],
+        pathIndex: 0,
+        speed: 1.5 + Math.random() * 0.8,
+        bounceTimer: Math.random() * 10,
+        workTimer: 0,
+        jobCellX: null,
+        jobCellZ: null,
+        clothingColor,
+        isPlayer: false,
+        playerName: u.name,
+        playerEmail: emailLower,
+        upperBody: agent.upperBody,
+        leftLegPivot: agent.leftLegPivot,
+        rightLegPivot: agent.rightLegPivot,
+        leftArmPivot: agent.leftArmPivot,
+        rightArmPivot: agent.rightArmPivot,
+        actionState: 'idle',
+        actionTimer: 0,
+        jumpVelocity: 0,
+      };
+
+      this.humans.push(npcAgent);
+    });
+
+    // Handle user profiles deleted from the database
+    const dbEmails = new Set(users.map(u => u.email.toLowerCase().trim()));
+    this.humans.forEach(h => {
+      if (h.isPlayer || !h.playerEmail || dbEmails.has(h.playerEmail)) {
+        return;
+      }
+      // Remove deleted agent
+      this.scene.remove(h.mesh);
+      const halfGrid = (this.gridSize * this.cellSize) / 2;
+      const cx = Math.max(0, Math.min(this.gridSize - 1, Math.floor((h.mesh.position.x + halfGrid) / this.cellSize)));
+      const cz = Math.max(0, Math.min(this.gridSize - 1, Math.floor((h.mesh.position.z + halfGrid) / this.cellSize)));
+      this.spawnParticle(cx, cz, '#ff4444', 10);
+    });
+
+    this.humans = this.humans.filter(h => h.isPlayer || !h.playerEmail || dbEmails.has(h.playerEmail));
+  }
+
+  private initKeyboardListeners() {
+    if (this.hasKeyboardListeners) return;
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
+    this.hasKeyboardListeners = true;
+  }
+
+  private onKeyDown = (event: KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    this.keysPressed[key] = true;
+    if (event.code === 'Space') {
+      this.keysPressed['space'] = true;
+    }
+
+    if (!this.player) return;
+
+    if (event.code === 'Space') {
+      if (this.player.mesh.position.y <= 0.05 && this.player.actionState !== 'jumping') {
+        this.player.jumpVelocity = 7.0;
+        this.player.actionState = 'jumping';
+        this.audio.playPop();
+      }
+    }
+
+    if (key === 'u') {
+      this.player.actionState = 'punching';
+      this.player.actionTimer = 0.25;
+      this.audio.playPunch();
+    }
+
+    if (key === 'i') {
+      this.player.actionState = 'kicking';
+      this.player.actionTimer = 0.3;
+      this.audio.playKick();
+    }
+
+    if (key === 'j') {
+      if (this.player.actionState === 'sitting') {
+        this.player.actionState = 'idle';
+      } else if (this.player.actionState !== 'jumping') {
+        this.player.actionState = 'sitting';
+      }
+    }
+  };
+
+  private onKeyUp = (event: KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    this.keysPressed[key] = false;
+    if (event.code === 'Space') {
+      this.keysPressed['space'] = false;
+    }
+  };
+
   private spawnHumanAtRandomHouse() {
-    // Find all houses
     const houses: { x: number; z: number }[] = [];
     for (let x = 0; x < this.gridSize; x++) {
       for (let z = 0; z < this.gridSize; z++) {
@@ -1058,22 +1672,10 @@ export class ThreeCity {
     const worldZ = (spawnZ * this.cellSize) - halfGrid + this.cellSize / 2;
     humanGroup.position.set(worldX, 0, worldZ);
 
-    // Body (Capsule)
     const clothingColor = [0x4287f5, 0xeb4034, 0x228b22, 0xe0c012, 0x8a2be2, 0xff69b4][Math.floor(Math.random() * 6)];
-    const bodyGeom = this.getGeometry('human_body', () => new THREE.CylinderGeometry(0.12, 0.12, 0.45, 6));
-    const bodyMat = this.getMaterial(`human_shirt_${clothingColor}`, { color: clothingColor, roughness: 0.8 });
-    const body = new THREE.Mesh(bodyGeom, bodyMat);
-    body.position.y = 0.225;
-    body.castShadow = true;
-    humanGroup.add(body);
-
-    // Head (Sphere)
-    const headGeom = this.getGeometry('human_head', () => new THREE.SphereGeometry(0.11, 6, 6));
-    const headMat = this.getMaterial('human_skin', { color: '#ffdbac', roughness: 0.9 });
-    const head = new THREE.Mesh(headGeom, headMat);
-    head.position.y = 0.52;
-    head.castShadow = true;
-    humanGroup.add(head);
+    const agent: Partial<HumanAgent> = {};
+    const mesh = this.createRefinedHumanMesh(clothingColor, false, agent);
+    humanGroup.add(mesh);
 
     this.scene.add(humanGroup);
 
@@ -1094,7 +1696,16 @@ export class ThreeCity {
       workTimer: 0,
       jobCellX: null,
       jobCellZ: null,
-      clothingColor
+      clothingColor,
+      isPlayer: false,
+      upperBody: agent.upperBody,
+      leftLegPivot: agent.leftLegPivot,
+      rightLegPivot: agent.rightLegPivot,
+      leftArmPivot: agent.leftArmPivot,
+      rightArmPivot: agent.rightArmPivot,
+      actionState: 'idle',
+      actionTimer: 0,
+      jumpVelocity: 0
     };
 
     this.humans.push(human);
@@ -1103,7 +1714,7 @@ export class ThreeCity {
   // Find a building job/construction site for this human
   private dispatchWorkerTo(cellX: number, cellZ: number) {
     // Find an idle human close by, or any idle human
-    const idleHuman = this.humans.find(h => h.state === 'idle');
+    const idleHuman = this.humans.find(h => h.state === 'idle' && !h.isPlayer && !h.playerEmail);
     if (idleHuman) {
       idleHuman.state = 'walking';
       idleHuman.jobCellX = cellX;
@@ -1245,9 +1856,6 @@ export class ThreeCity {
 
     const delta = Math.min(this.clock.getDelta(), 0.1); // cap delta
 
-    // Update controls
-    this.controls.update();
-
     // 1. Time-of-day dynamics (Sun rotation, colors shift)
     this.updateTimeOfDay(delta);
 
@@ -1274,6 +1882,9 @@ export class ThreeCity {
     if (this.waterPlane) {
       this.waterPlane.position.y = -0.02 + Math.sin(this.clock.getElapsedTime() * 1.2) * 0.025;
     }
+
+    // Update controls after all position updates
+    this.controls.update();
 
     this.renderer.render(this.scene, this.camera);
   };
@@ -1350,103 +1961,351 @@ export class ThreeCity {
     const halfGrid = (this.gridSize * this.cellSize) / 2;
 
     this.humans.forEach(h => {
-      // Small limb breathing wiggle animation
-      h.bounceTimer += delta * h.speed * 4.5;
-      const wiggleY = Math.abs(Math.sin(h.bounceTimer)) * 0.16;
-      h.mesh.children[0].position.y = 0.225 + wiggleY; // Lift body
-      h.mesh.children[1].position.y = 0.52 + wiggleY;  // Lift head
+      // 1. Process action timer
+      if (h.actionTimer !== undefined && h.actionTimer > 0) {
+        h.actionTimer -= delta;
+        if (h.actionTimer <= 0) {
+          h.actionState = 'idle';
+        }
+      }
 
-      if (h.state === 'walking' || h.state === 'working') {
-        // If has path to navigate
-        if (h.path.length > 0 && h.pathIndex < h.path.length) {
-          const nextTargetCell = h.path[h.pathIndex];
-          const targetWorldX = (nextTargetCell.x * this.cellSize) - halfGrid + this.cellSize / 2;
-          const targetWorldZ = (nextTargetCell.z * this.cellSize) - halfGrid + this.cellSize / 2;
+      // 2. Handle movement and actions
+      if (h.isPlayer) {
+        // Player keyboard controls
+        const hasMovementInput =
+          this.keysPressed['w'] || this.keysPressed['s'] ||
+          this.keysPressed['a'] || this.keysPressed['d'] ||
+          this.keysPressed['arrowup'] || this.keysPressed['arrowdown'] ||
+          this.keysPressed['arrowleft'] || this.keysPressed['arrowright'];
 
-          // Move mesh towards next cell target
-          const dirX = targetWorldX - h.x;
-          const dirZ = targetWorldZ - h.z;
-          const dist = Math.sqrt(dirX * dirX + dirZ * dirZ);
+        let currentActionState = h.actionState || 'idle';
 
-          const stepDist = h.speed * delta;
+        if (currentActionState === 'sitting' && hasMovementInput) {
+          h.actionState = 'idle';
+          currentActionState = 'idle';
+        }
 
-          if (dist <= stepDist) {
-            // Reached node
-            h.x = targetWorldX;
-            h.z = targetWorldZ;
-            h.targetCellX = nextTargetCell.x;
-            h.targetCellZ = nextTargetCell.z;
-            h.pathIndex++;
-
-            // Visual rotation towards direction
-            if (h.pathIndex < h.path.length) {
-              const lookTarget = h.path[h.pathIndex];
-              const angle = Math.atan2(lookTarget.x - nextTargetCell.x, lookTarget.z - nextTargetCell.z);
-              h.mesh.rotation.y = angle;
-            }
-          } else {
-            // Interpolate step
-            h.x += (dirX / dist) * stepDist;
-            h.z += (dirZ / dist) * stepDist;
-            h.mesh.rotation.y = Math.atan2(dirX, dirZ);
+        if (currentActionState !== 'sitting' && currentActionState !== 'punching' && currentActionState !== 'kicking') {
+          // Rotate camera horizontally when moving left/right
+          const rotationSpeed = 1.8; // radians per second
+          if (this.keysPressed['a'] || this.keysPressed['arrowleft']) {
+            this.controls.rotateLeft(rotationSpeed * delta);
+          }
+          if (this.keysPressed['d'] || this.keysPressed['arrowright']) {
+            this.controls.rotateLeft(-rotationSpeed * delta);
           }
 
-          h.mesh.position.set(h.x, 0, h.z);
-        } else {
-          // Finished path
-          if (h.jobCellX !== null && h.jobCellZ !== null) {
-            // Reached construction site, start working!
-            h.state = 'working';
-            h.workTimer += delta;
+          // Compute camera-relative movement
+          const camDir = new THREE.Vector3();
+          this.camera.getWorldDirection(camDir);
+          camDir.y = 0;
+          camDir.normalize();
 
-            // Emit sparks/construction dust
-            if (Math.random() < 0.18) {
-              this.spawnParticle(h.jobCellX, h.jobCellZ, '#ffaa00', 2);
-              this.audio.playBuild();
-            }
+          const camRight = new THREE.Vector3();
+          camRight.crossVectors(camDir, this.camera.up);
+          camRight.y = 0;
+          camRight.normalize();
 
-            const cell = this.grid[h.jobCellX][h.jobCellZ];
-            if (cell.type === 'construction') {
-              cell.constructionProgress += 16 * delta; // building speed
+          const moveVec = new THREE.Vector3(0, 0, 0);
+          if (this.keysPressed['w'] || this.keysPressed['arrowup']) moveVec.add(camDir);
+          if (this.keysPressed['s'] || this.keysPressed['arrowdown']) moveVec.sub(camDir);
+          if (this.keysPressed['d'] || this.keysPressed['arrowright']) moveVec.add(camRight);
+          if (this.keysPressed['a'] || this.keysPressed['arrowleft']) moveVec.sub(camRight);
 
-              if (cell.constructionProgress >= 100) {
-                // Construction completed!
-                this.completeConstruction(h.jobCellX, h.jobCellZ);
-                h.state = 'idle';
-                h.jobCellX = null;
-                h.jobCellZ = null;
-                h.path = [];
-              }
+          if (moveVec.lengthSq() > 0) {
+            moveVec.normalize();
+            h.state = 'walking';
+
+            const speed = h.speed;
+            const candidateX = h.mesh.position.x + moveVec.x * speed * delta;
+            const candidateZ = h.mesh.position.z + moveVec.z * speed * delta;
+
+            const halfGrid = (this.gridSize * this.cellSize) / 2;
+
+            // X-axis collision sliding
+            const gxX = Math.floor((candidateX + halfGrid) / this.cellSize);
+            const gzX = Math.floor((h.mesh.position.z + halfGrid) / this.cellSize);
+            let canMoveX = true;
+            if (gxX < 0 || gxX >= this.gridSize || gzX < 0 || gzX >= this.gridSize) {
+              canMoveX = false;
             } else {
-              // Site was deleted/changed
-              h.state = 'idle';
-              h.jobCellX = null;
-              h.jobCellZ = null;
-              h.path = [];
+              const cell = this.grid[gxX][gzX];
+              if (cell.type === 'house' || cell.type === 'skyscraper' || cell.type === 'tree' || cell.type === 'construction') {
+                canMoveX = false;
+              }
             }
-          } else {
-            // Simply wandering around or idle
-            h.state = 'idle';
-            h.workTimer += delta;
 
+            // Z-axis collision sliding
+            const gxZ = Math.floor((h.mesh.position.x + halfGrid) / this.cellSize);
+            const gzZ = Math.floor((candidateZ + halfGrid) / this.cellSize);
+            let canMoveZ = true;
+            if (gxZ < 0 || gxZ >= this.gridSize || gzZ < 0 || gzZ >= this.gridSize) {
+              canMoveZ = false;
+            } else {
+              const cell = this.grid[gxZ][gzZ];
+              if (cell.type === 'house' || cell.type === 'skyscraper' || cell.type === 'tree' || cell.type === 'construction') {
+                canMoveZ = false;
+              }
+            }
+
+            if (canMoveX) h.mesh.position.x = candidateX;
+            if (canMoveZ) h.mesh.position.z = candidateZ;
+
+            // Smooth rotation facing direction
+            const targetAngle = Math.atan2(moveVec.x, moveVec.z);
+            let diff = targetAngle - h.mesh.rotation.y;
+            diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+            h.mesh.rotation.y += diff * 12 * delta;
+
+            h.x = h.mesh.position.x;
+            h.z = h.mesh.position.z;
+          } else {
+            h.state = 'idle';
+          }
+        } else {
+          h.state = 'idle';
+        }
+
+        // Jump physics
+        if (h.actionState === 'jumping') {
+          if (h.jumpVelocity === undefined) h.jumpVelocity = 0;
+          h.mesh.position.y += h.jumpVelocity * delta;
+          h.jumpVelocity -= 15.0 * delta; // gravity
+
+          if (h.mesh.position.y <= 0) {
+            h.mesh.position.y = 0;
+            h.jumpVelocity = 0;
+            h.actionState = 'idle';
+          }
+        }
+
+        // Smooth camera follow target at Y = 0 (prevents jumping camera jitter)
+        const targetPos = new THREE.Vector3(h.mesh.position.x, 0, h.mesh.position.z);
+        this.controls.target.copy(targetPos);
+
+        // Periodic position sync to database
+        this.positionSyncTimer -= delta;
+        if (this.positionSyncTimer <= 0) {
+          this.positionSyncTimer = 0.5; // sync every 500ms
+          const distSq = h.mesh.position.distanceToSquared(this.lastSyncedPosition);
+          if (distSq > 0.01 && h.playerEmail) {
+            this.lastSyncedPosition.copy(h.mesh.position);
+            fetch('/api/users/position', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: h.playerEmail,
+                x: h.mesh.position.x,
+                z: h.mesh.position.z
+              })
+            }).catch(err => console.error('Failed to sync player position:', err));
+          }
+        }
+      } else if (h.playerEmail) {
+        // Other registered players - move smoothly towards targetX, targetZ (updated from DB)
+        const dirX = h.targetX - h.mesh.position.x;
+        const dirZ = h.targetZ - h.mesh.position.z;
+        const dist = Math.sqrt(dirX * dirX + dirZ * dirZ);
+
+        if (dist > 0.05) {
+          h.state = 'walking';
+          const stepDist = h.speed * delta;
+          if (dist <= stepDist) {
+            h.mesh.position.set(h.targetX, 0, h.targetZ);
+            h.x = h.targetX;
+            h.z = h.targetZ;
+            h.state = 'idle';
+          } else {
+            h.x += (dirX / dist) * stepDist;
+            h.z += (dirZ / dist) * stepDist;
+            h.mesh.position.set(h.x, 0, h.z);
+            h.mesh.rotation.y = Math.atan2(dirX, dirZ);
+          }
+        } else {
+          h.state = 'idle';
+        }
+      } else {
+        // NPC logic (system NPCs with NO playerEmail)
+        if (this.isAdmin) {
+          if (h.state === 'walking' || h.state === 'working') {
+            if (h.path.length > 0 && h.pathIndex < h.path.length) {
+              const nextTargetCell = h.path[h.pathIndex];
+              const targetWorldX = (nextTargetCell.x * this.cellSize) - halfGrid + this.cellSize / 2;
+              const targetWorldZ = (nextTargetCell.z * this.cellSize) - halfGrid + this.cellSize / 2;
+
+              const dirX = targetWorldX - h.x;
+              const dirZ = targetWorldZ - h.z;
+              const dist = Math.sqrt(dirX * dirX + dirZ * dirZ);
+              const stepDist = h.speed * delta;
+
+              if (dist <= stepDist) {
+                h.x = targetWorldX;
+                h.z = targetWorldZ;
+                h.targetCellX = nextTargetCell.x;
+                h.targetCellZ = nextTargetCell.z;
+                h.pathIndex++;
+
+                if (h.pathIndex < h.path.length) {
+                  const lookTarget = h.path[h.pathIndex];
+                  const angle = Math.atan2(lookTarget.x - nextTargetCell.x, lookTarget.z - nextTargetCell.z);
+                  h.mesh.rotation.y = angle;
+                }
+              } else {
+                h.x += (dirX / dist) * stepDist;
+                h.z += (dirZ / dist) * stepDist;
+                h.mesh.rotation.y = Math.atan2(dirX, dirZ);
+              }
+
+              h.mesh.position.set(h.x, 0, h.z);
+            } else {
+              // Finished path
+              if (h.jobCellX !== null && h.jobCellZ !== null) {
+                h.state = 'working';
+                h.workTimer += delta;
+
+                if (Math.random() < 0.18) {
+                  this.spawnParticle(h.jobCellX, h.jobCellZ, '#ffaa00', 2);
+                  this.audio.playBuild();
+                }
+
+                const cell = this.grid[h.jobCellX][h.jobCellZ];
+                if (cell.type === 'construction') {
+                  cell.constructionProgress += 16 * delta;
+
+                  if (cell.constructionProgress >= 100) {
+                    this.completeConstruction(h.jobCellX, h.jobCellZ);
+                    h.state = 'idle';
+                    h.jobCellX = null;
+                    h.jobCellZ = null;
+                    h.path = [];
+                  }
+                } else {
+                  h.state = 'idle';
+                  h.jobCellX = null;
+                  h.jobCellZ = null;
+                  h.path = [];
+                }
+              } else {
+                h.state = 'idle';
+                h.workTimer += delta;
+
+                if (h.workTimer > 3.0 + Math.random() * 5.0) {
+                  this.wanderHuman(h);
+                }
+              }
+            }
+          } else if (h.state === 'idle') {
+            h.workTimer += delta;
             if (h.workTimer > 3.0 + Math.random() * 5.0) {
-              // Wander to a random cell nearby
               this.wanderHuman(h);
             }
           }
+        } else {
+          // Normal user client: smooth walk towards targetX, targetZ just like other players!
+          const dirX = h.targetX - h.mesh.position.x;
+          const dirZ = h.targetZ - h.mesh.position.z;
+          const dist = Math.sqrt(dirX * dirX + dirZ * dirZ);
+
+          if (dist > 0.05) {
+            h.state = 'walking';
+            const stepDist = h.speed * delta;
+            if (dist <= stepDist) {
+              h.mesh.position.set(h.targetX, 0, h.targetZ);
+              h.x = h.targetX;
+              h.z = h.targetZ;
+              h.state = 'idle';
+            } else {
+              h.x += (dirX / dist) * stepDist;
+              h.z += (dirZ / dist) * stepDist;
+              h.mesh.position.set(h.x, 0, h.z);
+              h.mesh.rotation.y = Math.atan2(dirX, dirZ);
+            }
+          } else {
+            h.state = 'idle';
+          }
         }
-      } else if (h.state === 'idle') {
-        h.workTimer += delta;
-        if (h.workTimer > 3.0 + Math.random() * 5.0) {
-          this.wanderHuman(h);
+      }
+
+      // 3. Limb animations (same for both Player and NPCs)
+      h.bounceTimer += delta * (h.state === 'walking' ? h.speed * 4.5 : 2.0);
+      const time = h.bounceTimer;
+
+      const leftLeg = h.leftLegPivot;
+      const rightLeg = h.rightLegPivot;
+      const leftArm = h.leftArmPivot;
+      const rightArm = h.rightArmPivot;
+      const upperBody = h.upperBody;
+
+      if (leftLeg && rightLeg && leftArm && rightArm && upperBody) {
+        // Reset defaults
+        upperBody.position.y = 0.24;
+        leftLeg.position.y = 0.24;
+        rightLeg.position.y = 0.24;
+
+        leftLeg.rotation.set(0, 0, 0);
+        rightLeg.rotation.set(0, 0, 0);
+        leftArm.rotation.set(0, 0, -0.05);
+        rightArm.rotation.set(0, 0, 0.05);
+
+        const action = h.actionState || 'idle';
+
+        if (action === 'sitting') {
+          upperBody.position.y = 0.12;
+          leftLeg.rotation.set(-Math.PI / 2, 0, 0);
+          rightLeg.rotation.set(-Math.PI / 2, 0, 0);
+          leftArm.rotation.set(-0.3, 0, -0.05);
+          rightArm.rotation.set(-0.3, 0, 0.05);
+        } else if (action === 'punching') {
+          leftArm.rotation.set(0.1, 0, -0.05);
+          rightArm.rotation.set(-Math.PI / 2, 0, 0.1);
+        } else if (action === 'kicking') {
+          rightLeg.rotation.set(-Math.PI / 3, 0, 0);
+          leftLeg.rotation.set(0.1, 0, 0);
+          leftArm.rotation.set(0.2, 0, -0.2);
+          rightArm.rotation.set(0.2, 0, 0.2);
+        } else if (action === 'jumping') {
+          leftLeg.rotation.set(-0.3, 0, 0);
+          rightLeg.rotation.set(-0.3, 0, 0);
+          leftArm.rotation.set(-Math.PI * 0.7, 0, -0.2);
+          rightArm.rotation.set(-Math.PI * 0.7, 0, 0.2);
+        } else {
+          if (h.state === 'walking') {
+            const legSwing = Math.sin(time) * 0.6;
+            leftLeg.rotation.set(legSwing, 0, 0);
+            rightLeg.rotation.set(-legSwing, 0, 0);
+
+            const armSwing = -Math.sin(time) * 0.6;
+            leftArm.rotation.set(armSwing, 0, -0.05);
+            rightArm.rotation.set(-armSwing, 0, 0.05);
+
+            const bob = Math.abs(Math.sin(time * 2)) * 0.04;
+            upperBody.position.y = 0.24 - bob;
+          } else if (h.state === 'working') {
+            leftArm.rotation.set(0.2, 0, -0.05);
+            const hammerSwing = Math.sin(time * 6.0) * 0.5 - 0.5;
+            rightArm.rotation.set(hammerSwing, 0, 0.05);
+          } else {
+            const breathe = Math.sin(time) * 0.02;
+            leftArm.rotation.set(breathe * 2, 0, -0.05);
+            rightArm.rotation.set(breathe * 2, 0, 0.05);
+            upperBody.position.y = 0.24 + breathe * 0.5;
+          }
         }
       }
     });
+
+    // Periodic NPC synchronization to database (admin only)
+    if (this.isAdmin && this.player && this.player.playerEmail) {
+      this.npcSyncTimer -= delta;
+      if (this.npcSyncTimer <= 0) {
+        this.npcSyncTimer = 1.0; // sync every 1s
+        this.syncNpcsToDatabase();
+      }
+    }
   }
 
   private wanderHuman(h: HumanAgent) {
     h.workTimer = 0;
-    // Find all roads or random spaces
     const tx = Math.max(0, Math.min(this.gridSize - 1, h.targetCellX + Math.floor(Math.random() * 7) - 3));
     const tz = Math.max(0, Math.min(this.gridSize - 1, h.targetCellZ + Math.floor(Math.random() * 7) - 3));
 
@@ -1474,21 +2333,18 @@ export class ThreeCity {
     cell.mesh = mesh;
     this.scene.add(mesh);
 
-    // Grow in animation
     mesh.scale.set(0.01, 0.01, 0.01);
     this.animateGrow(mesh, 1.0, 500);
 
     this.audio.playPop();
-    this.spawnParticle(x, z, '#5cd65c', 12); // Green success dust
+    this.spawnParticle(x, z, '#5cd65c', 12);
 
     if (type === 'road') {
       this.recalculateRoadConnections();
-      // Try to spawn a vehicle on this road with 25% chance
       if (Math.random() < 0.25) {
         this.spawnVehicleOnRoad(x, z);
       }
     } else if (type === 'house') {
-      // House built: spawn 1-2 new humans!
       const spawns = 1 + Math.floor(Math.random() * 2);
       for (let s = 0; s < spawns; s++) {
         this.spawnHumanAtRandomHouse();
@@ -1496,6 +2352,23 @@ export class ThreeCity {
     }
 
     this.updateStats();
+
+    // Persist to database if we are admin
+    if (this.isAdmin && this.player && this.player.playerEmail) {
+      fetch('/api/grid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requesterEmail: this.player.playerEmail,
+          x,
+          z,
+          type,
+          targetType: type,
+          constructionProgress: 100,
+          height: cell.height
+        })
+      }).catch(err => console.error('Failed to save grid completion:', err));
+    }
   }
 
   private updateVehicles(delta: number) {
@@ -1512,7 +2385,6 @@ export class ThreeCity {
         const dist = Math.sqrt(dirX * dirX + dirZ * dirZ);
         const stepDist = v.speed * delta;
 
-        // Drive animation: rotate wheels slightly based on velocity
         const wheelRotSpeed = v.speed * 3 * delta;
         v.mesh.children.slice(2, 6).forEach(wheel => {
           wheel.rotation.z += wheelRotSpeed;
@@ -1524,7 +2396,6 @@ export class ThreeCity {
           const currentCellX = nextCell.x;
           const currentCellZ = nextCell.z;
 
-          // Pick next destination road
           const choices: { x: number; z: number }[] = [];
           const dirs = [
             { dx: 0, dz: -1 },
@@ -1538,7 +2409,6 @@ export class ThreeCity {
             const nz = currentCellZ + d.dz;
             if (nx >= 0 && nx < this.gridSize && nz >= 0 && nz < this.gridSize) {
               if (this.grid[nx][nz].type === 'road') {
-                // Avoid heading backward immediately if possible
                 if (v.pathIndex > 0) {
                   const prev = v.path[v.pathIndex - 1];
                   if (prev.x === nx && prev.z === nz && choices.length > 0) return;
@@ -1553,7 +2423,6 @@ export class ThreeCity {
             v.path = [nextCell, nextChoice];
             v.pathIndex = 1;
           } else {
-            // Dead end, spin around
             v.pathIndex = 0;
             v.path = [{ x: currentCellX, z: currentCellZ }];
           }
@@ -1561,11 +2430,8 @@ export class ThreeCity {
           v.x += (dirX / dist) * stepDist;
           v.z += (dirZ / dist) * stepDist;
 
-          // Smoothly rotate the car mesh towards target heading
           const targetHeading = Math.atan2(dirX, dirZ);
-          // Simple interpolation of heading angle
           let diff = targetHeading - v.heading;
-          // Normalize diff to -PI to PI
           diff = Math.atan2(Math.sin(diff), Math.cos(diff));
           v.heading += diff * 12 * delta;
           v.mesh.rotation.y = v.heading;
@@ -1578,18 +2444,13 @@ export class ThreeCity {
 
   private updateParticles(delta: number) {
     this.particles = this.particles.filter(p => {
-      // Apply velocity
       p.mesh.position.x += p.velocity.x * delta;
       p.mesh.position.y += p.velocity.y * delta;
       p.mesh.position.z += p.velocity.z * delta;
 
-      // Apply gravity slowing vertical speed
       p.velocity.y -= 2.0 * delta;
-
-      // Decay life
       p.life -= p.decay * delta;
 
-      // Scale down particle size based on life
       const size = Math.max(p.life, 0.01);
       p.mesh.scale.set(size, size, size);
 
@@ -1629,6 +2490,180 @@ export class ThreeCity {
     });
   }
 
+  // A method to sync grid cells from the database
+  public syncGrid(cells: any[]) {
+    if (this.isDestroyed) return;
+
+    cells.forEach(c => {
+      if (c.x < 0 || c.x >= this.gridSize || c.z < 0 || c.z >= this.gridSize) return;
+      const localCell = this.grid[c.x][c.z];
+
+      const needsUpdate =
+        localCell.type !== c.type ||
+        localCell.targetType !== c.targetType ||
+        localCell.constructionProgress !== c.constructionProgress;
+
+      if (needsUpdate) {
+        localCell.type = c.type;
+        localCell.targetType = c.targetType;
+        localCell.constructionProgress = c.constructionProgress;
+
+        if (localCell.mesh) {
+          this.scene.remove(localCell.mesh);
+          localCell.mesh = null;
+        }
+
+        if (c.type !== 'empty') {
+          if (c.type === 'construction') {
+            localCell.mesh = this.createConstructionSiteMesh(c.x, c.z);
+          } else {
+            localCell.mesh = this.createMeshForType(c.type, c.x, c.z);
+          }
+          this.scene.add(localCell.mesh);
+        }
+
+        if (c.type === 'road' || localCell.type === 'road') {
+          this.recalculateRoadConnections();
+        }
+      }
+    });
+    this.updateStats();
+  }
+
+  // A method to sync system NPCs from the database
+  public syncNpcs(npcs: any[], isAdmin: boolean) {
+    if (this.isDestroyed) return;
+
+    if (isAdmin) {
+      // Admin client is the source of truth.
+      // If the database has NPCs but our local humans has 0 system NPCs, we should spawn them.
+      const localSystemNpcs = this.humans.filter(h => !h.isPlayer && !h.playerEmail);
+      if (localSystemNpcs.length === 0 && npcs.length > 0) {
+        npcs.forEach(n => {
+          this.spawnNpcFromData(n);
+        });
+      }
+      return;
+    }
+
+    // Normal client syncs system NPCs from the server
+    const currentNpcIds = new Set(npcs.map(n => n.npcId));
+
+    // Remove any local system NPCs not in the database
+    this.humans = this.humans.filter(h => {
+      if (h.isPlayer || h.playerEmail) return true;
+      if (!currentNpcIds.has(h.id)) {
+        this.scene.remove(h.mesh);
+        return false;
+      }
+      return true;
+    });
+
+    // Update coordinates/targets or spawn new ones
+    npcs.forEach(n => {
+      const existing = this.humans.find(h => h.id === n.npcId);
+      if (existing) {
+        existing.targetX = n.targetX;
+        existing.targetZ = n.targetZ;
+        existing.state = n.state;
+
+        // Teleport if too far
+        const dx = Math.abs(existing.mesh.position.x - n.x);
+        const dz = Math.abs(existing.mesh.position.z - n.z);
+        if (dx > 5.0 || dz > 5.0) {
+          existing.mesh.position.set(n.x, 0, n.z);
+          existing.x = n.x;
+          existing.z = n.z;
+        }
+      } else {
+        this.spawnNpcFromData(n);
+      }
+    });
+  }
+
+  private spawnNpcFromData(n: any) {
+    const humanGroup = new THREE.Group();
+    humanGroup.position.set(n.x, 0, n.z);
+
+    const agent: Partial<HumanAgent> = {};
+    const mesh = this.createRefinedHumanMesh(n.clothingColor, false, agent);
+    humanGroup.add(mesh);
+
+    const nameTag = this.createNameTag(n.name);
+    humanGroup.add(nameTag);
+
+    this.scene.add(humanGroup);
+
+    const halfGrid = (this.gridSize * this.cellSize) / 2;
+    const cellX = Math.max(0, Math.min(this.gridSize - 1, Math.floor((n.x + halfGrid) / this.cellSize)));
+    const cellZ = Math.max(0, Math.min(this.gridSize - 1, Math.floor((n.z + halfGrid) / this.cellSize)));
+
+    const npc: HumanAgent = {
+      id: n.npcId,
+      mesh: humanGroup,
+      x: n.x,
+      z: n.z,
+      targetX: n.targetX,
+      targetZ: n.targetZ,
+      state: n.state as 'idle' | 'walking' | 'working',
+      targetCellX: cellX,
+      targetCellZ: cellZ,
+      path: [],
+      pathIndex: 0,
+      speed: 1.5 + Math.random() * 0.8,
+      bounceTimer: Math.random() * 10,
+      workTimer: 0,
+      jobCellX: null,
+      jobCellZ: null,
+      clothingColor: n.clothingColor,
+      isPlayer: false,
+      upperBody: agent.upperBody,
+      leftLegPivot: agent.leftLegPivot,
+      rightLegPivot: agent.rightLegPivot,
+      leftArmPivot: agent.leftArmPivot,
+      rightArmPivot: agent.rightArmPivot,
+      actionState: 'idle',
+      actionTimer: 0,
+      jumpVelocity: 0
+    };
+
+    this.humans.push(npc);
+  }
+
+  private async syncNpcsToDatabase() {
+    if (!this.player || !this.player.playerEmail || !this.isAdmin) return;
+
+    const npcsData = this.humans
+      .filter(h => !h.isPlayer && !h.playerEmail)
+      .map(h => ({
+        npcId: h.id,
+        name: h.playerName || `NPC_${h.id.split('_')[1] || h.id}`,
+        x: h.mesh.position.x,
+        z: h.mesh.position.z,
+        targetX: h.state === 'walking' && h.path && h.pathIndex < h.path.length
+          ? (h.path[h.path.length - 1].x * this.cellSize) - ((this.gridSize * this.cellSize) / 2) + this.cellSize / 2
+          : h.targetX,
+        targetZ: h.state === 'walking' && h.path && h.pathIndex < h.path.length
+          ? (h.path[h.path.length - 1].z * this.cellSize) - ((this.gridSize * this.cellSize) / 2) + this.cellSize / 2
+          : h.targetZ,
+        state: h.state,
+        clothingColor: h.clothingColor
+      }));
+
+    try {
+      await fetch('/api/npcs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requesterEmail: this.player.playerEmail,
+          npcs: npcsData
+        })
+      });
+    } catch (e) {
+      console.error('Failed to sync NPCs to database:', e);
+    }
+  }
+
   // Cleanup scene on unmount
   public destroy() {
     this.isDestroyed = true;
@@ -1641,6 +2676,11 @@ export class ThreeCity {
     this.container.removeEventListener('pointermove', this.onPointerMove);
     this.container.removeEventListener('pointerdown', this.onPointerDown);
     this.container.removeEventListener('pointerleave', this.onPointerLeave);
+
+    if (this.hasKeyboardListeners) {
+      window.removeEventListener('keydown', this.onKeyDown);
+      window.removeEventListener('keyup', this.onKeyUp);
+    }
 
     // Dispose geometries and materials
     Object.values(this.geometriesCache).forEach(g => g.dispose());

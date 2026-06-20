@@ -41,6 +41,136 @@ export default function CitySimulator() {
   const [timeSpeed, setTimeSpeed] = useState<number>(0.5);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [showControls, setShowControls] = useState<boolean>(false);
+
+  // Authentication & Session states
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [playerName, setPlayerName] = useState<string>('');
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [hasSpawned, setHasSpawned] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string>('');
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+
+    const url = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+    const body = authMode === 'register' 
+      ? { name: playerName, email, password }
+      : { email, password };
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setAuthError(data.error || 'Authentication failed');
+        setAuthLoading(false);
+        return;
+      }
+
+      const user = data.user;
+      setCurrentUser(user);
+      setHasSpawned(true);
+      setAuthLoading(false);
+
+      if (cityRef.current) {
+        cityRef.current.isAdmin = user.role === 'admin';
+        cityRef.current.spawnPlayer(user.name, user.x, user.z, user.email, user.clothingColor);
+        setSoundEnabled(true);
+        cityRef.current.audio.toggle(true);
+      }
+    } catch (err) {
+      console.error(err);
+      setAuthError('Connection failed. Please verify database availability.');
+      setAuthLoading(false);
+    }
+  };
+
+  const saveAdminSettings = async (updates: { timeOfDay?: number; timeSpeed?: number; isPlaying?: boolean }) => {
+    if (!currentUser || currentUser.role !== 'admin') return;
+    try {
+      await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requesterEmail: currentUser.email,
+          ...updates
+        })
+      });
+    } catch (err) {
+      console.error('Failed to save admin settings:', err);
+    }
+  };
+
+  // When spawned, show the controls HUD and start the 10-second fade timer
+  useEffect(() => {
+    if (hasSpawned) {
+      setShowControls(true);
+      const timer = setTimeout(() => {
+        setShowControls(false);
+      }, 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [hasSpawned]);
+
+  // Poll database to synchronize other users' coordinates and registrations
+  useEffect(() => {
+    if (!hasSpawned || !currentUser) return;
+
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch('/api/users');
+        const data = await res.json();
+        if (res.ok && cityRef.current) {
+          cityRef.current.loadAllDatabaseUsers(data.users, currentUser.email);
+
+          // Synchronize global environment settings from DB
+          if (data.settings) {
+            const { timeOfDay: dbTime, timeSpeed: dbSpeed, isPlaying: dbPlaying } = data.settings;
+            
+            // Only update if there is a substantial difference or not admin
+            const isDifferent = Math.abs(cityRef.current.timeOfDay - dbTime) > 0.5 || isPlaying !== dbPlaying;
+            if (currentUser.role !== 'admin' || isDifferent) {
+              cityRef.current.timeOfDay = dbTime;
+              cityRef.current.timeSpeed = dbPlaying ? dbSpeed : 0.0;
+              setTimeOfDay(dbTime);
+              setTimeSpeed(dbSpeed);
+              setIsPlaying(dbPlaying);
+            }
+          }
+        }
+
+        // Synchronize grid cells
+        const gridRes = await fetch('/api/grid');
+        const gridData = await gridRes.json();
+        if (gridRes.ok && cityRef.current && gridData.cells) {
+          cityRef.current.syncGrid(gridData.cells);
+        }
+
+        // Synchronize NPCs
+        const npcsRes = await fetch('/api/npcs');
+        const npcsData = await npcsRes.json();
+        if (npcsRes.ok && cityRef.current && npcsData.npcs) {
+          cityRef.current.syncNpcs(npcsData.npcs, currentUser.role === 'admin');
+        }
+      } catch (err) {
+        console.error('Failed to sync other users, settings, grid, and NPCs:', err);
+      }
+    };
+
+    fetchUsers();
+    const interval = setInterval(fetchUsers, 4000);
+    return () => clearInterval(interval);
+  }, [hasSpawned, currentUser, isPlaying]);
 
   // Initialize Simulation Engine
   useEffect(() => {
@@ -57,6 +187,24 @@ export default function CitySimulator() {
     citySim.buildMode = 'road';
     citySim.timeSpeed = 0.5;
     citySim.audio.toggle(false);
+
+    // Auto-restore login session from localStorage
+    const storedUser = localStorage.getItem('dreamcity_user');
+    if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        if (parsed) {
+          setCurrentUser(parsed);
+          setHasSpawned(true);
+          citySim.isAdmin = parsed.role === 'admin';
+          citySim.spawnPlayer(parsed.name, parsed.x, parsed.z, parsed.email, parsed.clothingColor);
+          setSoundEnabled(true);
+          citySim.audio.toggle(true);
+        }
+      } catch (e) {
+        console.error('Failed to restore session from localStorage:', e);
+      }
+    }
 
     // Sync time of day from the animation loop to the state slider
     const timeSyncInterval = setInterval(() => {
@@ -102,6 +250,7 @@ export default function CitySimulator() {
     if (cityRef.current) {
       cityRef.current.timeSpeed = nextPlay ? timeSpeed : 0.0;
     }
+    saveAdminSettings({ isPlaying: nextPlay });
   };
 
   const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,6 +259,7 @@ export default function CitySimulator() {
     if (cityRef.current && isPlaying) {
       cityRef.current.timeSpeed = speed;
     }
+    saveAdminSettings({ timeSpeed: speed });
   };
 
   const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,6 +268,7 @@ export default function CitySimulator() {
     if (cityRef.current) {
       cityRef.current.timeOfDay = val;
     }
+    saveAdminSettings({ timeOfDay: val });
   };
 
   // Helper to format time (e.g. 14.5 -> "02:30 PM")
@@ -166,81 +317,174 @@ export default function CitySimulator() {
             </div>
           </div>
 
+          {/* User Profile Card and Admin Panel Toggle */}
+          {hasSpawned && currentUser && (
+            <div className="flex items-center justify-between bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 transition-all hover:border-sky-500/30">
+              <div className="flex items-center gap-3">
+                <div 
+                  className="w-8 h-8 rounded-full border border-slate-650 flex items-center justify-center font-bold text-sm text-white uppercase shadow"
+                  style={{ backgroundColor: currentUser.clothingColor ? `#${currentUser.clothingColor.toString(16).padStart(6, '0')}` : '#ef4444' }}
+                >
+                  {currentUser.name.charAt(0)}
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-200">{currentUser.name}</div>
+                  <div className="text-[10px] text-slate-400 font-medium capitalize">{currentUser.role} Account</div>
+                </div>
+              </div>
+              
+              {currentUser.role === 'admin' && (
+                <a 
+                  href="/admin" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-[11px] font-bold rounded-lg shadow-lg active:scale-95 transition-all pointer-events-auto"
+                >
+                  Admin Panel
+                </a>
+              )}
+            </div>
+          )}
+
           {/* City Live Statistics Grid */}
-          <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 grid grid-cols-3 gap-3">
-            {/* Pop */}
-            <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-              <Users className="w-4 h-4 text-cyan-400 mb-1" />
-              <span className="text-xs text-slate-400">Population</span>
-              <span className="text-sm font-semibold mt-0.5">{stats.population}</span>
-            </div>
+          {currentUser?.role === 'admin' && (
+            <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 grid grid-cols-3 gap-3">
+              {/* Pop */}
+              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
+                <Users className="w-4 h-4 text-cyan-400 mb-1" />
+                <span className="text-xs text-slate-400">Population</span>
+                <span className="text-sm font-semibold mt-0.5">{stats.population}</span>
+              </div>
 
-            {/* Trees */}
-            <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-              <TreePine className="w-4 h-4 text-emerald-400 mb-1" />
-              <span className="text-xs text-slate-400">Forestry</span>
-              <span className="text-sm font-semibold mt-0.5">{stats.trees}</span>
-            </div>
+              {/* Trees */}
+              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
+                <TreePine className="w-4 h-4 text-emerald-400 mb-1" />
+                <span className="text-xs text-slate-400">Forestry</span>
+                <span className="text-sm font-semibold mt-0.5">{stats.trees}</span>
+              </div>
 
-            {/* Roads */}
-            <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-              <div className="w-4 h-4 text-slate-400 font-bold border border-slate-400 rounded-sm text-[8px] flex items-center justify-center mb-1">R</div>
-              <span className="text-xs text-slate-400">Roads</span>
-              <span className="text-sm font-semibold mt-0.5">{stats.roads}</span>
-            </div>
+              {/* Roads */}
+              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
+                <div className="w-4 h-4 text-slate-400 font-bold border border-slate-400 rounded-sm text-[8px] flex items-center justify-center mb-1">R</div>
+                <span className="text-xs text-slate-400">Roads</span>
+                <span className="text-sm font-semibold mt-0.5">{stats.roads}</span>
+              </div>
 
-            {/* Houses */}
-            <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-              <Home className="w-4 h-4 text-amber-400 mb-1" />
-              <span className="text-xs text-slate-400">Houses</span>
-              <span className="text-sm font-semibold mt-0.5">{stats.houses}</span>
-            </div>
+              {/* Houses */}
+              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
+                <Home className="w-4 h-4 text-amber-400 mb-1" />
+                <span className="text-xs text-slate-400">Houses</span>
+                <span className="text-sm font-semibold mt-0.5">{stats.houses}</span>
+              </div>
 
-            {/* Skyscrapers */}
-            <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-              <Building2 className="w-4 h-4 text-indigo-400 mb-1" />
-              <span className="text-xs text-slate-400">Towers</span>
-              <span className="text-sm font-semibold mt-0.5">{stats.skyscrapers}</span>
-            </div>
+              {/* Skyscrapers */}
+              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
+                <Building2 className="w-4 h-4 text-indigo-400 mb-1" />
+                <span className="text-xs text-slate-400">Towers</span>
+                <span className="text-sm font-semibold mt-0.5">{stats.skyscrapers}</span>
+              </div>
 
-            {/* Under construction */}
-            <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-              <Hammer className="w-4 h-4 text-yellow-500 mb-1 animate-bounce" />
-              <span className="text-xs text-slate-400">Building</span>
-              <span className="text-sm font-semibold mt-0.5 text-yellow-400">{stats.activeConstruction}</span>
+              {/* Under construction */}
+              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
+                <Hammer className="w-4 h-4 text-yellow-500 mb-1 animate-bounce" />
+                <span className="text-xs text-slate-400">Building</span>
+                <span className="text-sm font-semibold mt-0.5 text-yellow-400">{stats.activeConstruction}</span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Right Side: Simulation Time & Controls */}
+        {/* Right Side: Simulation Time & Controls */}
         <div className="flex flex-col gap-3 pointer-events-auto max-w-sm w-full md:w-auto">
           {/* Time & Environment Controller */}
-          <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 flex flex-col gap-3">
-            {/* Clock & Sun icon */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {timeOfDay >= 6 && timeOfDay < 18 ? (
-                  <Sun className="w-5 h-5 text-amber-400 animate-spin-slow" />
-                ) : (
-                  <Moon className="w-5 h-5 text-indigo-400" />
-                )}
-                <span className="text-sm font-bold">{formatTime(timeOfDay)}</span>
-              </div>
-              
-              {/* Play / Pause time */}
-              <div className="flex items-center gap-1">
-                <button 
-                  onClick={handleTogglePlay}
-                  className={`p-1.5 rounded-lg border transition-all ${
-                    isPlaying 
-                      ? 'bg-sky-500/20 border-sky-400/40 text-sky-300 hover:bg-sky-500/30' 
-                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
-                  }`}
-                  title={isPlaying ? "Pause Cycle" : "Play Cycle"}
-                >
-                  {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                </button>
+          {currentUser?.role === 'admin' ? (
+            <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 flex flex-col gap-3">
+              {/* Clock & Sun icon */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {timeOfDay >= 6 && timeOfDay < 18 ? (
+                    <Sun className="w-5 h-5 text-amber-400 animate-spin-slow" />
+                  ) : (
+                    <Moon className="w-5 h-5 text-indigo-400" />
+                  )}
+                  <span className="text-sm font-bold">{formatTime(timeOfDay)}</span>
+                </div>
+                
+                {/* Play / Pause time */}
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={handleTogglePlay}
+                    className={`p-1.5 rounded-lg border transition-all ${
+                      isPlaying 
+                        ? 'bg-sky-500/20 border-sky-400/40 text-sky-300 hover:bg-sky-500/30' 
+                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                    }`}
+                    title={isPlaying ? "Pause Cycle" : "Play Cycle"}
+                  >
+                    {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                  </button>
 
+                  <button 
+                    onClick={handleToggleSound}
+                    className={`p-1.5 rounded-lg border transition-all ${
+                      soundEnabled 
+                        ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300 hover:bg-emerald-500/30' 
+                        : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
+                    }`}
+                    title={soundEnabled ? "Mute Sounds" : "Unmute Sounds"}
+                  >
+                    {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Time of Day Slider */}
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] text-slate-400 font-medium">
+                  <span>Time of Day</span>
+                  <span>{Math.floor(timeOfDay)}:00</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="23.9" 
+                  step="0.1"
+                  value={timeOfDay}
+                  onChange={handleTimeChange}
+                  className="w-full h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-sky-400"
+                />
+              </div>
+
+              {/* Speed slider */}
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] text-slate-400 font-medium">
+                  <span>Day Cycle Speed</span>
+                  <span>{isPlaying ? `${timeSpeed.toFixed(1)}x` : 'Paused'}</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="0.1" 
+                  max="3.0" 
+                  step="0.1"
+                  value={timeSpeed}
+                  onChange={handleSpeedChange}
+                  disabled={!isPlaying}
+                  className="w-full h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-sky-400 disabled:opacity-30"
+                />
+              </div>
+            </div>
+          ) : (
+            currentUser && (
+              <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-3 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  {timeOfDay >= 6 && timeOfDay < 18 ? (
+                    <Sun className="w-4 h-4 text-amber-400 animate-spin-slow" />
+                  ) : (
+                    <Moon className="w-4 h-4 text-indigo-400" />
+                  )}
+                  <span className="text-xs font-bold">{formatTime(timeOfDay)}</span>
+                </div>
                 <button 
                   onClick={handleToggleSound}
                   className={`p-1.5 rounded-lg border transition-all ${
@@ -253,148 +497,308 @@ export default function CitySimulator() {
                   {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
                 </button>
               </div>
-            </div>
-
-            {/* Time of Day Slider */}
-            <div className="flex flex-col gap-1">
-              <div className="flex justify-between text-[10px] text-slate-400 font-medium">
-                <span>Time of Day</span>
-                <span>{Math.floor(timeOfDay)}:00</span>
-              </div>
-              <input 
-                type="range" 
-                min="0" 
-                max="23.9" 
-                step="0.1"
-                value={timeOfDay}
-                onChange={handleTimeChange}
-                className="w-full h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-sky-400"
-              />
-            </div>
-
-            {/* Speed slider */}
-            <div className="flex flex-col gap-1">
-              <div className="flex justify-between text-[10px] text-slate-400 font-medium">
-                <span>Day Cycle Speed</span>
-                <span>{isPlaying ? `${timeSpeed.toFixed(1)}x` : 'Paused'}</span>
-              </div>
-              <input 
-                type="range" 
-                min="0.1" 
-                max="3.0" 
-                step="0.1"
-                value={timeSpeed}
-                onChange={handleSpeedChange}
-                disabled={!isPlaying}
-                className="w-full h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-sky-400 disabled:opacity-30"
-              />
-            </div>
-          </div>
+            )
+          )}
         </div>
 
       </div>
 
       {/* Bottom Interface: Tool Drawer & Quick Instructions */}
-      <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none z-10">
-        
-        {/* Instructions Banner */}
-        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/40 rounded-xl px-4 py-2 flex items-center gap-4 text-xs text-slate-300 shadow-xl max-w-lg pointer-events-auto">
-          <div className="flex items-center gap-1.5">
-            <Compass className="w-3.5 h-3.5 text-sky-400 animate-spin-slow" />
-            <span className="font-semibold text-slate-200">3D Navigation:</span>
-          </div>
-          <span>Drag Left-Click to rotate | Drag Right-Click to pan | Scroll to zoom</span>
-        </div>
-
-        {/* Construction Tool Selector Drawer */}
-        <div className="bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-2xl p-3 flex items-center gap-2 pointer-events-auto max-w-full overflow-x-auto">
+      {currentUser?.role === 'admin' && (
+        <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none z-10">
           
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest px-3 border-r border-slate-800 hidden sm:inline-block">
-            Tools
-          </span>
+          {/* Instructions Banner */}
+          <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/40 rounded-xl px-4 py-2 flex items-center gap-4 text-xs text-slate-300 shadow-xl max-w-lg pointer-events-auto">
+            <div className="flex items-center gap-1.5">
+              <Compass className="w-3.5 h-3.5 text-sky-400 animate-spin-slow" />
+              <span className="font-semibold text-slate-200">3D Navigation:</span>
+            </div>
+            <span>Drag Left-Click to rotate | Drag Right-Click to pan | Scroll to zoom</span>
+          </div>
 
-          {/* Inspect / View Mode */}
-          <button
-            onClick={() => handleModeChange(null)}
-            className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
-              buildMode === null
-                ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
-            }`}
-          >
-            <Eye className="w-4 h-4" />
-            <span className="hidden sm:inline">Inspect View</span>
-          </button>
+          {/* Construction Tool Selector Drawer */}
+          <div className="bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-2xl p-3 flex items-center gap-2 pointer-events-auto max-w-full overflow-x-auto">
+            
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest px-3 border-r border-slate-800 hidden sm:inline-block">
+              Tools
+            </span>
 
-          {/* Road Segment */}
-          <button
-            onClick={() => handleModeChange('road')}
-            className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
-              buildMode === 'road'
-                ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
-            }`}
-          >
-            <div className="w-4 h-4 border-2 border-current rounded-sm text-[8px] flex items-center justify-center font-bold">R</div>
-            <span className="hidden sm:inline">Build Road</span>
-          </button>
+            {/* Inspect / View Mode */}
+            <button
+              onClick={() => handleModeChange(null)}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                buildMode === null
+                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
+                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+              }`}
+            >
+              <Eye className="w-4 h-4" />
+              <span className="hidden sm:inline">Inspect View</span>
+            </button>
 
-          {/* Plant Tree */}
-          <button
-            onClick={() => handleModeChange('tree')}
-            className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
-              buildMode === 'tree'
-                ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
-            }`}
-          >
-            <TreePine className="w-4 h-4 text-emerald-400" />
-            <span className="hidden sm:inline">Plant Tree</span>
-          </button>
+            {/* Road Segment */}
+            <button
+              onClick={() => handleModeChange('road')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                buildMode === 'road'
+                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
+                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+              }`}
+            >
+              <div className="w-4 h-4 border-2 border-current rounded-sm text-[8px] flex items-center justify-center font-bold">R</div>
+              <span className="hidden sm:inline">Build Road</span>
+            </button>
 
-          {/* Build House */}
-          <button
-            onClick={() => handleModeChange('house')}
-            className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
-              buildMode === 'house'
-                ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
-            }`}
-          >
-            <Home className="w-4 h-4 text-amber-400" />
-            <span className="hidden sm:inline">Build House</span>
-          </button>
+            {/* Plant Tree */}
+            <button
+              onClick={() => handleModeChange('tree')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                buildMode === 'tree'
+                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
+                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+              }`}
+            >
+              <TreePine className="w-4 h-4 text-emerald-400" />
+              <span className="hidden sm:inline">Plant Tree</span>
+            </button>
 
-          {/* Build Skyscraper */}
-          <button
-            onClick={() => handleModeChange('skyscraper')}
-            className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
-              buildMode === 'skyscraper'
-                ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
-            }`}
-          >
-            <Building2 className="w-4 h-4 text-indigo-400" />
-            <span className="hidden sm:inline">Skyscraper</span>
-          </button>
+            {/* Build House */}
+            <button
+              onClick={() => handleModeChange('house')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                buildMode === 'house'
+                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
+                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+              }`}
+            >
+              <Home className="w-4 h-4 text-amber-400" />
+              <span className="hidden sm:inline">Build House</span>
+            </button>
 
-          <div className="w-[1px] h-6 bg-slate-800 mx-1 hidden sm:block" />
+            {/* Build Skyscraper */}
+            <button
+              onClick={() => handleModeChange('skyscraper')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                buildMode === 'skyscraper'
+                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
+                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+              }`}
+            >
+              <Building2 className="w-4 h-4 text-indigo-400" />
+              <span className="hidden sm:inline">Skyscraper</span>
+            </button>
 
-          {/* Demolish Tool */}
-          <button
-            onClick={() => handleModeChange('delete')}
-            className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
-              buildMode === 'delete'
-                ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-600/20'
-                : 'bg-slate-800/50 border-slate-700/30 hover:bg-red-950/20 hover:border-red-900/50 hover:text-red-400 text-slate-300'
-            }`}
-          >
-            <Trash2 className="w-4 h-4" />
-            <span className="hidden sm:inline">Demolish</span>
-          </button>
+            <div className="w-[1px] h-6 bg-slate-800 mx-1 hidden sm:block" />
 
+            {/* Demolish Tool */}
+            <button
+              onClick={() => handleModeChange('delete')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                buildMode === 'delete'
+                  ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-600/20'
+                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-red-950/20 hover:border-red-900/50 hover:text-red-400 text-slate-300'
+              }`}
+            >
+              <Trash2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Demolish</span>
+            </button>
+
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Onboarding Login / Register Modal */}
+      {!hasSpawned && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4">
+          <form 
+            onSubmit={handleAuthSubmit}
+            className="w-full max-w-sm bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center pointer-events-auto"
+          >
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 via-sky-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                <Users className="w-6 h-6 text-white animate-pulse" />
+              </div>
+              <h2 className="text-xl font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
+                DreamCity 3D Avatar
+              </h2>
+              <p className="text-[11px] text-slate-400 max-w-xs leading-normal">
+                Sign in or register to persist your avatar in the persistent simulation.
+              </p>
+            </div>
+
+            {/* Mode Switch Tabs */}
+            <div className="flex bg-slate-950/60 p-1 rounded-xl border border-slate-800">
+              <button
+                type="button"
+                onClick={() => { setAuthMode('login'); setAuthError(''); }}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  authMode === 'login' 
+                    ? 'bg-sky-500 text-white shadow-md' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthMode('register'); setAuthError(''); }}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  authMode === 'register' 
+                    ? 'bg-sky-500 text-white shadow-md' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Register
+              </button>
+            </div>
+
+            {authError && (
+              <div className="px-3 py-2 bg-red-950/40 border border-red-800/40 text-red-400 text-xs font-medium rounded-lg text-left">
+                {authError}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3">
+              {authMode === 'register' && (
+                <div className="flex flex-col gap-1 text-left">
+                  <label htmlFor="authName" className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">
+                    Your Name
+                  </label>
+                  <input
+                    id="authName"
+                    type="text"
+                    required
+                    placeholder="Enter name..."
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950/50 border border-slate-800 rounded-lg text-xs font-semibold text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/40"
+                  />
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1 text-left">
+                <label htmlFor="authEmail" className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">
+                  Email Address
+                </label>
+                <input
+                  id="authEmail"
+                  type="email"
+                  required
+                  placeholder="name@domain.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950/50 border border-slate-800 rounded-lg text-xs font-semibold text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/40"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 text-left">
+                <label htmlFor="authPass" className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">
+                  Password
+                </label>
+                <input
+                  id="authPass"
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950/50 border border-slate-800 rounded-lg text-xs font-semibold text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/40"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="w-full py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold rounded-lg text-xs shadow-lg shadow-cyan-500/10 hover:shadow-cyan-500/20 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
+            >
+              {authLoading 
+                ? 'Connecting to Server...' 
+                : authMode === 'register' 
+                  ? 'Register & Spawn' 
+                  : 'Log In & Spawn'
+              }
+            </button>
+
+            {/* Quick overview of controls */}
+            <div className="border-t border-slate-800/60 pt-3 flex flex-col gap-2">
+              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                Shortcut Controls
+              </span>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-450 text-left px-2 max-w-sm mx-auto">
+                <div>WASD: <span className="text-slate-350 font-medium">Move</span></div>
+                <div>Space: <span className="text-slate-350 font-medium">Jump</span></div>
+                <div>U key: <span className="text-slate-350 font-medium">Punch</span></div>
+                <div>I key: <span className="text-slate-350 font-medium">Kick</span></div>
+                <div className="col-span-2 text-center mt-0.5">J key: <span className="text-slate-350 font-medium">Sit / Stand Toggle</span></div>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Avatar Controls Floating HUD & Info Button in bottom right */}
+      {hasSpawned && (
+        <div className="absolute bottom-4 right-4 md:bottom-6 md:right-6 z-30 flex flex-col items-end gap-2 pointer-events-auto">
+          {/* Expanded Controls Card */}
+          <div 
+            className={`bg-slate-900/90 backdrop-blur-2xl border border-slate-750/80 shadow-2xl rounded-2xl p-4 flex flex-col gap-3 transition-all duration-500 ease-out transform ${
+              showControls 
+                ? 'opacity-100 scale-100 translate-y-0 w-64' 
+                : 'opacity-0 scale-90 translate-y-4 pointer-events-none w-0 h-0 p-0 border-none overflow-hidden'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent uppercase tracking-wider">
+                Avatar Controls
+              </h3>
+              <button 
+                type="button"
+                onClick={() => setShowControls(false)}
+                className="text-[10px] text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-750 px-1.5 py-0.5 rounded border border-slate-700 transition-all font-semibold"
+              >
+                Hide
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2.5 text-[11px] text-slate-350">
+              <div className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">WASD</kbd>
+                <span>Move</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">Space</kbd>
+                <span>Jump</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">U key</kbd>
+                <span>Punch</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">I key</kbd>
+                <span>Kick</span>
+              </div>
+              <div className="col-span-2 flex items-center gap-1.5 mt-0.5">
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">J key</kbd>
+                <span>Sit / Stand Toggle</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Trigger Info "i" Button */}
+          <button
+            type="button"
+            onClick={() => setShowControls(!showControls)}
+            className={`w-10 h-10 rounded-full bg-slate-900/90 hover:bg-slate-850 backdrop-blur-xl border border-slate-750/80 shadow-2xl flex items-center justify-center text-sky-400 hover:text-sky-300 transition-all duration-300 transform active:scale-95 ${
+              !showControls ? 'opacity-100 scale-100' : 'opacity-80 scale-90'
+            }`}
+            title="Show Controls Info"
+          >
+            <span className="font-serif text-lg font-black italic">i</span>
+          </button>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -105,6 +105,9 @@ export default function CitySimulator() {
   const [showClothShop, setShowClothShop] = useState<boolean>(false);
   const [showBarberShop, setShowBarberShop] = useState<boolean>(false);
   const [showPoliceStation, setShowPoliceStation] = useState<boolean>(false);
+  const [showMinimapFull, setShowMinimapFull] = useState<boolean>(false);
+  const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
+  const minimapFullCanvasRef = useRef<HTMLCanvasElement>(null);
   const [equippedClothes, setEquippedClothes] = useState<EquippedClothes>({
     shirtColor: 0xff3b30,
     pantColor: 0x111111,
@@ -368,6 +371,13 @@ export default function CitySimulator() {
     showToast('💀 You died from starvation. All progress has been reset. Start fresh!', 'warning');
   };
 
+  // ── Admin Revenue Helper ─────────────────────────────────────────────────────
+  const sendAdminRevenue = (amount: number) => {
+    if (cityRef.current?.ws && cityRef.current.ws.readyState === WebSocket.OPEN) {
+      cityRef.current.ws.send(JSON.stringify({ type: 'admin-revenue', amount }));
+    }
+  };
+
   // ── Food Shop ────────────────────────────────────────────────────────────────
   const buyFood = (item: { name: string; cost: number; hungerRestore: number }) => {
     if (shunyaCoins < item.cost) {
@@ -375,6 +385,7 @@ export default function CitySimulator() {
       return;
     }
     addProgress(-item.cost, 5);
+    sendAdminRevenue(item.cost);
     setHungerLevel(prev => Math.min(100, prev + item.hungerRestore));
     setShowFoodShop(false);
     showToast(`🍔 Enjoyed ${item.name}! Hunger restored.`, 'success');
@@ -388,6 +399,7 @@ export default function CitySimulator() {
       return;
     }
     addProgress(-cost, 5);
+    sendAdminRevenue(cost);
     const hexStr = '#' + hexColor.toString(16).padStart(6, '0');
     setEquippedClothes(prev => ({
       ...prev,
@@ -405,6 +417,7 @@ export default function CitySimulator() {
       return;
     }
     addProgress(-cost, 5);
+    sendAdminRevenue(cost);
     setPlayerHairColor(hexColor);
     cityRef.current?.updatePlayerHairColor(hexColor);
     showToast(`✂️ New hairstyle: ${label}! Looking fresh!`, 'success');
@@ -855,6 +868,14 @@ export default function CitySimulator() {
               cityRef.current.updateOtherPlayerLevel(data.userId, data.level);
               break;
 
+            case 'admin-coins-updated':
+              // Admin received revenue from a shop purchase
+              if (currentUser?.role === 'admin') {
+                setShunyaCoins(data.shunyaCoins);
+                showToast(`💰 Shop revenue: +${data.amount} SC from ${data.fromUser}!`, 'success');
+              }
+              break;
+
             default:
               break;
           }
@@ -947,8 +968,148 @@ export default function CitySimulator() {
           drainHunger();
         }
         lastDayRef.current = tod;
+
+        // ── Minimap render ─────────────────────────────────────────────────────
+        const drawMinimap = (canvas: HTMLCanvasElement, size: number) => {
+          const ctx = canvas.getContext('2d');
+          if (!ctx || !cityRef.current) return;
+          const city = cityRef.current;
+          const gridSize = city.gridSize ?? 32;
+          const cellPx = size / gridSize;
+          const CELL_SIZE = 3.0; // must match ThreeCity.cellSize
+          const halfGrid = (gridSize * CELL_SIZE) / 2;
+
+          ctx.clearRect(0, 0, size, size);
+
+          // Background — dark ground
+          ctx.fillStyle = '#111827';
+          ctx.fillRect(0, 0, size, size);
+
+          // ── Draw grid cells ─────────────────────────────────────────────────
+          const cellColorMap: Record<string, string> = {
+            road:         '#4b5563',   // medium gray
+            tree:         '#166534',   // dark green
+            house:        '#b45309',   // amber
+            skyscraper:   '#4f46e5',   // indigo
+            restaurant:   '#dc2626',   // bright red
+            clothshop:    '#2563eb',   // blue
+            barbershop:   '#7c3aed',   // purple
+            policestation:'#1d4ed8',   // dark blue + brighter
+            park:         '#16a34a',   // bright green
+            river:        '#1d4ed8',   // blue
+            mountain:     '#6b7280',   // gray
+            construction: '#d97706',   // orange
+          };
+
+          for (let x = 0; x < gridSize; x++) {
+            for (let z = 0; z < gridSize; z++) {
+              const cell = city.grid?.[x]?.[z];
+              if (!cell || cell.type === 'empty') continue;
+              const color = cellColorMap[cell.type];
+              if (!color) continue;
+              ctx.fillStyle = color;
+              ctx.fillRect(
+                Math.floor(x * cellPx),
+                Math.floor(z * cellPx),
+                Math.ceil(cellPx),
+                Math.ceil(cellPx),
+              );
+            }
+          }
+
+          // ── Shop POI dots (shown on both sizes) ─────────────────────────────
+          const shopColors: Record<string, string> = {
+            restaurant:   '#fca5a5',   // red glow
+            clothshop:    '#93c5fd',   // blue glow
+            barbershop:   '#c4b5fd',   // purple glow
+            policestation:'#60a5fa',   // blue glow
+          };
+          const shopEmojis: Record<string, string> = {
+            restaurant: '🍔', clothshop: '👕', barbershop: '✂️', policestation: '🚔',
+          };
+
+          for (let x = 0; x < gridSize; x++) {
+            for (let z = 0; z < gridSize; z++) {
+              const cell = city.grid?.[x]?.[z];
+              if (!cell) continue;
+              const dotColor = shopColors[cell.type];
+              if (!dotColor) continue;
+
+              const cx = x * cellPx + cellPx / 2;
+              const cz = z * cellPx + cellPx / 2;
+              const r = Math.max(3.5, cellPx * 0.6);
+
+              // Glow halo
+              const grad = ctx.createRadialGradient(cx, cz, 0, cx, cz, r * 2);
+              grad.addColorStop(0, dotColor + 'cc');
+              grad.addColorStop(1, dotColor + '00');
+              ctx.beginPath();
+              ctx.arc(cx, cz, r * 2, 0, Math.PI * 2);
+              ctx.fillStyle = grad;
+              ctx.fill();
+
+              // Solid dot
+              ctx.beginPath();
+              ctx.arc(cx, cz, r, 0, Math.PI * 2);
+              ctx.fillStyle = dotColor;
+              ctx.fill();
+
+              // Emoji label (full map only)
+              if (size >= 300) {
+                ctx.font = `${Math.max(9, cellPx * 0.9)}px serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(shopEmojis[cell.type], cx, cz);
+              }
+            }
+          }
+
+          // ── Player direction arrow ──────────────────────────────────────────
+          const player = city.player;
+          if (player) {
+            // Convert Three.js world coords → grid index → canvas px
+            // worldX = gx * cellSize - halfGrid + cellSize/2  →  gx = (worldX + halfGrid) / cellSize - 0.5
+            const worldX = player.mesh.position.x;
+            const worldZ = player.mesh.position.z;
+            const gx = (worldX + halfGrid) / CELL_SIZE;
+            const gz = (worldZ + halfGrid) / CELL_SIZE;
+            const cx = gx * cellPx;
+            const cz = gz * cellPx;
+            const angle = player.mesh.rotation.y;
+            const r = Math.max(5, cellPx * 1.2);
+
+            // Outer glow
+            ctx.beginPath();
+            ctx.arc(cx, cz, r * 1.8, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(59,130,246,0.3)';
+            ctx.fill();
+
+            // Arrow triangle
+            ctx.save();
+            ctx.translate(cx, cz);
+            ctx.rotate(-angle);
+            ctx.beginPath();
+            ctx.moveTo(0, -r * 1.5);       // nose (forward)
+            ctx.lineTo(r * 0.8, r);        // right base
+            ctx.lineTo(-r * 0.8, r);       // left base
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 1.5;
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+          }
+        };
+
+        if (minimapCanvasRef.current) {
+          drawMinimap(minimapCanvasRef.current, 140);
+        }
+        if (minimapFullCanvasRef.current) {
+          drawMinimap(minimapFullCanvasRef.current, 480);
+        }
       }
-    }, 100);
+    }, 150);
 
     // Global unauthorized event handler (used to force log out when single system login fails)
     const handleUnauthorized = () => {
@@ -2421,6 +2582,114 @@ export default function CitySimulator() {
               <span>STARVING! Go eat now!</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── MINIMAP ───────────────────────────────────────────────────────────────── */}
+      {hasSpawned && (
+        <div className="absolute bottom-36 right-4 z-20 flex flex-col items-center gap-1 pointer-events-auto">
+          {/* Circle minimap */}
+          <div
+            className="relative cursor-pointer group"
+            onClick={() => setShowMinimapFull(true)}
+            title="Click to expand map"
+          >
+            <canvas
+              ref={minimapCanvasRef}
+              width={140}
+              height={140}
+              className="rounded-full border-2 border-slate-600/80 shadow-2xl shadow-black/60 ring-1 ring-white/10 transition-all duration-300 group-hover:border-cyan-500/60 group-hover:ring-cyan-500/20 group-hover:scale-105"
+              style={{ display: 'block', width: '140px', height: '140px' }}
+            />
+            {/* Expand icon */}
+            <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-slate-900/80 border border-slate-600/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <svg className="w-2.5 h-2.5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+            </div>
+          </div>
+          <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Map</span>
+        </div>
+      )}
+
+      {/* ── FULLSCREEN MAP OVERLAY ────────────────────────────────────────────────── */}
+      {showMinimapFull && (
+        <div
+          className="fixed inset-0 z-[180] flex items-center justify-center bg-black/80 backdrop-blur-md"
+          onClick={() => setShowMinimapFull(false)}
+        >
+          <div
+            className="relative bg-slate-950/95 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800/60">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🗺️</span>
+                <span className="text-sm font-black text-slate-200 tracking-wide">City Map</span>
+                <span className="text-[9px] text-slate-500 ml-1">Click a location to zoom camera there</span>
+              </div>
+              <button onClick={() => setShowMinimapFull(false)} className="text-slate-500 hover:text-white transition-colors cursor-pointer p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Canvas */}
+            <div className="p-3">
+              <canvas
+                ref={minimapFullCanvasRef}
+                width={480}
+                height={480}
+                className="rounded-xl border border-slate-700/40 cursor-crosshair block"
+                onClick={(e) => {
+                  // Teleport camera to clicked position
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const mapX = e.clientX - rect.left;
+                  const mapZ = e.clientY - rect.top;
+                  const gridSize = cityRef.current?.gridSize ?? 32;
+                  const cellPx = 480 / gridSize;
+                  const worldX = (mapX / cellPx - gridSize / 2) * 2;
+                  const worldZ = (mapZ / cellPx - gridSize / 2) * 2;
+                  if (cityRef.current) {
+                    cityRef.current.camera.position.x = worldX;
+                    cityRef.current.camera.position.z = worldZ;
+                    cityRef.current.camera.position.y = 30;
+                    cityRef.current.controls?.target.set(worldX, 0, worldZ);
+                    cityRef.current.controls?.update();
+                  }
+                  setShowMinimapFull(false);
+                }}
+              />
+            </div>
+
+            {/* Legend */}
+            <div className="px-5 pb-4 flex flex-wrap gap-x-4 gap-y-1.5">
+              {[
+                { color: '#374151', label: 'Road' },
+                { color: '#1a4d2e', label: 'Tree' },
+                { color: '#92400e', label: 'House' },
+                { color: '#312e81', label: 'Skyscraper' },
+                { color: '#7f1d1d', label: '🍔 Restaurant' },
+                { color: '#1e3a5f', label: '👕 Cloth Shop / 🚔 Police' },
+                { color: '#4a1d96', label: '✂️ Barber' },
+                { color: '#14532d', label: 'Park' },
+                { color: '#1e40af', label: 'River' },
+              ].map(l => (
+                <div key={l.label} className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: l.color }} />
+                  <span className="text-[10px] text-slate-400">{l.label}</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-1.5">
+                <div className="w-3 h-3 rounded-full bg-white flex-shrink-0" />
+                <span className="text-[10px] text-slate-400">You</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-3 h-3 rounded-full bg-cyan-400 flex-shrink-0" />
+                <span className="text-[10px] text-slate-400">Other Players</span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

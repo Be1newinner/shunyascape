@@ -55,7 +55,7 @@ export class ThreeCity {
   // Three.js Core
   public container: HTMLDivElement;
   private scene!: THREE.Scene;
-  private camera!: THREE.PerspectiveCamera;
+  public camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
   private cameraManager!: CameraManager;
   public controls!: any; // OrbitControls

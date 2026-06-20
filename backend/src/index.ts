@@ -719,6 +719,19 @@ app.get("/api/grid", async (req: express.Request, res: express.Response) => {
             targetType = "tree";
           }
 
+          // Default shops: one of each in the four city quadrants
+          else if ((x === 6 && z === 6) || (x === 25 && z === 6) || (x === 6 && z === 25) || (x === 25 && z === 25)) {
+            const shopTypes: Record<string, string> = {
+              '6_6': 'restaurant',
+              '25_6': 'clothshop',
+              '6_25': 'barbershop',
+              '25_25': 'policestation',
+            };
+            type = shopTypes[`${x}_${z}`];
+            constructionProgress = 100;
+            targetType = type;
+          }
+
           initialCells.push({
             x,
             z,
@@ -1324,6 +1337,34 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
                     type: "grid-updated",
                     cell,
                   });
+                }
+              }
+            }
+            break;
+
+          case "admin-revenue":
+            // Player spent coins in a shop — credit the admin user
+            if (userId) {
+              const amount = Number(msg.amount) || 0;
+              if (amount > 0) {
+                // Find the admin in cache and credit them
+                for (const [, u] of userCache.entries()) {
+                  if (u.role === "admin") {
+                    u.shunyaCoins = (u.shunyaCoins || 0) + amount;
+                    u.dirty = true;
+                    // Notify admin client of their updated coins
+                    const adminWs = activeClients.get(u.id);
+                    if (adminWs && adminWs.readyState === WebSocket.OPEN) {
+                      adminWs.send(JSON.stringify({
+                        type: "admin-coins-updated",
+                        shunyaCoins: u.shunyaCoins,
+                        fromUser: userCache.get(userId)?.name ?? "Unknown",
+                        amount,
+                      }));
+                    }
+                    console.log(`Admin revenue: +${amount} SC from user ${userCache.get(userId)?.name}`);
+                    break;
+                  }
                 }
               }
             }

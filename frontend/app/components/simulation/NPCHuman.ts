@@ -408,7 +408,7 @@ export function loadAllDatabaseUsers(
     const mesh = createRefinedHumanMesh(ctx, clothingColor, false, agent);
     humanGroup.add(mesh);
 
-    const nameTag = createNameTag(u.name);
+    const nameTag = createNameTag(`[Lvl ${u.level || 1}] ${u.name}`);
     humanGroup.add(nameTag);
 
     ctx.scene.add(humanGroup);
@@ -523,7 +523,7 @@ export function addDatabaseUser(
   const mesh = createRefinedHumanMesh(ctx, clothingColor, false, agent);
   humanGroup.add(mesh);
 
-  const nameTag = createNameTag(u.name);
+  const nameTag = createNameTag(`[Lvl ${u.level || 1}] ${u.name}`);
   humanGroup.add(nameTag);
 
   ctx.scene.add(humanGroup);
@@ -582,6 +582,25 @@ export function updateHumans(
   humansList.forEach(h => {
     // Skip updates if they are sitting in a car
     if (h.seatedInVehicleId) return;
+
+    // Skip player updates if they are working (locked animation)
+    if (h.isPlayer && h.state === 'working') {
+      if (h.actionTimer !== undefined && h.actionTimer > 0) {
+        h.actionTimer -= delta;
+        if (h.actionTimer <= 0) h.actionState = 'idle';
+      }
+      if (h.actionState === 'jumping') {
+        if (h.jumpVelocity === undefined) h.jumpVelocity = 0;
+        h.mesh.position.y += h.jumpVelocity * delta;
+        h.jumpVelocity -= 15.0 * delta;
+        if (h.mesh.position.y <= 0) {
+          h.mesh.position.y = 0;
+          h.jumpVelocity = 0;
+          h.actionState = 'idle';
+        }
+      }
+      return;
+    }
 
     // 1. Process action timer
     if (h.actionTimer !== undefined && h.actionTimer > 0) {
@@ -669,6 +688,11 @@ export function updateHumans(
 
           h.x = h.mesh.position.x;
           h.z = h.mesh.position.z;
+
+          if (typeof window !== "undefined") {
+            const actualMoveDist = Math.sqrt((canMoveX ? moveVec.x : 0) ** 2 + (canMoveZ ? moveVec.z : 0) ** 2) * speed * delta;
+            window.dispatchEvent(new CustomEvent("shunya-walked", { detail: { distance: actualMoveDist } }));
+          }
         } else {
           h.state = 'idle';
         }

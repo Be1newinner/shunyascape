@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SimContext, AnimalAgent } from './Types';
+import { createNameTag } from './NPCHuman';
 
 export function createAnimalMesh(
   ctx: SimContext,
@@ -596,6 +597,13 @@ export function spawnAnimals(ctx: SimContext, animalsList: AnimalAgent[]) {
     const agent: Partial<AnimalAgent> = {};
     const mesh = createAnimalMesh(ctx, type, agent);
     group.add(mesh);
+    
+    if (type === 'dog') {
+      const nameTag = createNameTag("Fido [Lost Dog]");
+      nameTag.position.set(0, 0.6, 0);
+      group.add(nameTag);
+    }
+    
     ctx.scene.add(group);
 
     const fullAgent: AnimalAgent = {

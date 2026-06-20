@@ -50,6 +50,12 @@ interface CachedUser {
   z: number;
   clothingColor: number;
   dirty: boolean;
+  shunyaCoins: number;
+  level: number;
+  xp: number;
+  wood: number;
+  unlockedPermits: string[];
+  completedAchievements: string[];
 }
 
 const userCache = new Map<string, CachedUser>();
@@ -86,6 +92,12 @@ async function initCache() {
         x: u.x,
         z: u.z,
         clothingColor: u.clothingColor,
+        shunyaCoins: u.shunyaCoins !== undefined ? u.shunyaCoins : 100,
+        level: u.level !== undefined ? u.level : 1,
+        xp: u.xp !== undefined ? u.xp : 0,
+        wood: u.wood !== undefined ? u.wood : 0,
+        unlockedPermits: u.unlockedPermits || [],
+        completedAchievements: u.completedAchievements || [],
         dirty: false,
       });
     });
@@ -126,12 +138,25 @@ setInterval(async () => {
       const bulkOps = dirtyUsers.map((u) => ({
         updateOne: {
           filter: { _id: u.id },
-          update: { $set: { x: u.x, z: u.z, lastX: u.x, lastZ: u.z } },
+          update: { 
+            $set: { 
+              x: u.x, 
+              z: u.z, 
+              lastX: u.x, 
+              lastZ: u.z,
+              shunyaCoins: u.shunyaCoins,
+              level: u.level,
+              xp: u.xp,
+              wood: u.wood,
+              unlockedPermits: u.unlockedPermits,
+              completedAchievements: u.completedAchievements
+            } 
+          },
         },
       }));
       await User.bulkWrite(bulkOps);
       dirtyUsers.forEach((u) => (u.dirty = false));
-      console.log(`Flushed ${dirtyUsers.length} user positions to database.`);
+      console.log(`Flushed ${dirtyUsers.length} user stats and positions to database.`);
     }
 
     // 3. Flush NPCs
@@ -193,10 +218,23 @@ async function flushUserPosition(userId: string) {
       await connectDB();
       await User.updateOne(
         { _id: userId },
-        { $set: { x: u.x, z: u.z, lastX: u.x, lastZ: u.z } },
+        { 
+          $set: { 
+            x: u.x, 
+            z: u.z, 
+            lastX: u.x, 
+            lastZ: u.z,
+            shunyaCoins: u.shunyaCoins,
+            level: u.level,
+            xp: u.xp,
+            wood: u.wood,
+            unlockedPermits: u.unlockedPermits,
+            completedAchievements: u.completedAchievements
+          } 
+        },
       );
       u.dirty = false;
-      console.log(`Immediately flushed user ${u.name} position on disconnect.`);
+      console.log(`Immediately flushed user ${u.name} position and stats on disconnect.`);
     } catch (error) {
       console.error(`Failed to flush user ${userId} on disconnect:`, error);
     }
@@ -227,6 +265,12 @@ app.get(
           x: req.user.x,
           z: req.user.z,
           clothingColor: req.user.clothingColor,
+          shunyaCoins: req.user.shunyaCoins !== undefined ? req.user.shunyaCoins : 100,
+          level: req.user.level !== undefined ? req.user.level : 1,
+          xp: req.user.xp !== undefined ? req.user.xp : 0,
+          wood: req.user.wood !== undefined ? req.user.wood : 0,
+          unlockedPermits: req.user.unlockedPermits || [],
+          completedAchievements: req.user.completedAchievements || [],
         },
       });
     } catch (error: any) {
@@ -286,6 +330,12 @@ app.post(
         x: user.x,
         z: user.z,
         clothingColor: user.clothingColor,
+        shunyaCoins: user.shunyaCoins !== undefined ? user.shunyaCoins : 100,
+        level: user.level !== undefined ? user.level : 1,
+        xp: user.xp !== undefined ? user.xp : 0,
+        wood: user.wood !== undefined ? user.wood : 0,
+        unlockedPermits: user.unlockedPermits || [],
+        completedAchievements: user.completedAchievements || [],
         dirty: false,
       });
 
@@ -314,6 +364,12 @@ app.post(
           x: user.x,
           z: user.z,
           clothingColor: user.clothingColor,
+          shunyaCoins: user.shunyaCoins !== undefined ? user.shunyaCoins : 100,
+          level: user.level !== undefined ? user.level : 1,
+          xp: user.xp !== undefined ? user.xp : 0,
+          wood: user.wood !== undefined ? user.wood : 0,
+          unlockedPermits: user.unlockedPermits || [],
+          completedAchievements: user.completedAchievements || [],
         },
       });
     } catch (error: any) {
@@ -395,6 +451,12 @@ app.post(
         x: newUser.x,
         z: newUser.z,
         clothingColor: newUser.clothingColor,
+        shunyaCoins: 100,
+        level: 1,
+        xp: 0,
+        wood: 0,
+        unlockedPermits: [],
+        completedAchievements: [],
         dirty: false,
       });
 
@@ -423,6 +485,12 @@ app.post(
           x: newUser.x,
           z: newUser.z,
           clothingColor: newUser.clothingColor,
+          shunyaCoins: 100,
+          level: 1,
+          xp: 0,
+          wood: 0,
+          unlockedPermits: [],
+          completedAchievements: [],
         },
       });
     } catch (error: any) {
@@ -519,7 +587,13 @@ app.get(
         role: u.role,
         x: u.x,
         z: u.z,
-        clothingColor: u.clothingColor
+        clothingColor: u.clothingColor,
+        shunyaCoins: u.shunyaCoins !== undefined ? u.shunyaCoins : 100,
+        level: u.level !== undefined ? u.level : 1,
+        xp: u.xp !== undefined ? u.xp : 0,
+        wood: u.wood !== undefined ? u.wood : 0,
+        unlockedPermits: u.unlockedPermits || [],
+        completedAchievements: u.completedAchievements || [],
       }));
 
       // Adjust timeOfDay in memory before response
@@ -591,37 +665,55 @@ app.get("/api/grid", async (req: express.Request, res: express.Response) => {
     await connectDB();
 
     const cellsCount = await GridCell.countDocuments();
-    if (cellsCount === 0) {
-      const center = 10;
+    if (cellsCount !== 1024) {
+      console.log(`Re-initializing grid: expected 1024 cells, found ${cellsCount}. Wiping database grid...`);
+      await GridCell.deleteMany({});
+
+      const center = 16;
       const initialCells = [];
       const treeSpots = new Set<string>();
-      const defaultTrees = [
-        { x: 3, z: 3 }, { x: 5, z: 12 }, { x: 15, z: 4 }, { x: 16, z: 15 },
-        { x: 2, z: 16 }, { x: 4, z: 8 }, { x: 14, z: 14 }, { x: 6, z: 2 },
-        { x: 17, z: 8 }, { x: 8, z: 16 }, { x: 12, z: 3 }, { x: 13, z: 9 },
-        { x: 7, z: 15 }, { x: 3, z: 11 }, { x: 11, z: 17 },
-      ];
-      defaultTrees.forEach((t) => treeSpots.add(`${t.x}_${t.z}`));
+      
+      // Scatter 35 random trees
+      while (treeSpots.size < 35) {
+        const tx = Math.floor(Math.random() * 32);
+        const tz = Math.floor(Math.random() * 32);
+        // Keep trees away from central road
+        if (Math.abs(tx - center) > 1) {
+          treeSpots.add(`${tx}_${tz}`);
+        }
+      }
 
-      for (let x = 0; x < 20; x++) {
-        for (let z = 0; z < 20; z++) {
+      for (let x = 0; x < 32; x++) {
+        for (let z = 0; z < 32; z++) {
           let type = "empty";
           let constructionProgress = 0;
           let targetType = "empty";
 
-          if (x === center && z >= 4 && z <= 15) {
+          // Main vertical road
+          if (x === center && z >= 4 && z <= 27) {
             type = "road";
             constructionProgress = 100;
             targetType = "road";
-          } else if (
-            (x === center - 1 && z === 6) ||
-            (x === center + 1 && z === 10) ||
-            (x === center - 1 && z === 14)
+          }
+          // Secondary horizontal road
+          else if (z === center && x >= 4 && x <= 27) {
+            type = "road";
+            constructionProgress = 100;
+            targetType = "road";
+          } 
+          // Default houses around intersections
+          else if (
+            (x === center - 1 && z === 8) ||
+            (x === center + 1 && z === 22) ||
+            (x === 8 && z === center - 1) ||
+            (x === 22 && z === center + 1)
           ) {
             type = "house";
             constructionProgress = 100;
             targetType = "house";
-          } else if (treeSpots.has(`${x}_${z}`)) {
+          } 
+          // Trees
+          else if (treeSpots.has(`${x}_${z}`)) {
             type = "tree";
             constructionProgress = 100;
             targetType = "tree";
@@ -639,6 +731,7 @@ app.get("/api/grid", async (req: express.Request, res: express.Response) => {
       }
 
       await GridCell.insertMany(initialCells);
+      console.log("32x32 grid successfully initialized in database.");
     }
 
     const cells = await GridCell.find({});
@@ -652,7 +745,7 @@ app.get("/api/grid", async (req: express.Request, res: express.Response) => {
 // POST /api/grid
 app.post(
   "/api/grid",
-  requireAdmin as express.RequestHandler,
+  requireAuth as express.RequestHandler,
   async (req: AuthenticatedRequest, res: express.Response) => {
     try {
       await connectDB();
@@ -660,6 +753,16 @@ app.post(
 
       if (x === undefined || z === undefined) {
         res.status(400).json({ error: "Coordinates x and z are required" });
+        return;
+      }
+
+      const isUserAdmin = req.user?.role === "admin";
+      const target = targetType || type || "empty";
+      const isDemolish = target === "empty";
+      const hasPermit = req.user?.unlockedPermits && req.user.unlockedPermits.includes(target);
+
+      if (!isUserAdmin && (isDemolish || !hasPermit)) {
+        res.status(403).json({ error: "Insufficient building permissions or missing permit" });
         return;
       }
 
@@ -1037,6 +1140,12 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
           x: dbUser.x,
           z: dbUser.z,
           clothingColor: dbUser.clothingColor,
+          shunyaCoins: dbUser.shunyaCoins !== undefined ? dbUser.shunyaCoins : 100,
+          level: dbUser.level !== undefined ? dbUser.level : 1,
+          xp: dbUser.xp !== undefined ? dbUser.xp : 0,
+          wood: dbUser.wood !== undefined ? dbUser.wood : 0,
+          unlockedPermits: dbUser.unlockedPermits || [],
+          completedAchievements: dbUser.completedAchievements || [],
           dirty: false,
         });
       }
@@ -1051,7 +1160,13 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
           role: dbUser.role,
           x: dbUser.x,
           z: dbUser.z,
-          clothingColor: dbUser.clothingColor
+          clothingColor: dbUser.clothingColor,
+          shunyaCoins: cached ? cached.shunyaCoins : (dbUser.shunyaCoins !== undefined ? dbUser.shunyaCoins : 100),
+          level: cached ? cached.level : (dbUser.level !== undefined ? dbUser.level : 1),
+          xp: cached ? cached.xp : (dbUser.xp !== undefined ? dbUser.xp : 0),
+          wood: cached ? cached.wood : (dbUser.wood !== undefined ? dbUser.wood : 0),
+          unlockedPermits: cached ? cached.unlockedPermits : (dbUser.unlockedPermits || []),
+          completedAchievements: cached ? cached.completedAchievements : (dbUser.completedAchievements || []),
         }
       });
     } else {
@@ -1074,7 +1189,13 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
             role: u.role,
             x: u.x,
             z: u.z,
-            clothingColor: u.clothingColor
+            clothingColor: u.clothingColor,
+            shunyaCoins: u.shunyaCoins,
+            level: u.level,
+            xp: u.xp,
+            wood: u.wood,
+            unlockedPermits: u.unlockedPermits,
+            completedAchievements: u.completedAchievements,
           }))
       })
     );
@@ -1102,6 +1223,34 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
                 x,
                 z,
               });
+            }
+            break;
+
+          case "progress-update":
+            if (userId) {
+              const cached = userCache.get(userId);
+              if (cached) {
+                const { shunyaCoins, level, xp, wood, unlockedPermits, completedAchievements } = msg;
+                if (shunyaCoins !== undefined) cached.shunyaCoins = Number(shunyaCoins);
+                if (level !== undefined) cached.level = Number(level);
+                if (xp !== undefined) cached.xp = Number(xp);
+                if (wood !== undefined) cached.wood = Number(wood);
+                if (unlockedPermits !== undefined) cached.unlockedPermits = unlockedPermits;
+                if (completedAchievements !== undefined) cached.completedAchievements = completedAchievements;
+                cached.dirty = true;
+
+                // Broadcast progression update to all other clients
+                broadcast({
+                  type: "player-progressed",
+                  userId,
+                  shunyaCoins: cached.shunyaCoins,
+                  level: cached.level,
+                  xp: cached.xp,
+                  wood: cached.wood,
+                  unlockedPermits: cached.unlockedPermits,
+                  completedAchievements: cached.completedAchievements,
+                });
+              }
             }
             break;
 
@@ -1150,26 +1299,32 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
           case "grid-update":
             if (userId) {
               const cached = userCache.get(userId);
-              if (cached && cached.role === "admin") {
-                const { x, z, type, targetType, constructionProgress, height } = msg.cell;
-                await connectDB();
-                const cell = await GridCell.findOneAndUpdate(
-                  { x: Number(x), z: Number(z) },
-                  {
-                    type: type !== undefined ? type : "empty",
-                    targetType: targetType !== undefined ? targetType : "empty",
-                    constructionProgress:
-                      constructionProgress !== undefined ? Number(constructionProgress) : 0,
-                    height: height !== undefined ? Number(height) : 0,
-                  },
-                  { new: true, upsert: true },
-                );
+              if (cached) {
+                const target = msg.cell.targetType || msg.cell.type || "empty";
+                const isDemolish = target === "empty";
+                const hasPermit = cached.unlockedPermits && cached.unlockedPermits.includes(target);
 
-                // Broadcast updated cell instantly
-                broadcast({
-                  type: "grid-updated",
-                  cell,
-                });
+                if (cached.role === "admin" || (!isDemolish && hasPermit)) {
+                  const { x, z, type, targetType, constructionProgress, height } = msg.cell;
+                  await connectDB();
+                  const cell = await GridCell.findOneAndUpdate(
+                    { x: Number(x), z: Number(z) },
+                    {
+                      type: type !== undefined ? type : "empty",
+                      targetType: targetType !== undefined ? targetType : "empty",
+                      constructionProgress:
+                        constructionProgress !== undefined ? Number(constructionProgress) : 0,
+                      height: height !== undefined ? Number(height) : 0,
+                    },
+                    { new: true, upsert: true },
+                  );
+
+                  // Broadcast updated cell instantly
+                  broadcast({
+                    type: "grid-updated",
+                    cell,
+                  });
+                }
               }
             }
             break;

@@ -21,7 +21,9 @@ import {
   Pause,
   Compass,
   LogOut,
-  X
+  X,
+  Trophy,
+  Award
 } from 'lucide-react';
 import { ThreeCity } from './simulation/ThreeCity';
 import { BuildType, CityStats } from './simulation/Types';
@@ -30,6 +32,7 @@ export default function CitySimulator() {
   const containerRef = useRef<HTMLDivElement>(null);
   const cityRef = useRef<ThreeCity | null>(null);
 
+  // States
   // States
   const [buildMode, setBuildMode] = useState<BuildType>('road');
   const [stats, setStats] = useState<CityStats>({
@@ -48,6 +51,46 @@ export default function CitySimulator() {
   const [showControls, setShowControls] = useState<boolean>(false);
   const [showDeveloperPopup, setShowDeveloperPopup] = useState<boolean>(false);
   const [showProfilePopup, setShowProfilePopup] = useState<boolean>(false);
+
+  // Progression & Economy States
+  const [shunyaCoins, setShunyaCoins] = useState<number>(100);
+  const [wood, setWood] = useState<number>(0);
+  const [level, setLevel] = useState<number>(1);
+  const [xp, setXp] = useState<number>(0);
+  const [unlockedPermits, setUnlockedPermits] = useState<string[]>([]);
+  const [completedAchievements, setCompletedAchievements] = useState<string[]>([]);
+
+  // Quest Tracker States
+  const [fidoQuestState, setFidoQuestState] = useState<'not_started' | 'active' | 'fido_found' | 'completed'>('not_started');
+  const [treesPlantedCount, setTreesPlantedCount] = useState<number>(0);
+  const [skyscraperClimbed, setSkyscraperClimbed] = useState<boolean>(false);
+
+  // Telemetry statistics
+  const [distanceWalked, setDistanceWalked] = useState<number>(0);
+  const [jumpsCount, setJumpsCount] = useState<number>(0);
+  const [worksCount, setWorksCount] = useState<number>(0);
+  const [buildsCount, setBuildsCount] = useState<number>(0);
+
+  // Multiplayer Telemetry
+  const [otherPlayers, setOtherPlayers] = useState<any[]>([]);
+
+  // UI Dialog overlays & popups
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'info' | 'success' | 'warning' }[]>([]);
+  const [activeNpcDialog, setActiveNpcDialog] = useState<{ npcName: string; text: string; options: { text: string; action: () => void }[] } | null>(null);
+  const [standingCell, setStandingCell] = useState<{ type: string; x: number; z: number } | null>(null);
+  const [jobProgress, setJobProgress] = useState<number>(-1); // -1 means idle
+  const [showPermitStore, setShowPermitStore] = useState<boolean>(false);
+  const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
+  const [showAchievements, setShowAchievements] = useState<boolean>(false);
+
+  // Toast notifier helper
+  const showToast = (message: string, type: 'info' | 'success' | 'warning' = 'info') => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
 
   // Authentication & Session states
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
@@ -118,13 +161,20 @@ export default function CitySimulator() {
       const user = data.user;
       localStorage.setItem('shunyascape_user', JSON.stringify(user));
       setCurrentUser(user);
+      setShunyaCoins(user.shunyaCoins || 100);
+      setWood(user.wood || 0);
+      setLevel(user.level || 1);
+      setXp(user.xp || 0);
+      setUnlockedPermits(user.unlockedPermits || []);
+      setCompletedAchievements(user.completedAchievements || []);
       setHasSpawned(true);
       setShowAuthModal(false);
       setAuthLoading(false);
+      showToast(`Welcome back, ${user.name}!`, 'success');
 
       if (cityRef.current) {
         cityRef.current.isAdmin = user.role === 'admin';
-        cityRef.current.spawnPlayer(user.name, user.x, user.z, user.email, user.clothingColor, user.id);
+        cityRef.current.spawnPlayer(user.name, user.x, user.z, user.email, user.clothingColor, user.id, user.level || 1);
         setSoundEnabled(true);
         cityRef.current.audio.toggle(true);
       }
@@ -134,6 +184,353 @@ export default function CitySimulator() {
       setAuthLoading(false);
     }
   };
+
+  // Helper to add player coins/XP/wood and sync them
+  const addProgress = (coinsGained: number, xpGained: number, woodGained: number = 0, achievementsOverride?: string[], permitsOverride?: string[]) => {
+    setShunyaCoins(prevCoins => {
+      const nextCoins = prevCoins + coinsGained;
+      
+      setXp(prevXp => {
+        let nextXp = prevXp + xpGained;
+        
+        setLevel(prevLevel => {
+          let nextLevel = prevLevel;
+          let xpNeeded = nextLevel * 100;
+          
+          while (nextXp >= xpNeeded) {
+            nextLevel += 1;
+            nextXp -= xpNeeded;
+            showToast(`Level Up! Reached Level ${nextLevel}!`, 'success');
+            if (cityRef.current) {
+              cityRef.current.audio.playSpawn(); // level up sound
+              cityRef.current.updatePlayerLevel(nextLevel);
+            }
+            xpNeeded = nextLevel * 100;
+          }
+          
+          setWood(prevWood => {
+            const nextWood = prevWood + woodGained;
+            
+            // Sync with backend websocket
+            const permits = permitsOverride !== undefined ? permitsOverride : unlockedPermits;
+            const achs = achievementsOverride !== undefined ? achievementsOverride : completedAchievements;
+            
+            if (cityRef.current?.ws && cityRef.current.ws.readyState === WebSocket.OPEN) {
+              cityRef.current.ws.send(JSON.stringify({
+                type: 'progress-update',
+                shunyaCoins: nextCoins,
+                level: nextLevel,
+                xp: nextXp,
+                wood: nextWood,
+                unlockedPermits: permits,
+                completedAchievements: achs
+              }));
+            }
+            
+            return nextWood;
+          });
+          
+          return nextLevel;
+        });
+        
+        return nextXp;
+      });
+      
+      return nextCoins;
+    });
+  };
+
+  const buyPermit = (permitKey: string, cost: number) => {
+    if (shunyaCoins < cost) {
+      showToast("Not enough ShunyaCoins!", "warning");
+      return;
+    }
+    const nextPermits = [...unlockedPermits, permitKey];
+    setUnlockedPermits(nextPermits);
+    addProgress(-cost, 10, 0, undefined, nextPermits);
+    showToast(`Purchased ${permitKey.charAt(0).toUpperCase() + permitKey.slice(1)} Permit!`, 'success');
+  };
+
+  const triggerUnlock = (achKey: string, title: string, xpReward: number) => {
+    if (completedAchievements.includes(achKey)) return;
+    const nextAchs = [...completedAchievements, achKey];
+    setCompletedAchievements(nextAchs);
+    showToast(`Achievement Unlocked: ${title}! (+${xpReward} XP)`, 'success');
+    addProgress(0, xpReward, 0, nextAchs);
+    if (cityRef.current) {
+      cityRef.current.audio.playPop();
+    }
+  };
+
+  const startJob = (duration: number, title: string, onComplete: () => void) => {
+    if (cityRef.current) {
+      cityRef.current.startWorking();
+    }
+    setJobProgress(0);
+    showToast(title, 'info');
+    
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(100, Math.floor((elapsed / duration) * 100));
+      setJobProgress(progress);
+      
+      if (progress >= 100) {
+        clearInterval(interval);
+        setJobProgress(-1);
+        if (cityRef.current) {
+          cityRef.current.stopWorking();
+        }
+        onComplete();
+      }
+    }, 100);
+  };
+
+  const openNpcDialogue = (npc: any) => {
+    const npcName = npc.playerName || `Citizen ${npc.id.split('_')[1] || npc.id}`;
+    
+    if (fidoQuestState === 'not_started') {
+      setActiveNpcDialog({
+        npcName,
+        text: `Hello there! My voxel dog Fido ran away into the corners of the city. If you find him and walk near him, he'll follow you back. I'll reward you with 150 ShunyaCoins!`,
+        options: [
+          {
+            text: "Sure, I'll search for Fido!",
+            action: () => {
+              setFidoQuestState('active');
+              showToast("Quest Started: Find Fido", 'info');
+              setActiveNpcDialog(null);
+            }
+          },
+          {
+            text: "Maybe another time.",
+            action: () => setActiveNpcDialog(null)
+          }
+        ]
+      });
+    } else if (fidoQuestState === 'active') {
+      setActiveNpcDialog({
+        npcName,
+        text: `Have you found Fido yet? He's a brown dog. Look around the city outskirts!`,
+        options: [
+          {
+            text: "Still looking...",
+            action: () => setActiveNpcDialog(null)
+          }
+        ]
+      });
+    } else if (fidoQuestState === 'fido_found') {
+      setActiveNpcDialog({
+        npcName,
+        text: `Oh! Fido! You found him! Thank you so much! Here is your reward as promised.`,
+        options: [
+          {
+            text: "You're welcome!",
+            action: () => {
+              setFidoQuestState('completed');
+              triggerUnlock('npc_helper', 'NPC Helper', 50);
+              addProgress(150, 0); // Quest reward coins
+              setActiveNpcDialog(null);
+            }
+          }
+        ]
+      });
+    } else {
+      const lines = [
+        "What a beautiful persistent city we are building!",
+        "Check out the Permit Store if you want to unlock building tools.",
+        "Ensure you don't get trapped inside buildings! Use the stuck button to teleport out.",
+        "Collect glowing energy crystals to gain huge experience boosts!",
+        "Kicking or punching trees drops wood resource crates."
+      ];
+      const randomLine = lines[Math.floor(Math.random() * lines.length)];
+      setActiveNpcDialog({
+        npcName,
+        text: randomLine,
+        options: [
+          {
+            text: "Nice chatting with you!",
+            action: () => setActiveNpcDialog(null)
+          }
+        ]
+      });
+    }
+  };
+
+  // Achievement logic triggers
+  useEffect(() => {
+    if (!hasSpawned) return;
+    if (distanceWalked >= 150) triggerUnlock('first_steps', 'First Steps', 50);
+    if (shunyaCoins >= 500) triggerUnlock('wealthy_citizen', 'Wealthy Citizen', 50);
+    if (jumpsCount >= 30) triggerUnlock('high_flyer', 'High Flyer', 50);
+    if (wood >= 25 || treesPlantedCount >= 5) triggerUnlock('green_guard', 'Green Guard', 50);
+    if (buildsCount >= 10) triggerUnlock('dev_extraordinaire', 'Dev Extraordinaire', 100);
+  }, [distanceWalked, shunyaCoins, jumpsCount, wood, buildsCount, treesPlantedCount, hasSpawned]);
+
+  // Listeners for simulation custom events
+  useEffect(() => {
+    if (!hasSpawned) return;
+
+    const handleCollect = (e: Event) => {
+      const { coins, xp: x, wood: w } = (e as CustomEvent).detail;
+      addProgress(coins, x, w);
+    };
+
+    const handleHarvest = (e: Event) => {
+      const { coins, xp: x, wood: w } = (e as CustomEvent).detail;
+      addProgress(coins, x, w);
+    };
+
+    const handleBuildCompleted = () => {
+      setBuildsCount(prev => prev + 1);
+    };
+
+    const handleTreePlanted = () => {
+      setTreesPlantedCount(prev => {
+        if (prev >= 3) return prev;
+        const nextCount = prev + 1;
+        if (nextCount === 3) {
+          addProgress(100, 30);
+          showToast("Quest Completed: Plant 3 Trees! (+100 SC, +30 XP)", 'success');
+        }
+        return nextCount;
+      });
+    };
+
+    const handleWalked = (e: Event) => {
+      const { distance } = (e as CustomEvent).detail;
+      setDistanceWalked(prev => prev + distance);
+    };
+
+    const handleJumped = () => {
+      setJumpsCount(prev => prev + 1);
+    };
+
+    const handleCellChange = (e: Event) => {
+      const { type, x, z } = (e as CustomEvent).detail;
+      setStandingCell({ type, x, z });
+      if (type === 'skyscraper') {
+        triggerUnlock('skyscraper_climber', 'Skyscraper Climber', 100);
+        if (!skyscraperClimbed) {
+          setSkyscraperClimbed(true);
+          addProgress(200, 100);
+          showToast("Quest Completed: Skyscraper Climber! (+200 SC, +100 XP)", 'success');
+        }
+      } else if (type === 'house') {
+        triggerUnlock('skyscraper_climber', 'Skyscraper Climber', 100);
+      }
+    };
+
+    const handleFidoNear = () => {
+      if (fidoQuestState === 'active') {
+        setFidoQuestState('fido_found');
+        showToast("You found Fido! Bring him back to his owner.", 'success');
+        if (cityRef.current) {
+          cityRef.current.audio.playPop();
+        }
+      }
+    };
+
+    window.addEventListener('shunya-collect', handleCollect);
+    window.addEventListener('shunya-harvest', handleHarvest);
+    window.addEventListener('shunya-build-completed', handleBuildCompleted);
+    window.addEventListener('shunya-tree-planted', handleTreePlanted);
+    window.addEventListener('shunya-walked', handleWalked);
+    window.addEventListener('shunya-jumped', handleJumped);
+    window.addEventListener('shunya-cell-change', handleCellChange);
+    window.addEventListener('shunya-fido-near', handleFidoNear);
+
+    return () => {
+      window.removeEventListener('shunya-collect', handleCollect);
+      window.removeEventListener('shunya-harvest', handleHarvest);
+      window.removeEventListener('shunya-build-completed', handleBuildCompleted);
+      window.removeEventListener('shunya-tree-planted', handleTreePlanted);
+      window.removeEventListener('shunya-walked', handleWalked);
+      window.removeEventListener('shunya-jumped', handleJumped);
+      window.removeEventListener('shunya-cell-change', handleCellChange);
+      window.removeEventListener('shunya-fido-near', handleFidoNear);
+    };
+  }, [hasSpawned, shunyaCoins, level, xp, wood, unlockedPermits, completedAchievements, fidoQuestState, skyscraperClimbed]);
+
+  // Keypress listener for E (interaction key)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'e') {
+        // 1. Standing cell interaction
+        if (standingCell && jobProgress === -1) {
+          const type = standingCell.type;
+          
+          if (type === 'skyscraper') {
+            startJob(5000, "Working in Tech Office...", () => {
+              addProgress(50, 20);
+              showToast("Worked at Tech Office! Earned +50 SC, +20 XP", 'success');
+            });
+          } else if (type === 'house') {
+            startJob(4000, "Helping Renovate House...", () => {
+              addProgress(30, 15);
+              showToast("Finished Repairs! Earned +30 SC, +15 XP", 'success');
+            });
+          } else if (type === 'construction') {
+            startJob(3000, "Accelerating Construction...", () => {
+              addProgress(20, 10);
+              if (cityRef.current) {
+                const cell = cityRef.current.grid[standingCell.x][standingCell.z];
+                if (cell && cell.type === 'construction') {
+                  cell.constructionProgress = Math.min(100, cell.constructionProgress + 40);
+                  if (cell.constructionProgress >= 100) {
+                    cityRef.current.completeConstruction(standingCell.x, standingCell.z);
+                  } else {
+                    if (cityRef.current.ws && cityRef.current.ws.readyState === WebSocket.OPEN) {
+                      cityRef.current.ws.send(JSON.stringify({
+                        type: 'grid-update',
+                        cell: {
+                          x: standingCell.x,
+                          z: standingCell.z,
+                          type: 'construction',
+                          targetType: cell.targetType,
+                          constructionProgress: cell.constructionProgress,
+                          height: cell.height
+                        }
+                      }));
+                    }
+                  }
+                }
+              }
+              showToast("Accelerated Construction! Earned +20 SC, +10 XP", 'success');
+            });
+          }
+        }
+        
+        // 2. NPC dialogue trigger
+        if (activeNpcDialog === null) {
+          if (cityRef.current) {
+            const playerPos = cityRef.current.player?.mesh.position;
+            if (playerPos) {
+              const npcs = cityRef.current.humans.filter(h => !h.isPlayer);
+              let closestNpc: any = null;
+              let minDist = Infinity;
+              npcs.forEach(n => {
+                const dx = playerPos.x - n.mesh.position.x;
+                const dz = playerPos.z - n.mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist < 2.0 && dist < minDist) {
+                  minDist = dist;
+                  closestNpc = n;
+                }
+              });
+              
+              if (closestNpc) {
+                openNpcDialogue(closestNpc);
+              }
+            }
+          }
+        }
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [standingCell, jobProgress, activeNpcDialog, shunyaCoins, level, xp, wood, unlockedPermits, completedAchievements, fidoQuestState]);
 
   const saveAdminSettings = async (updates: { timeOfDay?: number; timeSpeed?: number; isPlaying?: boolean }) => {
     if (!currentUser || currentUser.role !== 'admin') return;
@@ -213,6 +610,7 @@ export default function CitySimulator() {
               // Load users
               const playerEmail = currentUser?.email || '';
               cityRef.current.loadAllDatabaseUsers(data.users, playerEmail);
+              setOtherPlayers(data.users.filter((u: any) => u.email !== playerEmail));
               
               // Load NPCs
               const isAdmin = currentUser?.role === 'admin';
@@ -235,6 +633,10 @@ export default function CitySimulator() {
             case 'player-connected':
               const currentEmail = currentUser?.email || '';
               cityRef.current.addDatabaseUser(data.user, currentEmail);
+              if (data.user.email !== currentEmail) {
+                setOtherPlayers(prev => [...prev.filter(p => p._id !== data.user._id), data.user]);
+                showToast(`${data.user.name} joined the simulation!`, 'success');
+              }
               break;
 
             case 'player-moved':
@@ -265,6 +667,20 @@ export default function CitySimulator() {
 
             case 'player-disconnected':
               cityRef.current.removePlayerAvatar(data.userId);
+              setOtherPlayers(prev => prev.filter(p => p._id !== data.userId));
+              break;
+
+            case 'player-progressed':
+              setOtherPlayers(prev => prev.map(p => p._id === data.userId ? {
+                ...p,
+                shunyaCoins: data.shunyaCoins,
+                level: data.level,
+                xp: data.xp,
+                wood: data.wood,
+                unlockedPermits: data.unlockedPermits,
+                completedAchievements: data.completedAchievements
+              } : p));
+              cityRef.current.updateOtherPlayerLevel(data.userId, data.level);
               break;
 
             default:
@@ -326,9 +742,15 @@ export default function CitySimulator() {
           if (data.user) {
             localStorage.setItem('shunyascape_user', JSON.stringify(data.user));
             setCurrentUser(data.user);
+            setShunyaCoins(data.user.shunyaCoins || 100);
+            setWood(data.user.wood || 0);
+            setLevel(data.user.level || 1);
+            setXp(data.user.xp || 0);
+            setUnlockedPermits(data.user.unlockedPermits || []);
+            setCompletedAchievements(data.user.completedAchievements || []);
             setHasSpawned(true);
             citySim.isAdmin = data.user.role === 'admin';
-            citySim.spawnPlayer(data.user.name, data.user.x, data.user.z, data.user.email, data.user.clothingColor, data.user.id);
+            citySim.spawnPlayer(data.user.name, data.user.x, data.user.z, data.user.email, data.user.clothingColor, data.user.id, data.user.level || 1);
             setSoundEnabled(true);
             citySim.audio.toggle(true);
             return;
@@ -384,6 +806,14 @@ export default function CitySimulator() {
     };
   }, []);
 
+  // Sync unlockedPermits with the simulation engine
+  useEffect(() => {
+    if (cityRef.current) {
+      cityRef.current.unlockedPermits = unlockedPermits;
+      cityRef.current.updateCameraControls();
+    }
+  }, [unlockedPermits]);
+
   // Update build mode
   const handleModeChange = (mode: BuildType) => {
     setBuildMode(mode);
@@ -391,6 +821,20 @@ export default function CitySimulator() {
       cityRef.current.buildMode = mode;
       cityRef.current.updateCameraControls();
     }
+  };
+
+  // Check building permits and role before changing modes
+  const handleModeClick = (mode: BuildType) => {
+    if (mode === 'delete' && currentUser?.role !== 'admin') {
+      showToast("Only administrators can demolish structures!", 'warning');
+      return;
+    }
+    if (mode !== null && mode !== 'delete' && currentUser?.role !== 'admin' && !unlockedPermits.includes(mode)) {
+      showToast(`You need a ${mode.toUpperCase()} permit to construct this! Opening Permit Shop.`, 'warning');
+      setShowPermitStore(true);
+      return;
+    }
+    handleModeChange(mode);
   };
 
   // Toggle Sound
@@ -465,17 +909,79 @@ export default function CitySimulator() {
       {/* Sleek Floating Dashboard Overlay */}
       <div className="absolute inset-x-0 top-0 p-4 md:p-6 flex flex-row items-start justify-between gap-4 pointer-events-none z-10">
         
-        {/* Left Side: Logo Button and Stats Grid */}
-        <div className="flex flex-col gap-4 pointer-events-auto max-w-sm md:max-w-md w-full items-start">
-          {/* Minimised Logo Icon Button */}
-          <button
-            onClick={() => setShowDeveloperPopup(true)}
-            className="w-12 h-12 rounded-2xl bg-slate-900/75 backdrop-blur-xl flex items-center justify-center shadow-lg hover:shadow-cyan-500/20 hover:scale-105 active:scale-95 transition-all duration-300 pointer-events-auto border border-slate-700/50"
-            title="Developer Details"
-          >
-            <Sparkles className="w-5 h-5 text-cyan-400 animate-pulse" />
-          </button>
+        {/* Left Side: Level, Coins, Permit Shop & Leaderboard */}
+        <div className="flex flex-col gap-3 pointer-events-auto max-w-sm md:max-w-md w-full items-start">
+          {/* Developer Details & Shops Buttons */}
+          <div className="flex gap-2 items-center">
+            <button
+              onClick={() => setShowDeveloperPopup(true)}
+              className="w-10 h-10 rounded-xl bg-slate-900/80 backdrop-blur-xl flex items-center justify-center shadow-lg border border-slate-700/40 hover:scale-105 active:scale-95 transition-all duration-300 pointer-events-auto"
+              title="Developer Details"
+            >
+              <Sparkles className="w-4 h-4 text-cyan-400 animate-pulse" />
+            </button>
+            
+            {hasSpawned && (
+              <>
+                <button
+                  onClick={() => setShowPermitStore(true)}
+                  className="px-3 py-2 rounded-xl bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 hover:border-amber-500/50 hover:scale-105 active:scale-95 transition-all text-xs font-bold text-amber-400 flex items-center gap-1.5 shadow-lg cursor-pointer"
+                >
+                  <Hammer className="w-3.5 h-3.5" />
+                  <span>Permit Shop</span>
+                </button>
 
+                <button
+                  onClick={() => setShowLeaderboard(true)}
+                  className="px-3 py-2 rounded-xl bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 hover:border-cyan-500/50 hover:scale-105 active:scale-95 transition-all text-xs font-bold text-cyan-400 flex items-center gap-1.5 shadow-lg cursor-pointer"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Leaderboard</span>
+                </button>
+
+                <button
+                  onClick={() => setShowAchievements(prev => !prev)}
+                  className="px-3 py-2 rounded-xl bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 hover:border-emerald-500/50 hover:scale-105 active:scale-95 transition-all text-xs font-bold text-emerald-400 flex items-center gap-1.5 shadow-lg cursor-pointer"
+                >
+                  <Trophy className="w-3.5 h-3.5" />
+                  <span>Achievements</span>
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Level and XP progress bar (Glassmorphic) */}
+          {hasSpawned && (
+            <div className="w-64 bg-slate-900/80 backdrop-blur-xl border border-slate-700/45 p-3 rounded-2xl flex flex-col gap-1.5 shadow-xl">
+              <div className="flex justify-between items-center text-xs font-bold">
+                <span className="text-sky-400">Level {level}</span>
+                <span className="text-slate-400 text-[10px]">{xp} / {level * 100} XP</span>
+              </div>
+              <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                <div 
+                  className="h-full bg-gradient-to-r from-sky-400 to-indigo-500 transition-all duration-300"
+                  style={{ width: `${(xp / (level * 100)) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Currency / Resources Bar */}
+          {hasSpawned && (
+            <div className="flex gap-2">
+              {/* ShunyaCoins */}
+              <div className="px-3 py-2 bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 rounded-xl flex items-center gap-2 shadow-lg">
+                <div className="w-4 h-4 rounded-full bg-amber-400 flex items-center justify-center font-black text-[9px] text-slate-950 animate-bounce">S</div>
+                <span className="text-xs font-bold text-amber-400">{shunyaCoins} SC</span>
+              </div>
+              
+              {/* Wood */}
+              <div className="px-3 py-2 bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 rounded-xl flex items-center gap-2 shadow-lg">
+                <div className="w-4 h-4 rounded-sm bg-amber-700 flex items-center justify-center text-[9px] text-white">W</div>
+                <span className="text-xs font-bold text-orange-400">{wood} Wood</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Side: Profile icon and/or simulation controller */}
@@ -621,7 +1127,7 @@ export default function CitySimulator() {
         </div>
 
         {/* Construction Tool Selector Drawer */}
-        {currentUser?.role === 'admin' && hasSpawned && (
+        {hasSpawned && (
           <div className="bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-2xl p-3 flex items-center gap-2 pointer-events-auto max-w-full overflow-x-auto">
             
             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest px-3 border-r border-slate-800 hidden sm:inline-block">
@@ -630,7 +1136,7 @@ export default function CitySimulator() {
 
             {/* Inspect / View Mode */}
             <button
-              onClick={() => handleModeChange(null)}
+              onClick={() => handleModeClick(null)}
               className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
                 buildMode === null
                   ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
@@ -643,8 +1149,8 @@ export default function CitySimulator() {
 
             {/* Road Segment */}
             <button
-              onClick={() => handleModeChange('road')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+              onClick={() => handleModeClick('road')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all relative ${
                 buildMode === 'road'
                   ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
                   : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
@@ -652,12 +1158,15 @@ export default function CitySimulator() {
             >
               <div className="w-4 h-4 border-2 border-current rounded-sm text-[8px] flex items-center justify-center font-bold">R</div>
               <span className="hidden sm:inline">Build Road</span>
+              {currentUser?.role !== 'admin' && !unlockedPermits.includes('road') && (
+                <span className="absolute -top-1 -right-1 text-[9px] bg-slate-950 px-1 py-0.5 rounded-full border border-slate-800">🔒</span>
+              )}
             </button>
 
             {/* Plant Tree */}
             <button
-              onClick={() => handleModeChange('tree')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+              onClick={() => handleModeClick('tree')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all relative ${
                 buildMode === 'tree'
                   ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
                   : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
@@ -665,12 +1174,15 @@ export default function CitySimulator() {
             >
               <TreePine className="w-4 h-4 text-emerald-400" />
               <span className="hidden sm:inline">Plant Tree</span>
+              {currentUser?.role !== 'admin' && !unlockedPermits.includes('tree') && (
+                <span className="absolute -top-1 -right-1 text-[9px] bg-slate-950 px-1 py-0.5 rounded-full border border-slate-800">🔒</span>
+              )}
             </button>
 
             {/* Build House */}
             <button
-              onClick={() => handleModeChange('house')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+              onClick={() => handleModeClick('house')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all relative ${
                 buildMode === 'house'
                   ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
                   : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
@@ -678,12 +1190,15 @@ export default function CitySimulator() {
             >
               <Home className="w-4 h-4 text-amber-400" />
               <span className="hidden sm:inline">Build House</span>
+              {currentUser?.role !== 'admin' && !unlockedPermits.includes('house') && (
+                <span className="absolute -top-1 -right-1 text-[9px] bg-slate-950 px-1 py-0.5 rounded-full border border-slate-800">🔒</span>
+              )}
             </button>
 
             {/* Build Skyscraper */}
             <button
-              onClick={() => handleModeChange('skyscraper')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+              onClick={() => handleModeClick('skyscraper')}
+              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all relative ${
                 buildMode === 'skyscraper'
                   ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
                   : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
@@ -691,22 +1206,29 @@ export default function CitySimulator() {
             >
               <Building2 className="w-4 h-4 text-indigo-400" />
               <span className="hidden sm:inline">Skyscraper</span>
+              {currentUser?.role !== 'admin' && !unlockedPermits.includes('skyscraper') && (
+                <span className="absolute -top-1 -right-1 text-[9px] bg-slate-950 px-1 py-0.5 rounded-full border border-slate-800">🔒</span>
+              )}
             </button>
 
-            <div className="w-[1px] h-6 bg-slate-800 mx-1 hidden sm:block" />
+            {currentUser?.role === 'admin' && (
+              <>
+                <div className="w-[1px] h-6 bg-slate-800 mx-1 hidden sm:block" />
 
-            {/* Demolish Tool */}
-            <button
-              onClick={() => handleModeChange('delete')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
-                buildMode === 'delete'
-                  ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-600/20'
-                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-red-950/20 hover:border-red-900/50 hover:text-red-400 text-slate-300'
-              }`}
-            >
-              <Trash2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Demolish</span>
-            </button>
+                {/* Demolish Tool */}
+                <button
+                  onClick={() => handleModeClick('delete')}
+                  className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                    buildMode === 'delete'
+                      ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-600/20'
+                      : 'bg-slate-800/50 border-slate-700/30 hover:bg-red-950/20 hover:border-red-900/50 hover:text-red-400 text-slate-300'
+                  }`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span className="hidden sm:inline">Demolish</span>
+                </button>
+              </>
+            )}
 
           </div>
         )}
@@ -1178,6 +1700,358 @@ export default function CitySimulator() {
           </button>
         </div>
       )}
+
+      {/* Quest Tracker Sidebar (Floating Right) */}
+      {hasSpawned && (
+        <div className="absolute right-4 top-48 md:right-6 z-25 flex flex-col items-end gap-3 pointer-events-none">
+          <div className="bg-slate-900/85 backdrop-blur-2xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 w-64 flex flex-col gap-3 pointer-events-auto text-left">
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+              <Compass className="w-4 h-4 text-cyan-400 animate-spin-slow" />
+              <h3 className="text-xs font-bold text-slate-100 uppercase tracking-wider">Active Quests</h3>
+            </div>
+            
+            <div className="flex flex-col gap-3">
+              {/* Quest 1: Lost Dog */}
+              <div className="flex flex-col gap-1 text-[11px]">
+                <div className="flex justify-between items-center font-bold">
+                  <span className="text-amber-400 text-left">🐶 Find Fido</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                    fidoQuestState === 'completed' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/30' :
+                    fidoQuestState === 'fido_found' ? 'bg-indigo-950 text-indigo-400 border border-indigo-800/30 animate-pulse' :
+                    fidoQuestState === 'active' ? 'bg-sky-950 text-sky-400 border border-sky-800/30' : 'bg-slate-950 text-slate-500'
+                  }`}>
+                    {fidoQuestState === 'completed' ? 'Completed' :
+                     fidoQuestState === 'fido_found' ? 'Fido Found' :
+                     fidoQuestState === 'active' ? 'Active' : 'Talk to Owner'}
+                  </span>
+                </div>
+                <p className="text-slate-400 leading-normal text-left">
+                  {fidoQuestState === 'completed' && "Returned Fido safely! Quest complete."}
+                  {fidoQuestState === 'fido_found' && "Return Fido to the owner citizen."}
+                  {fidoQuestState === 'active' && "Find the brown voxel dog around the outskirts."}
+                  {fidoQuestState === 'not_started' && "Walk up to a citizen NPC and press E to check for quests."}
+                </p>
+              </div>
+
+              {/* Quest 2: Arborist */}
+              <div className="flex flex-col gap-1 text-[11px] border-t border-slate-850 pt-2.5">
+                <div className="flex justify-between items-center font-bold">
+                  <span className="text-emerald-400 text-left">🌲 Green Forestry</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                    treesPlantedCount >= 3 ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/30' : 'bg-sky-950 text-sky-400 border border-sky-800/30'
+                  }`}>
+                    {treesPlantedCount >= 3 ? 'Completed' : `${treesPlantedCount}/3 Planted`}
+                  </span>
+                </div>
+                <p className="text-slate-400 leading-normal text-left">
+                  Plant at least 3 trees in the grid using the arborist permit.
+                </p>
+              </div>
+
+              {/* Quest 3: Skyscraper Climber */}
+              <div className="flex flex-col gap-1 text-[11px] border-t border-slate-850 pt-2.5">
+                <div className="flex justify-between items-center font-bold">
+                  <span className="text-indigo-400 text-left">🌇 Skyscraper Climber</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                    skyscraperClimbed ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/30' : 'bg-sky-950 text-sky-400 border border-sky-800/30'
+                  }`}>
+                    {skyscraperClimbed ? 'Completed' : '0/1 Climbed'}
+                  </span>
+                </div>
+                <p className="text-slate-400 leading-normal text-left">
+                  Walk onto the roof cell of a skyscraper to complete this challenge.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Achievements Sidebar (Floating Left) */}
+      {hasSpawned && showAchievements && (
+        <div className="absolute left-4 top-48 md:left-6 z-25 flex flex-col items-start gap-3 pointer-events-auto">
+          <div className="bg-slate-900/85 backdrop-blur-2xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 w-72 flex flex-col gap-3 text-left">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-xs font-bold text-slate-100 uppercase tracking-wider">Achievements</h3>
+              </div>
+              <button
+                onClick={() => setShowAchievements(false)}
+                className="text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3 max-h-96 overflow-y-auto pr-1">
+              {[
+                { id: 'first_steps', title: 'First Steps', desc: 'Walk 150 units', current: Math.floor(distanceWalked), target: 150, unit: 'm' },
+                { id: 'wealthy_citizen', title: 'Wealthy Citizen', desc: 'Accumulate 500 ShunyaCoins', current: shunyaCoins, target: 500, unit: 'SC' },
+                { id: 'green_guard', title: 'Green Guard', desc: 'Plant 5 trees', current: treesPlantedCount, target: 5, unit: 'trees' },
+                { id: 'npc_helper', title: 'NPC Helper', desc: 'Complete 1 quest (Lost Dog)', current: fidoQuestState === 'completed' ? 1 : 0, target: 1, unit: '' },
+                { id: 'high_flyer', title: 'High Flyer', desc: 'Perform 30 jumps', current: jumpsCount, target: 30, unit: 'jumps' },
+                { id: 'skyscraper_climber', title: 'Skyscraper Climber', desc: 'Climb a skyscraper roof', current: completedAchievements.includes('skyscraper_climber') ? 1 : 0, target: 1, unit: '' },
+                { id: 'dev_extraordinaire', title: 'Dev Extraordinaire', desc: 'Build 10 structures', current: buildsCount, target: 10, unit: 'structures' }
+              ].map(ach => {
+                const completed = completedAchievements.includes(ach.id);
+                const percent = Math.min(100, Math.floor((ach.current / ach.target) * 100));
+                
+                return (
+                  <div key={ach.id} className={`p-2 rounded-xl border flex flex-col gap-1.5 transition-all duration-300 ${
+                    completed ? 'bg-emerald-950/20 border-emerald-500/20' : 'bg-slate-950/40 border-slate-850/60'
+                  }`}>
+                    <div className="flex justify-between items-start">
+                      <div className="flex flex-col text-left">
+                        <span className={`text-[11px] font-bold ${completed ? 'text-emerald-400' : 'text-slate-200'}`}>
+                          {ach.title}
+                        </span>
+                        <span className="text-[9px] text-slate-400 leading-tight">
+                          {ach.desc}
+                        </span>
+                      </div>
+                      {completed ? (
+                        <span className="text-[10px] text-emerald-400">✔️</span>
+                      ) : (
+                        <span className="text-[9px] text-slate-500 font-bold whitespace-nowrap">
+                          {ach.current}/{ach.target} {ach.unit}
+                        </span>
+                      )}
+                    </div>
+                    {!completed && (
+                      <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden border border-slate-850">
+                        <div 
+                          className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NPC Interaction Dialog Box (Bottom Center) */}
+      {hasSpawned && activeNpcDialog && (
+        <div className="absolute inset-x-0 bottom-32 z-40 flex items-center justify-center p-4 pointer-events-none">
+          <div className="bg-slate-900/90 backdrop-blur-2xl border border-slate-700/60 rounded-3xl p-5 shadow-2xl max-w-lg w-full flex flex-col gap-4 pointer-events-auto text-left animate-fade-in">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-cyan-600 border border-cyan-400 flex items-center justify-center font-bold text-white text-sm">
+                {activeNpcDialog.npcName.charAt(0)}
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-slate-100">{activeNpcDialog.npcName}</span>
+                <span className="text-[9px] text-cyan-400 font-semibold tracking-wider uppercase">Citizen</span>
+              </div>
+            </div>
+            
+            <p className="text-xs text-slate-200 leading-relaxed bg-slate-950/40 p-3 rounded-2xl border border-slate-850/50">
+              {activeNpcDialog.text}
+            </p>
+            
+            <div className="flex flex-wrap gap-2 justify-end">
+              {activeNpcDialog.options.map((opt, i) => (
+                <button
+                  key={i}
+                  onClick={opt.action}
+                  className="px-3.5 py-1.5 rounded-xl text-[11px] font-bold bg-sky-600 hover:bg-sky-500 active:scale-95 text-white shadow transition-all border border-sky-400/20 cursor-pointer"
+                >
+                  {opt.text}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permit Store Modal */}
+      {hasSpawned && showPermitStore && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 pointer-events-auto">
+          <div className="w-full max-w-md bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowPermitStore(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer"
+              title="Close Permit Shop"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/20">
+                <Award className="w-6 h-6 text-slate-950 font-bold" />
+              </div>
+              <h2 className="text-xl font-black bg-gradient-to-r from-amber-400 via-orange-300 to-yellow-300 bg-clip-text text-transparent">
+                Permit Store
+              </h2>
+              <p className="text-[10px] text-slate-400 max-w-xs">
+                Unlock permanent building permits using ShunyaCoins to construct on the map.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {[
+                { key: 'road', name: 'Road Builder Permit', cost: 50, desc: 'Enables construction of asphalt roads to link intersections.', color: 'from-slate-700 to-slate-850' },
+                { key: 'tree', name: 'Arborist Permit', cost: 100, desc: 'Enables planting decorative pine trees which can be harvested for wood.', color: 'from-emerald-800 to-emerald-950' },
+                { key: 'house', name: 'Residential Permit', cost: 250, desc: 'Allows building houses which generate citizen NPCs and work opportunities.', color: 'from-amber-700 to-amber-900' },
+                { key: 'skyscraper', name: 'Commercial Permit', cost: 500, desc: 'Allows building towering skyscrapers for advanced technology office jobs.', color: 'from-indigo-800 to-indigo-950' },
+              ].map(permit => {
+                const owned = unlockedPermits.includes(permit.key) || currentUser?.role === 'admin';
+                return (
+                  <div key={permit.key} className="p-3.5 bg-slate-950/60 border border-slate-800/60 rounded-2xl flex items-center justify-between gap-4 text-left">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[11px] font-bold text-slate-200">{permit.name}</span>
+                      <span className="text-[9px] text-slate-400 leading-relaxed">{permit.desc}</span>
+                    </div>
+                    
+                    <button
+                      onClick={() => buyPermit(permit.key, permit.cost)}
+                      disabled={owned || shunyaCoins < permit.cost}
+                      className={`px-3 py-2 rounded-xl text-[10px] font-bold tracking-wide w-24 text-center border shadow transition-all active:scale-95 cursor-pointer ${
+                        owned 
+                          ? 'bg-emerald-950/20 border-emerald-500/20 text-emerald-400 cursor-not-allowed shadow-none' 
+                          : shunyaCoins >= permit.cost 
+                            ? 'bg-amber-500 border-amber-400 text-slate-950 hover:bg-amber-400' 
+                            : 'bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed'
+                      }`}
+                    >
+                      {owned ? 'Unlocked' : `${permit.cost} SC`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            
+            <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-850 text-[10px] text-slate-455">
+              Your balance: <span className="text-amber-400 font-bold">{shunyaCoins} SC</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Leaderboard Modal */}
+      {hasSpawned && showLeaderboard && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 pointer-events-auto">
+          <div className="w-full max-w-sm bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-4 text-center relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowLeaderboard(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer"
+              title="Close Leaderboard"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                <Users className="w-6 h-6 text-white" />
+              </div>
+              <h2 className="text-xl font-black bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
+                Simulation Leaderboard
+              </h2>
+              <p className="text-[10px] text-slate-400">
+                Rankings of active players by level and wealth.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2.5 max-h-64 overflow-y-auto pr-1">
+              {[
+                { 
+                  _id: currentUser?.id || 'local', 
+                  name: currentUser?.name || 'You', 
+                  level, 
+                  shunyaCoins, 
+                  isLocal: true,
+                  clothingColor: currentUser?.clothingColor 
+                },
+                ...otherPlayers
+              ]
+                .sort((a, b) => b.level !== a.level ? b.level - a.level : b.shunyaCoins - a.shunyaCoins)
+                .map((p, idx) => (
+                  <div 
+                    key={p._id} 
+                    className={`p-2.5 border rounded-2xl flex items-center justify-between gap-3 ${
+                      p.isLocal 
+                        ? 'bg-cyan-950/20 border-cyan-500/30 font-bold' 
+                        : 'bg-slate-950/60 border-slate-850/60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-black text-slate-500 w-4">{idx + 1}</span>
+                      <div 
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black text-white uppercase shadow"
+                        style={{
+                          backgroundColor: p.clothingColor 
+                            ? `#${p.clothingColor.toString(16).padStart(6, '0')}` 
+                            : '#ef4444'
+                        }}
+                      >
+                        {p.name.charAt(0)}
+                      </div>
+                      <div className="flex flex-col items-start">
+                        <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
+                          {p.name} {p.isLocal && <span className="text-[9px] bg-cyan-500/20 text-cyan-400 px-1 py-0.2 rounded border border-cyan-500/30">You</span>}
+                        </span>
+                        <span className="text-[9px] text-slate-400">{p.shunyaCoins} SC</span>
+                      </div>
+                    </div>
+                    
+                    <span className="text-xs font-black text-cyan-400">Level {p.level}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Job Progress Loading Bar */}
+      {jobProgress > -1 && (
+        <div className="absolute inset-0 z-40 bg-slate-950/30 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
+          <div className="bg-slate-900/80 backdrop-blur-2xl border border-slate-750 p-6 rounded-3xl w-80 shadow-2xl flex flex-col gap-4 text-center">
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-10 h-10 rounded-xl bg-sky-500/25 border border-sky-400/30 flex items-center justify-center text-sky-400 animate-spin-slow">
+                <Hammer className="w-5 h-5" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-100 tracking-wide">Executing City Job...</h3>
+              <p className="text-[10px] text-slate-450">Locking character animation. Please wait.</p>
+            </div>
+            <div className="relative w-full h-3 bg-slate-950 rounded-full border border-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-sky-400 to-indigo-500 transition-all duration-100"
+                style={{ width: `${jobProgress}%` }}
+              />
+              <span className="absolute inset-0 flex items-center justify-center text-[9px] font-black text-white mix-blend-difference">
+                {jobProgress}%
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notifications */}
+      <div className="absolute top-24 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full">
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            className={`px-4 py-3 rounded-2xl backdrop-blur-xl border shadow-2xl flex items-center justify-between gap-3 text-xs font-semibold pointer-events-auto transition-all duration-300 ${
+              toast.type === 'success'
+                ? 'bg-emerald-950/80 border-emerald-500/30 text-emerald-300'
+                : toast.type === 'warning'
+                ? 'bg-amber-950/80 border-amber-500/30 text-amber-300'
+                : 'bg-slate-900/80 border-slate-700/40 text-sky-400'
+            }`}
+          >
+            <span>{toast.message}</span>
+            <button
+              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+              className="text-slate-450 hover:text-slate-200 transition-colors cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
 
     </div>
   );

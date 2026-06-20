@@ -36,6 +36,7 @@ import {
   updateHumans,
   syncNpcsToDatabase,
 } from "./NPCHuman";
+import { CollectibleManager } from "./Collectibles";
 
 export class ThreeCity {
   // Three.js Core
@@ -47,9 +48,9 @@ export class ThreeCity {
   public controls!: any; // OrbitControls
 
   // Simulation Grid Configuration
-  private gridSize = 20;
+  public gridSize = 32;
   private cellSize = 3.0; // Size of each cell in world units
-  private grid: GridCell[][] = [];
+  public grid: GridCell[][] = [];
 
   // Weather & Environment
   private weatherManager!: WeatherManager;
@@ -65,10 +66,12 @@ export class ThreeCity {
   private onStatsChange: (stats: CityStats) => void;
   private isDestroyed = false;
   public isAdmin = false;
+  public unlockedPermits: string[] = [];
   private npcSyncTimer = 1.0;
+  public collectibleManager!: CollectibleManager;
 
   // Agents & Animations
-  private humans: HumanAgent[] = [];
+  public humans: HumanAgent[] = [];
   private vehicles: VehicleAgent[] = [];
   private animals: AnimalAgent[] = []; // Voxel Cows, Dogs, Cats, Birds
   private particles: Particle[] = [];
@@ -82,6 +85,8 @@ export class ThreeCity {
   private lastSyncedPosition = new THREE.Vector3();
   private positionSyncTimer = 0.5;
   private lastPlayerPosition: THREE.Vector3 | null = null;
+  private treeHits = new Map<string, number>();
+  public currentCellType = "empty";
 
   // Materials & Geometries caching
   private materialsCache: { [key: string]: THREE.Material } = {};
@@ -104,6 +109,7 @@ export class ThreeCity {
     this.initEnvironment();
     this.initGrid();
     this.initRaycasting();
+    this.collectibleManager = new CollectibleManager(this.getSimContext());
     this.animate();
 
     this.updateStats();
@@ -230,29 +236,30 @@ export class ThreeCity {
     const center = Math.floor(this.gridSize / 2);
 
     // Initial trees
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 35; i++) {
       const tx = Math.floor(Math.random() * this.gridSize);
       const tz = Math.floor(Math.random() * this.gridSize);
-      if (
-        (tx < center - 2 || tx > center + 2) &&
-        (tz < center - 2 || tz > center + 2)
-      ) {
+      if (Math.abs(tx - center) > 2 && Math.abs(tz - center) > 2) {
         this.spawnInstantItem(tx, tz, "tree");
       }
     }
 
-    // Initial connecting road
-    for (let z = 4; z < 16; z++) {
+    // Initial connecting road (Main horizontal & vertical cross)
+    for (let z = 4; z <= 27; z++) {
       this.spawnInstantItem(center, z, "road");
+    }
+    for (let x = 4; x <= 27; x++) {
+      this.spawnInstantItem(x, center, "road");
     }
 
     // Initial houses
-    this.spawnInstantItem(center - 1, 6, "house");
-    this.spawnInstantItem(center + 1, 10, "house");
-    this.spawnInstantItem(center - 1, 14, "house");
+    this.spawnInstantItem(center - 1, 8, "house");
+    this.spawnInstantItem(center + 1, 22, "house");
+    this.spawnInstantItem(8, center - 1, "house");
+    this.spawnInstantItem(22, center + 1, "house");
 
     // Spawn starting humans
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 12; i++) {
       this.spawnHumanAtRandomHouse();
     }
 
@@ -292,7 +299,8 @@ export class ThreeCity {
     this.raycaster.setFromCamera(this.mouse, this.camera);
     const intersects = this.raycaster.intersectObject(this.gridPlane);
 
-    if (intersects.length > 0 && this.buildMode && this.isAdmin) {
+    const canBuild = this.isAdmin || (this.buildMode && this.buildMode !== "delete" && this.unlockedPermits.includes(this.buildMode));
+    if (intersects.length > 0 && this.buildMode && canBuild) {
       const point = intersects[0].point;
       const halfGrid = (this.gridSize * this.cellSize) / 2;
 
@@ -333,10 +341,12 @@ export class ThreeCity {
     if (event.button !== 0) {
       return;
     }
-    if (!this.isAdmin) return;
+    const canBuild = this.isAdmin || (this.buildMode && this.buildMode !== "delete" && this.unlockedPermits.includes(this.buildMode));
+    if (!canBuild) return;
     if (this.currentHoverCell && this.buildMode) {
       const { x, z } = this.currentHoverCell;
       if (this.buildMode === "delete") {
+        if (!this.isAdmin) return;
         this.demolishCell(x, z);
       } else {
         this.orderConstruction(x, z, this.buildMode);
@@ -404,7 +414,7 @@ export class ThreeCity {
     dispatchWorkerTo(this.getSimContext(), this.humans, x, z);
     this.updateStats();
 
-    if (this.isAdmin && this.player) {
+    if (this.player) {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(
           JSON.stringify({
@@ -570,7 +580,7 @@ export class ThreeCity {
     requestAnimationFrame(update);
   }
 
-  private completeConstruction(x: number, z: number) {
+  public completeConstruction(x: number, z: number) {
     const cell = this.grid[x][z];
     if (cell.type !== "construction") return;
 
@@ -610,9 +620,16 @@ export class ThreeCity {
       }
     }
 
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shunya-build-completed", { detail: { type } }));
+      if (type === "tree") {
+        window.dispatchEvent(new CustomEvent("shunya-tree-planted"));
+      }
+    }
+
     this.updateStats();
 
-    if (this.isAdmin && this.player) {
+    if (this.player) {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(
           JSON.stringify({
@@ -724,6 +741,8 @@ export class ThreeCity {
     this.humans.push(human);
   }
 
+  private playerLevel = 1;
+
   public spawnPlayer(
     name: string,
     x: number = 0,
@@ -731,8 +750,11 @@ export class ThreeCity {
     email?: string,
     clothingColor?: number,
     dbUserId?: string,
+    level: number = 1,
   ) {
     if (this.isDestroyed) return;
+
+    this.playerLevel = level;
 
     if (this.player) {
       this.scene.remove(this.player.mesh);
@@ -759,7 +781,7 @@ export class ThreeCity {
     const mesh = createRefinedHumanMesh(this.getSimContext(), col, true, agent);
     humanGroup.add(mesh);
 
-    const nameTag = createNameTag(name);
+    const nameTag = createNameTag(`[Lvl ${level}] ${name}`);
     humanGroup.add(nameTag);
 
     this.scene.add(humanGroup);
@@ -844,6 +866,44 @@ export class ThreeCity {
 
     this.initKeyboardListeners();
     this.updateStats();
+  }
+
+  public updatePlayerLevel(newLvl: number) {
+    this.playerLevel = newLvl;
+    if (this.player) {
+      const oldTag = this.player.mesh.children.find(c => c instanceof THREE.Sprite);
+      if (oldTag) {
+        this.player.mesh.remove(oldTag);
+      }
+      const newTag = createNameTag(`[Lvl ${newLvl}] ${this.player.playerName || ""}`);
+      this.player.mesh.add(newTag);
+    }
+  }
+
+  public updateOtherPlayerLevel(userId: string, newLevel: number) {
+    if (this.isDestroyed) return;
+    const existing = this.humans.find(h => h.id === `db_user_${userId}`);
+    if (existing) {
+      const oldTag = existing.mesh.children.find(c => c instanceof THREE.Sprite);
+      if (oldTag) {
+        existing.mesh.remove(oldTag);
+      }
+      const newTag = createNameTag(`[Lvl ${newLevel}] ${existing.playerName || ""}`);
+      existing.mesh.add(newTag);
+    }
+  }
+
+  public startWorking() {
+    if (this.player) {
+      this.player.state = "working";
+      this.player.actionState = "idle";
+    }
+  }
+
+  public stopWorking() {
+    if (this.player) {
+      this.player.state = "idle";
+    }
   }
 
   public loadAllDatabaseUsers(users: any[], currentPlayerEmail: string) {
@@ -1119,18 +1179,64 @@ export class ThreeCity {
         this.player.jumpVelocity = 7.0;
         this.player.actionState = "jumping";
         this.audio.playPop();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("shunya-jumped"));
+        }
       }
     }
 
-    if (key === "u") {
-      this.player.actionState = "punching";
-      this.player.actionTimer = 0.25;
-      this.audio.playPunch();
-    }
-    if (key === "i") {
-      this.player.actionState = "kicking";
-      this.player.actionTimer = 0.35;
-      this.audio.playKick();
+    if (key === "u" || key === "i") {
+      this.player.actionState = key === "u" ? "punching" : "kicking";
+      this.player.actionTimer = key === "u" ? 0.25 : 0.35;
+      if (key === "u") this.audio.playPunch();
+      else this.audio.playKick();
+
+      // Check if there is a tree nearby
+      const halfGrid = (this.gridSize * this.cellSize) / 2;
+      const playerX = this.player.mesh.position.x;
+      const playerZ = this.player.mesh.position.z;
+      const pgx = Math.floor((playerX + halfGrid) / this.cellSize);
+      const pgz = Math.floor((playerZ + halfGrid) / this.cellSize);
+
+      let nearTreeCell: GridCell | null = null;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const cx = pgx + dx;
+          const cz = pgz + dz;
+          if (cx >= 0 && cx < this.gridSize && cz >= 0 && cz < this.gridSize) {
+            if (this.grid[cx][cz].type === "tree") {
+              nearTreeCell = this.grid[cx][cz];
+              break;
+            }
+          }
+        }
+        if (nearTreeCell) break;
+      }
+
+      if (nearTreeCell) {
+        this.spawnParticle(nearTreeCell.x, nearTreeCell.z, "#22c55e", 6);
+        const tKey = `${nearTreeCell.x}_${nearTreeCell.z}`;
+        const hits = (this.treeHits.get(tKey) || 0) + 1;
+        this.treeHits.set(tKey, hits);
+
+        if (hits >= 3) {
+          this.treeHits.delete(tKey);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("shunya-harvest", {
+                detail: {
+                  type: "wood",
+                  coins: 5,
+                  wood: 2,
+                  xp: 4,
+                },
+              }),
+            );
+          }
+          this.audio.playPop();
+          this.spawnParticle(nearTreeCell.x, nearTreeCell.z, "#8b5a2b", 12);
+        }
+      }
     }
     if (key === "j") {
       if (this.player.actionState === "sitting") {
@@ -1204,6 +1310,31 @@ export class ThreeCity {
     // 4. Animal updates (Wandering Cows, Dogs, Cats, Flying Birds)
     updateAnimals(this.getSimContext(), this.animals, delta);
 
+    // 4.5. Collectibles updates
+    if (this.player && this.collectibleManager) {
+      this.collectibleManager.update(
+        delta,
+        this.player.mesh.position.x,
+        this.player.mesh.position.z,
+        this.clock.getElapsedTime()
+      );
+    }
+
+    // 4.6. Fido Quest check
+    if (this.player && this.animals) {
+      const dog = this.animals.find((a) => a.type === "dog");
+      if (dog) {
+        const dx = this.player.mesh.position.x - dog.mesh.position.x;
+        const dz = this.player.mesh.position.z - dog.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < 1.8) {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("shunya-fido-near"));
+          }
+        }
+      }
+    }
+
     // 5. Particles updates
     this.particles = this.particles.filter((p) => {
       p.mesh.position.x += p.velocity.x * delta;
@@ -1227,8 +1358,25 @@ export class ThreeCity {
         -0.02 + Math.sin(this.clock.getElapsedTime() * 1.2) * 0.025;
     }
 
-    // Update controls
-    this.controls.update();
+    // standing cell check
+    if (this.player) {
+      const halfGrid = (this.gridSize * this.cellSize) / 2;
+      const gx = Math.floor((this.player.mesh.position.x + halfGrid) / this.cellSize);
+      const gz = Math.floor((this.player.mesh.position.z + halfGrid) / this.cellSize);
+      if (gx >= 0 && gx < this.gridSize && gz >= 0 && gz < this.gridSize) {
+        const cell = this.grid[gx][gz];
+        if (this.currentCellType !== cell.type) {
+          this.currentCellType = cell.type;
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("shunya-cell-change", {
+                detail: { type: cell.type, x: gx, z: gz },
+              }),
+            );
+          }
+        }
+      }
+    }
 
     this.renderer.render(this.scene, this.camera);
   };
@@ -1328,7 +1476,8 @@ export class ThreeCity {
   public updateCameraControls() {
     if (!this.controls) return;
     this.controls.enableRotate = true;
-    if (this.isAdmin && this.buildMode) {
+    const canBuild = this.isAdmin || (this.buildMode && this.buildMode !== "delete" && this.unlockedPermits.includes(this.buildMode));
+    if (canBuild) {
       (this.controls.mouseButtons as any).LEFT = -1;
     } else {
       (this.controls.mouseButtons as any).LEFT = THREE.MOUSE.ROTATE;
@@ -1350,6 +1499,10 @@ export class ThreeCity {
     if (this.hasKeyboardListeners) {
       window.removeEventListener("keydown", this.onKeyDown);
       window.removeEventListener("keyup", this.onKeyUp);
+    }
+
+    if (this.collectibleManager) {
+      this.collectibleManager.destroy();
     }
 
     Object.values(this.geometriesCache).forEach((g) => g.dispose());

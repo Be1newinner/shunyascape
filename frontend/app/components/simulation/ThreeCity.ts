@@ -42,6 +42,14 @@ import { createAllMountains } from "./Mountains";
 import { createRiver, RiverSystem } from "./River";
 import { LandExpansionManager, LandPlot, PLOT_SIZE } from "./LandExpansion";
 import { resizeGridHelper } from "./Land";
+import {
+  createRestaurantMesh,
+  createClothShopMesh,
+  createBarbershopMesh,
+  createPoliceStationMesh,
+  getBarberPoles,
+  getPoliceRefs,
+} from "./SpecialBuildings";
 
 export class ThreeCity {
   // Three.js Core
@@ -152,10 +160,13 @@ export class ThreeCity {
 
   public getMaterial = (name: string, params: any): THREE.Material => {
     if (!this.materialsCache[name]) {
-      this.materialsCache[name] = new THREE.MeshStandardMaterial(params);
+      const mat = new THREE.MeshStandardMaterial(params);
+      mat.name = name; // store key as name for traversal lookup
+      this.materialsCache[name] = mat;
     }
     return this.materialsCache[name];
   };
+
 
   private getSimContext(): SimContext {
     return {
@@ -417,7 +428,7 @@ export class ThreeCity {
   private spawnInstantItem(
     x: number,
     z: number,
-    type: "road" | "tree" | "house" | "skyscraper",
+    type: "road" | "tree" | "house" | "skyscraper" | "restaurant" | "clothshop" | "barbershop" | "policestation",
   ) {
     if (x < 0 || x >= this.gridSize || z < 0 || z >= this.gridSize) return;
     // Never overwrite park cells
@@ -447,7 +458,7 @@ export class ThreeCity {
   private orderConstruction(
     x: number,
     z: number,
-    type: "road" | "tree" | "house" | "skyscraper",
+    type: "road" | "tree" | "house" | "skyscraper" | "restaurant" | "clothshop" | "barbershop" | "policestation",
   ) {
     const cell = this.grid[x][z];
     if (cell.type !== "empty") return;
@@ -590,7 +601,7 @@ export class ThreeCity {
   }
 
   private createMeshForType(
-    type: "road" | "tree" | "house" | "skyscraper",
+    type: "road" | "tree" | "house" | "skyscraper" | "restaurant" | "clothshop" | "barbershop" | "policestation",
     x: number,
     z: number,
   ): THREE.Group {
@@ -603,6 +614,14 @@ export class ThreeCity {
         return createHouseMesh(this.getSimContext(), x, z);
       case "skyscraper":
         return createSkyscraperMesh(this.getSimContext(), x, z);
+      case "restaurant":
+        return createRestaurantMesh(this.getSimContext(), x, z);
+      case "clothshop":
+        return createClothShopMesh(this.getSimContext(), x, z);
+      case "barbershop":
+        return createBarbershopMesh(this.getSimContext(), x, z);
+      case "policestation":
+        return createPoliceStationMesh(this.getSimContext(), x, z);
     }
   }
 
@@ -644,7 +663,8 @@ export class ThreeCity {
       this.scene.remove(cell.mesh);
     }
 
-    const type = cell.targetType as "road" | "tree" | "house" | "skyscraper";
+    const type = cell.targetType as "road" | "tree" | "house" | "skyscraper" | "restaurant" | "clothshop" | "barbershop" | "policestation";
+
     cell.type = type;
     cell.constructionProgress = 100;
 
@@ -961,6 +981,56 @@ export class ThreeCity {
       this.player.state = "idle";
     }
   }
+
+  /** Changes the player's hair color instantly by traversing mesh materials */
+  public updatePlayerHairColor(hexColor: string) {
+    if (!this.player) return;
+    const colorVal = new THREE.Color(hexColor);
+    this.player.mesh.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const mat = obj.material as THREE.MeshStandardMaterial;
+      // Hair meshes use a material name prefixed with 'hair_'
+      if (mat.name?.startsWith('hair_') || (mat.color && (
+        mat.color.getHexString() === '1a1a1a' ||
+        mat.color.getHexString() === '4a2f13' ||
+        mat.color.getHexString() === 'd9a752' ||
+        mat.color.getHexString() === 'b83b1d'
+      ))) {
+        // Clone material to avoid affecting NPCs sharing the cached material
+        const cloned = (mat as THREE.MeshStandardMaterial).clone();
+        cloned.color = colorVal;
+        obj.material = cloned;
+      }
+    });
+    // Store new color on player for persistence
+    if (this.player) {
+      (this.player as any).hairColor = hexColor;
+    }
+  }
+
+  /** Changes player shirt, pant, or shoe color by swapping materials */
+  public updatePlayerClothing(slot: 'shirt' | 'pant' | 'shoe', hexColor: string) {
+    if (!this.player) return;
+    const colorVal = new THREE.Color(hexColor);
+
+    this.player.mesh.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const mat = obj.material as THREE.MeshStandardMaterial;
+      const matName = mat.name ?? '';
+
+      let matches = false;
+      if (slot === 'shirt' && matName.startsWith('shirt_')) matches = true;
+      if (slot === 'pant' && matName.startsWith('pants_')) matches = true;
+      if (slot === 'shoe' && (matName === 'shoes_black' || matName.startsWith('shoes_'))) matches = true;
+
+      if (matches) {
+        const cloned = (mat as THREE.MeshStandardMaterial).clone();
+        cloned.color = colorVal;
+        obj.material = cloned;
+      }
+    });
+  }
+
 
   /**
    * Expands the city grid by purchasing a land plot.
@@ -1529,6 +1599,19 @@ export class ThreeCity {
     // 7. River system animation
     if (this.riverSystem) {
       this.riverSystem.update(delta, this.clock.getElapsedTime());
+    }
+
+    // 8. Barber pole rotation
+    const elapsed = this.clock.getElapsedTime();
+    for (const pole of getBarberPoles()) {
+      pole.rotation.y += delta * 1.8;
+    }
+
+    // 9. Police station emergency light blink
+    const blinkOn = Math.sin(elapsed * 8) > 0;
+    for (const ref of getPoliceRefs()) {
+      ref.blinkLight.intensity = blinkOn ? 3.0 : 0;
+      (ref.blinkMesh.material as THREE.MeshStandardMaterial).emissiveIntensity = blinkOn ? 2.5 : 0.2;
     }
 
     // standing cell check

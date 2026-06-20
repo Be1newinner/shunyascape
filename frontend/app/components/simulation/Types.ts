@@ -19,7 +19,7 @@ export interface SimContext {
   parkCells?: Set<string>; // set of 'x_z' keys belonging to central park
 }
 
-export type BuildType = 'road' | 'tree' | 'house' | 'skyscraper' | 'delete' | null;
+export type BuildType = 'road' | 'tree' | 'house' | 'skyscraper' | 'restaurant' | 'clothshop' | 'barbershop' | 'policestation' | 'delete' | null;
 
 export interface CityStats {
   population: number;
@@ -33,10 +33,10 @@ export interface CityStats {
 export interface GridCell {
   x: number;
   z: number;
-  type: 'empty' | 'road' | 'tree' | 'house' | 'skyscraper' | 'construction' | 'park';
+  type: 'empty' | 'road' | 'tree' | 'house' | 'skyscraper' | 'construction' | 'park' | 'restaurant' | 'clothshop' | 'barbershop' | 'policestation';
   mesh: THREE.Group | null;
   constructionProgress: number; // 0 to 100
-  targetType: 'road' | 'tree' | 'house' | 'skyscraper' | 'empty' | 'park';
+  targetType: 'road' | 'tree' | 'house' | 'skyscraper' | 'empty' | 'park' | 'restaurant' | 'clothshop' | 'barbershop' | 'policestation';
   height: number;
   id: string;
 }
@@ -113,4 +113,10 @@ export interface Particle {
   velocity: THREE.Vector3;
   life: number; // 0 to 1
   decay: number;
+}
+
+export interface EquippedClothes {
+  shirtColor: number;  // hex color
+  pantColor: number;   // hex color
+  shoeColor: number;   // hex color
 }

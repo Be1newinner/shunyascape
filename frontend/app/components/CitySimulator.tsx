@@ -29,8 +29,9 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { ThreeCity } from './simulation/ThreeCity';
-import { BuildType, CityStats } from './simulation/Types';
+import { BuildType, CityStats, EquippedClothes } from './simulation/Types';
 import { LandExpansionManager, LandPlot, PLOT_COST_RING1 } from './simulation/LandExpansion';
+
 
 export default function CitySimulator() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -89,6 +90,28 @@ export default function CitySimulator() {
   const [showLandShop, setShowLandShop] = useState<boolean>(false);
   const [availablePlots, setAvailablePlots] = useState<LandPlot[]>([]);
   const [cityGridSize, setCityGridSize] = useState<number>(32);
+  const [showBuildMenu, setShowBuildMenu] = useState<boolean>(false);
+
+
+  // ── Hunger & survival system ────────────────────────────────────────────────
+  const [hungerLevel, setHungerLevel] = useState<number>(100); // 0–100
+  const [dayCount, setDayCount] = useState<number>(0);
+  const lastDayRef = useRef<number>(8.0); // tracks previous timeOfDay
+  const lastHungerDrainRef = useRef<number>(0); // real-time guard (ms)
+
+  // ── Shop modals ─────────────────────────────────────────────────────────────
+  const [showDeathScreen, setShowDeathScreen] = useState<boolean>(false);
+  const [showFoodShop, setShowFoodShop] = useState<boolean>(false);
+  const [showClothShop, setShowClothShop] = useState<boolean>(false);
+  const [showBarberShop, setShowBarberShop] = useState<boolean>(false);
+  const [showPoliceStation, setShowPoliceStation] = useState<boolean>(false);
+  const [equippedClothes, setEquippedClothes] = useState<EquippedClothes>({
+    shirtColor: 0xff3b30,
+    pantColor: 0x111111,
+    shoeColor: 0x111111,
+  });
+  const [playerHairColor, setPlayerHairColor] = useState<string>('#1a1a1a');
+
 
   // Toast notifier helper
   const showToast = (message: string, type: 'info' | 'success' | 'warning' = 'info') => {
@@ -286,6 +309,107 @@ export default function CitySimulator() {
     }
   };
 
+  // ── Hunger System ────────────────────────────────────────────────────────────
+  /**
+   * Called when an in-game day passes. Drains hunger by 34 pts (3 days = dead).
+   * Guard: real-time minimum of 5 minutes per drain to prevent speed abuse.
+   */
+  const drainHunger = () => {
+    const now = Date.now();
+    const minRealMs = 5 * 60 * 1000; // 5 real minutes minimum per drain
+    if (now - lastHungerDrainRef.current < minRealMs) return;
+    lastHungerDrainRef.current = now;
+
+    setHungerLevel(prev => {
+      const next = Math.max(0, prev - 34);
+      setDayCount(d => d + 1);
+
+      if (next <= 0) {
+        setShowDeathScreen(true);
+      } else if (next <= 33) {
+        // Day 3 starvation warning — will appear persistently in UI
+        showToast('☠️ CRITICAL: You will die today if you don\'t eat! Go to a Restaurant!', 'warning');
+        setTimeout(() => showToast('🍔 Find a Restaurant and press E to eat!', 'warning'), 4000);
+      } else if (next <= 66) {
+        showToast('🟡 You\'re getting hungry! Visit a Restaurant soon.', 'info');
+      }
+      return next;
+    });
+  };
+
+  /** Full death reset — wipes all progression */
+  const triggerDeath = () => {
+    setHungerLevel(100);
+    setDayCount(0);
+    lastDayRef.current = 8.0;
+    lastHungerDrainRef.current = 0;
+    setShunyaCoins(0);
+    setXp(0);
+    setLevel(1);
+    setWood(0);
+    setUnlockedPermits([]);
+    setCompletedAchievements([]);
+    setShowDeathScreen(false);
+
+    // Sync reset to backend
+    if (cityRef.current?.ws && cityRef.current.ws.readyState === WebSocket.OPEN) {
+      cityRef.current.ws.send(JSON.stringify({
+        type: 'progress-update',
+        shunyaCoins: 0, level: 1, xp: 0, wood: 0,
+        unlockedPermits: [], completedAchievements: [],
+      }));
+    }
+
+    // Teleport player back to city centre
+    if (cityRef.current?.player) {
+      cityRef.current.player.mesh.position.set(0, 0, 0);
+    }
+
+    showToast('💀 You died from starvation. All progress has been reset. Start fresh!', 'warning');
+  };
+
+  // ── Food Shop ────────────────────────────────────────────────────────────────
+  const buyFood = (item: { name: string; cost: number; hungerRestore: number }) => {
+    if (shunyaCoins < item.cost) {
+      showToast(`Not enough ShunyaCoins! Need ${item.cost} SC.`, 'warning');
+      return;
+    }
+    addProgress(-item.cost, 5);
+    setHungerLevel(prev => Math.min(100, prev + item.hungerRestore));
+    setShowFoodShop(false);
+    showToast(`🍔 Enjoyed ${item.name}! Hunger restored.`, 'success');
+    cityRef.current?.audio.playPop();
+  };
+
+  // ── Cloth Shop ────────────────────────────────────────────────────────────────
+  const buyClothing = (slot: 'shirt' | 'pant' | 'shoe', hexColor: number, label: string, cost: number) => {
+    if (shunyaCoins < cost) {
+      showToast(`Not enough ShunyaCoins! Need ${cost} SC.`, 'warning');
+      return;
+    }
+    addProgress(-cost, 5);
+    const hexStr = '#' + hexColor.toString(16).padStart(6, '0');
+    setEquippedClothes(prev => ({
+      ...prev,
+      [`${slot}Color`]: hexColor,
+    }));
+    cityRef.current?.updatePlayerClothing(slot, hexStr);
+    showToast(`👕 Equipped new ${label}!`, 'success');
+    cityRef.current?.audio.playPop();
+  };
+
+  // ── Barber Shop ────────────────────────────────────────────────────────────────
+  const changeHairColor = (hexColor: string, label: string, cost: number) => {
+    if (shunyaCoins < cost) {
+      showToast(`Not enough ShunyaCoins! Need ${cost} SC.`, 'warning');
+      return;
+    }
+    addProgress(-cost, 5);
+    setPlayerHairColor(hexColor);
+    cityRef.current?.updatePlayerHairColor(hexColor);
+    showToast(`✂️ New hairstyle: ${label}! Looking fresh!`, 'success');
+    cityRef.current?.audio.playPop();
+  };
 
   const triggerUnlock = (achKey: string, title: string, xpReward: number) => {
     if (completedAchievements.includes(achKey)) return;
@@ -496,7 +620,19 @@ export default function CitySimulator() {
         if (standingCell && jobProgress === -1) {
           const type = standingCell.type;
           
-          if (type === 'skyscraper') {
+          if (type === 'restaurant') {
+            setShowFoodShop(true);
+            return;
+          } else if (type === 'clothshop') {
+            setShowClothShop(true);
+            return;
+          } else if (type === 'barbershop') {
+            setShowBarberShop(true);
+            return;
+          } else if (type === 'policestation') {
+            setShowPoliceStation(true);
+            return;
+          } else if (type === 'skyscraper') {
             startJob(5000, "Working in Tech Office...", () => {
               addProgress(50, 20);
               showToast("Worked at Tech Office! Earned +50 SC, +20 XP", 'success');
@@ -566,7 +702,7 @@ export default function CitySimulator() {
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [standingCell, jobProgress, activeNpcDialog, shunyaCoins, level, xp, wood, unlockedPermits, completedAchievements, fidoQuestState]);
+  }, [standingCell, jobProgress, activeNpcDialog, shunyaCoins, level, xp, wood, unlockedPermits, completedAchievements, fidoQuestState, showFoodShop, showClothShop, showBarberShop, showPoliceStation]);
 
   const saveAdminSettings = async (updates: { timeOfDay?: number; timeSpeed?: number; isPlaying?: boolean }) => {
     if (!currentUser || currentUser.role !== 'admin') return;
@@ -802,8 +938,15 @@ export default function CitySimulator() {
     // Sync time of day from the animation loop to the state slider and check if player is stuck
     const timeSyncInterval = setInterval(() => {
       if (cityRef.current) {
-        setTimeOfDay(cityRef.current.timeOfDay);
+        const tod = cityRef.current.timeOfDay;
+        setTimeOfDay(tod);
         setIsStuck(cityRef.current.isPlayerInsideBlockedCell());
+
+        // In-game day detection: when timeOfDay wraps from >20 back to <2 → new day
+        if (tod < 2 && lastDayRef.current > 20) {
+          drainHunger();
+        }
+        lastDayRef.current = tod;
       }
     }, 100);
 
@@ -915,7 +1058,20 @@ export default function CitySimulator() {
   };
 
   // Helper to format time (e.g. 14.5 -> "02:30 PM")
+  // Build menu items — all 8 placeable types shown in the popup
+  const buildMenuItems = [
+    { key: 'road',         emoji: '🛣️',  label: 'Road'        },
+    { key: 'tree',         emoji: '🌲',  label: 'Tree'        },
+    { key: 'house',        emoji: '🏠',  label: 'House'       },
+    { key: 'skyscraper',   emoji: '🏙️',  label: 'Skyscraper'  },
+    { key: 'restaurant',   emoji: '🍔',  label: 'Restaurant'  },
+    { key: 'clothshop',    emoji: '👕',  label: 'Cloth Shop'  },
+    { key: 'barbershop',   emoji: '✂️',  label: 'Barber'      },
+    { key: 'policestation',emoji: '🚔',  label: 'Police Stn'  },
+  ] as const;
+
   const formatTime = (time: number) => {
+
     const hours24 = Math.floor(time);
     const minutes = Math.floor((time - hours24) * 60);
     const ampm = hours24 >= 12 ? 'PM' : 'AM';
@@ -1177,111 +1333,132 @@ export default function CitySimulator() {
 
         {/* Construction Tool Selector Drawer */}
         {hasSpawned && (
-          <div className="bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-2xl p-3 flex items-center gap-2 pointer-events-auto max-w-full overflow-x-auto">
-            
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest px-3 border-r border-slate-800 hidden sm:inline-block">
-              Tools
-            </span>
+          <div className="relative bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-2xl p-2.5 flex items-center gap-2 pointer-events-auto">
 
             {/* Inspect / View Mode */}
             <button
-              onClick={() => handleModeClick(null)}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+              onClick={() => { handleModeClick(null); setShowBuildMenu(false); }}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
                 buildMode === null
                   ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
                   : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
               }`}
             >
               <Eye className="w-4 h-4" />
-              <span className="hidden sm:inline">Inspect View</span>
+              <span>Inspect</span>
             </button>
 
-            {/* Road Segment */}
+            {/* ── BUILD BUTTON ── */}
             <button
-              onClick={() => handleModeClick('road')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all relative ${
-                buildMode === 'road'
-                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+              onClick={() => setShowBuildMenu(prev => !prev)}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold border transition-all relative ${
+                buildMode !== null && buildMode !== 'delete'
+                  ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white border-cyan-400 shadow-lg shadow-cyan-500/25'
+                  : 'bg-slate-800/60 border-slate-700/40 hover:bg-slate-700/60 hover:border-slate-600 text-slate-200'
               }`}
             >
-              <div className="w-4 h-4 border-2 border-current rounded-sm text-[8px] flex items-center justify-center font-bold">R</div>
-              <span className="hidden sm:inline">Build Road</span>
-              {currentUser?.role !== 'admin' && !unlockedPermits.includes('road') && (
-                <span className="absolute -top-1 -right-1 text-[9px] bg-slate-950 px-1 py-0.5 rounded-full border border-slate-800">🔒</span>
+              <Hammer className="w-4 h-4" />
+              <span>
+                {buildMode && buildMode !== 'delete'
+                  ? buildMenuItems.find(i => i.key === buildMode)?.label ?? 'Build'
+                  : 'Build'}
+              </span>
+              <span className={`transition-transform duration-200 text-[10px] ${showBuildMenu ? 'rotate-180' : ''}`}>▲</span>
+              {buildMode !== null && buildMode !== 'delete' && (
+                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-cyan-400 border border-slate-900" />
               )}
             </button>
 
-            {/* Plant Tree */}
-            <button
-              onClick={() => handleModeClick('tree')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all relative ${
-                buildMode === 'tree'
-                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
-              }`}
-            >
-              <TreePine className="w-4 h-4 text-emerald-400" />
-              <span className="hidden sm:inline">Plant Tree</span>
-              {currentUser?.role !== 'admin' && !unlockedPermits.includes('tree') && (
-                <span className="absolute -top-1 -right-1 text-[9px] bg-slate-950 px-1 py-0.5 rounded-full border border-slate-800">🔒</span>
-              )}
-            </button>
-
-            {/* Build House */}
-            <button
-              onClick={() => handleModeClick('house')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all relative ${
-                buildMode === 'house'
-                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
-              }`}
-            >
-              <Home className="w-4 h-4 text-amber-400" />
-              <span className="hidden sm:inline">Build House</span>
-              {currentUser?.role !== 'admin' && !unlockedPermits.includes('house') && (
-                <span className="absolute -top-1 -right-1 text-[9px] bg-slate-950 px-1 py-0.5 rounded-full border border-slate-800">🔒</span>
-              )}
-            </button>
-
-            {/* Build Skyscraper */}
-            <button
-              onClick={() => handleModeClick('skyscraper')}
-              className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all relative ${
-                buildMode === 'skyscraper'
-                  ? 'bg-sky-500 text-white border-sky-400 shadow-lg shadow-sky-500/20'
-                  : 'bg-slate-800/50 border-slate-700/30 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
-              }`}
-            >
-              <Building2 className="w-4 h-4 text-indigo-400" />
-              <span className="hidden sm:inline">Skyscraper</span>
-              {currentUser?.role !== 'admin' && !unlockedPermits.includes('skyscraper') && (
-                <span className="absolute -top-1 -right-1 text-[9px] bg-slate-950 px-1 py-0.5 rounded-full border border-slate-800">🔒</span>
-              )}
-            </button>
-
+            {/* Admin-only demolish button */}
             {currentUser?.role === 'admin' && (
-              <>
-                <div className="w-[1px] h-6 bg-slate-800 mx-1 hidden sm:block" />
-
-                {/* Demolish Tool */}
-                <button
-                  onClick={() => handleModeClick('delete')}
-                  className={`flex flex-col sm:flex-row items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
-                    buildMode === 'delete'
-                      ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-600/20'
-                      : 'bg-slate-800/50 border-slate-700/30 hover:bg-red-950/20 hover:border-red-900/50 hover:text-red-400 text-slate-300'
-                  }`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span className="hidden sm:inline">Demolish</span>
-                </button>
-              </>
+              <button
+                onClick={() => { handleModeClick('delete'); setShowBuildMenu(false); }}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                  buildMode === 'delete'
+                    ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-600/20'
+                    : 'bg-slate-800/50 border-slate-700/30 hover:bg-red-950/30 hover:border-red-800/50 hover:text-red-400 text-slate-300'
+                }`}
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Demolish</span>
+              </button>
             )}
 
+            {/* ── BUILD POPUP MENU ── floats above the toolbar ── */}
+            {showBuildMenu && (
+              <div
+                className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-30"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="bg-slate-900/95 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-2xl p-4 w-80">
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-black text-slate-200 uppercase tracking-widest">What do you want to build?</span>
+                    <button onClick={() => setShowBuildMenu(false)} className="text-slate-500 hover:text-slate-200 transition-colors cursor-pointer">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Grid of buildable items */}
+                  <div className="grid grid-cols-4 gap-2">
+                    {buildMenuItems.map(item => {
+                      const owned = currentUser?.role === 'admin' || unlockedPermits.includes(item.key);
+                      const active = buildMode === item.key;
+                      return (
+                        <button
+                          key={item.key}
+                          onClick={() => {
+                            handleModeClick(item.key as BuildType);
+                            setShowBuildMenu(false);
+                          }}
+                          title={item.label + (owned ? '' : ' (Need Permit)')}
+                          className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl border text-center transition-all cursor-pointer active:scale-95 relative ${
+                            active
+                              ? 'bg-cyan-500/20 border-cyan-400/60 shadow-md shadow-cyan-500/10'
+                              : owned
+                              ? 'bg-slate-800/60 border-slate-700/40 hover:bg-slate-700/60 hover:border-slate-500/60'
+                              : 'bg-slate-900/40 border-slate-800/40 opacity-60 hover:opacity-80'
+                          }`}
+                        >
+                          <span className="text-xl leading-none">{item.emoji}</span>
+                          <span className={`text-[9px] font-bold leading-tight ${
+                            active ? 'text-cyan-300' : owned ? 'text-slate-300' : 'text-slate-500'
+                          }`}>{item.label}</span>
+                          {!owned && (
+                            <span className="absolute -top-1 -right-1 text-[8px] bg-amber-500 text-black px-0.5 py-0 rounded-full font-black leading-tight">🔒</span>
+                          )}
+                          {active && (
+                            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-cyan-400" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Current mode label */}
+                  {buildMode && buildMode !== 'delete' && (
+                    <div className="mt-3 pt-3 border-t border-slate-800/60 text-center text-[10px] text-slate-400">
+                      Active: <span className="text-cyan-300 font-bold">
+                        {buildMenuItems.find(i => i.key === buildMode)?.emoji} {buildMenuItems.find(i => i.key === buildMode)?.label}
+                      </span>
+                      <span className="ml-2 text-slate-500">— click the map to place</span>
+                    </div>
+                  )}
+                </div>
+                {/* Arrow pointer */}
+                <div className="flex justify-center">
+                  <div className="w-3 h-3 bg-slate-900/95 border-r border-b border-slate-700/60 rotate-45 -mt-1.5" />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* Invisible backdrop to close build menu on outside click */}
+      {showBuildMenu && (
+        <div className="fixed inset-0 z-[25] pointer-events-auto" onClick={() => setShowBuildMenu(false)} />
+      )}
 
       {/* Onboarding Login / Register Modal */}
       {!hasSpawned && showAuthModal && (
@@ -2075,6 +2252,11 @@ export default function CitySimulator() {
                 { key: 'tree', name: 'Arborist Permit', cost: 100, desc: 'Enables planting decorative pine trees which can be harvested for wood.', color: 'from-emerald-800 to-emerald-950' },
                 { key: 'house', name: 'Residential Permit', cost: 250, desc: 'Allows building houses which generate citizen NPCs and work opportunities.', color: 'from-amber-700 to-amber-900' },
                 { key: 'skyscraper', name: 'Commercial Permit', cost: 500, desc: 'Allows building towering skyscrapers for advanced technology office jobs.', color: 'from-indigo-800 to-indigo-950' },
+                { key: 'restaurant', name: '🍔 Restaurant Permit', cost: 200, desc: 'Build Mac D-style restaurants where players can buy food to survive hunger.', color: 'from-red-800 to-red-950' },
+                { key: 'clothshop', name: '👕 Cloth Shop Permit', cost: 150, desc: 'Build fashion stores where players can buy shirts, pants and shoes.', color: 'from-blue-800 to-blue-950' },
+                { key: 'barbershop', name: '✂️ Barber Shop Permit', cost: 100, desc: 'Build barber shops where players can change hair color and style.', color: 'from-purple-800 to-purple-950' },
+                { key: 'policestation', name: '🚔 Police Station Permit', cost: 300, desc: 'Build police stations where players can report rule-breakers.', color: 'from-blue-900 to-slate-950' },
+
               ].map(permit => {
                 const owned = unlockedPermits.includes(permit.key) || currentUser?.role === 'admin';
                 return (
@@ -2207,8 +2389,298 @@ export default function CitySimulator() {
         </div>
       )}
 
+      {/* ── HUNGER HUD BAR ───────────────────────────────────────────────────────── */}
+      {hasSpawned && (
+        <div className="absolute left-4 bottom-32 z-20 flex flex-col gap-1 pointer-events-none">
+          <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 px-3 py-2 rounded-xl shadow-xl w-44">
+            <span className="text-base leading-none">
+              {hungerLevel > 66 ? '🍗' : hungerLevel > 33 ? '😐' : '😵'}
+            </span>
+            <div className="flex flex-col flex-1 gap-0.5">
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] font-bold text-slate-300 uppercase tracking-widest">Hunger</span>
+                <span className={`text-[9px] font-bold ${hungerLevel > 66 ? 'text-emerald-400' : hungerLevel > 33 ? 'text-amber-400' : 'text-red-400'}`}>
+                  {Math.round(hungerLevel)}%
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    hungerLevel > 66 ? 'bg-gradient-to-r from-emerald-500 to-green-400' 
+                    : hungerLevel > 33 ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                    : 'bg-gradient-to-r from-red-600 to-rose-400 animate-pulse'
+                  }`}
+                  style={{ width: `${hungerLevel}%` }}
+                />
+              </div>
+            </div>
+          </div>
+          {hungerLevel <= 33 && (
+            <div className="flex items-center gap-1.5 bg-red-950/90 border border-red-500/50 px-3 py-1.5 rounded-xl text-[9px] font-bold text-red-300 animate-pulse shadow-lg shadow-red-900/40">
+              <span>☠️</span>
+              <span>STARVING! Go eat now!</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── DEATH SCREEN ─────────────────────────────────────────────────────────── */}
+      {showDeathScreen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-md">
+          <div className="flex flex-col items-center gap-6 max-w-md text-center px-6 py-10 bg-slate-950/90 border border-red-800/50 rounded-3xl shadow-2xl shadow-red-900/40">
+            <div className="text-8xl animate-bounce">💀</div>
+            <div className="flex flex-col gap-2">
+              <h2 className="text-3xl font-black text-red-400 tracking-wide">YOU DIED</h2>
+              <p className="text-slate-300 text-sm leading-relaxed">
+                You starved for <strong className="text-red-300">3 in-game days</strong> without eating.
+                <br />All your progress has been permanently wiped.
+              </p>
+            </div>
+            <div className="w-full bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex flex-col gap-1.5 text-sm">
+              <div className="flex justify-between text-slate-500"><span>ShunyaCoins</span><span className="text-red-400 font-bold">→ 0 SC</span></div>
+              <div className="flex justify-between text-slate-500"><span>Level / XP</span><span className="text-red-400 font-bold">→ Lvl 1, 0 XP</span></div>
+              <div className="flex justify-between text-slate-500"><span>Wood</span><span className="text-red-400 font-bold">→ 0</span></div>
+              <div className="flex justify-between text-slate-500"><span>Permits</span><span className="text-red-400 font-bold">→ None</span></div>
+            </div>
+            <p className="text-xs text-slate-500 italic">
+              Tip: Visit a 🍔 Restaurant and press <kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono">E</kbd> to eat before you starve again.
+            </p>
+            <button
+              onClick={triggerDeath}
+              className="px-8 py-3 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-black text-sm rounded-2xl shadow-lg shadow-red-700/30 active:scale-95 transition-all cursor-pointer"
+            >
+              Respawn &amp; Start Over
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── FOOD SHOP MODAL ───────────────────────────────────────────────────────── */}
+      {showFoodShop && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowFoodShop(false)}>
+          <div className="bg-slate-950/95 border border-red-800/40 rounded-3xl shadow-2xl shadow-red-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="bg-gradient-to-r from-red-900/80 to-amber-900/80 p-5 flex items-center justify-between border-b border-red-800/30">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">🍔</span>
+                <div>
+                  <h3 className="text-lg font-black text-white">Mac D Fast Food</h3>
+                  <p className="text-xs text-amber-300">Eat to survive! Hunger: {Math.round(hungerLevel)}%</p>
+                </div>
+              </div>
+              <button onClick={() => setShowFoodShop(false)} className="text-slate-400 hover:text-white transition-colors cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {/* Hunger bar */}
+            <div className="px-5 pt-4">
+              <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-1">
+                <div className={`h-full rounded-full transition-all ${hungerLevel > 66 ? 'bg-emerald-500' : hungerLevel > 33 ? 'bg-amber-500' : 'bg-red-500 animate-pulse'}`} style={{ width: `${hungerLevel}%` }} />
+              </div>
+              {hungerLevel <= 33 && (
+                <p className="text-[10px] text-red-400 font-bold text-center mb-2 animate-pulse">⚠️ Critical! You will die today without eating!</p>
+              )}
+            </div>
+            {/* Menu */}
+            <div className="p-5 flex flex-col gap-3">
+              {[
+                { name: 'Burger Meal', emoji: '🍔', cost: 25, hungerRestore: 100, desc: 'Fully restores hunger — the best choice!' },
+                { name: 'Chicken Snack', emoji: '🍗', cost: 10, hungerRestore: 40, desc: 'A quick bite. Restores 40% hunger.' },
+                { name: 'Bottled Water', emoji: '💧', cost: 5, hungerRestore: 15, desc: 'Minimal. Buys a little time.' },
+              ].map(item => (
+                <div key={item.name} className="flex items-center justify-between bg-slate-900/60 border border-slate-800/60 rounded-2xl p-3.5 hover:border-red-700/40 transition-all">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{item.emoji}</span>
+                    <div>
+                      <p className="text-sm font-bold text-white">{item.name}</p>
+                      <p className="text-[10px] text-slate-400">{item.desc}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => buyFood(item)}
+                    disabled={shunyaCoins < item.cost}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all cursor-pointer shadow whitespace-nowrap"
+                  >
+                    {item.cost} SC
+                  </button>
+                </div>
+              ))}
+              <p className="text-center text-[10px] text-slate-500 mt-1">You have <span className="text-amber-400 font-bold">{shunyaCoins} SC</span></p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CLOTH SHOP MODAL ──────────────────────────────────────────────────────── */}
+      {showClothShop && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowClothShop(false)}>
+          <div className="bg-slate-950/95 border border-blue-800/40 rounded-3xl shadow-2xl shadow-blue-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-blue-900/80 to-indigo-900/80 p-5 flex items-center justify-between border-b border-blue-800/30">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">👕</span>
+                <div>
+                  <h3 className="text-lg font-black text-white">Fashion Store</h3>
+                  <p className="text-xs text-blue-300">Change your style instantly</p>
+                </div>
+              </div>
+              <button onClick={() => setShowClothShop(false)} className="text-slate-400 hover:text-white transition-colors cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 flex flex-col gap-4">
+              {/* Shirts */}
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">👕 Shirts — 30 SC each</p>
+                <div className="flex gap-2 flex-wrap">
+                  {[
+                    { label: 'Red', hex: 0xcc2200 }, { label: 'Blue', hex: 0x1565c0 }, { label: 'Green', hex: 0x2e7d32 },
+                    { label: 'Black', hex: 0x111111 }, { label: 'White', hex: 0xf0f0f0 }, { label: 'Orange', hex: 0xe65100 },
+                  ].map(c => (
+                    <button key={c.label} onClick={() => buyClothing('shirt', c.hex, `${c.label} Shirt`, 30)}
+                      className="flex flex-col items-center gap-1 p-2 rounded-xl bg-slate-900/60 border border-slate-800/60 hover:border-blue-500/50 active:scale-95 transition-all cursor-pointer">
+                      <div className="w-7 h-7 rounded-full border-2 border-slate-700" style={{ backgroundColor: `#${c.hex.toString(16).padStart(6,'0')}` }} />
+                      <span className="text-[8px] text-slate-400">{c.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Pants */}
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">👖 Pants — 25 SC each</p>
+                <div className="flex gap-2 flex-wrap">
+                  {[
+                    { label: 'Black', hex: 0x111111 }, { label: 'Navy', hex: 0x1a2a5e }, { label: 'Brown', hex: 0x5d3a1a },
+                    { label: 'Gray', hex: 0x444444 }, { label: 'Khaki', hex: 0x8b7355 },
+                  ].map(c => (
+                    <button key={c.label} onClick={() => buyClothing('pant', c.hex, `${c.label} Pants`, 25)}
+                      className="flex flex-col items-center gap-1 p-2 rounded-xl bg-slate-900/60 border border-slate-800/60 hover:border-blue-500/50 active:scale-95 transition-all cursor-pointer">
+                      <div className="w-7 h-7 rounded-full border-2 border-slate-700" style={{ backgroundColor: `#${c.hex.toString(16).padStart(6,'0')}` }} />
+                      <span className="text-[8px] text-slate-400">{c.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Shoes */}
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">👟 Shoes — 20 SC each</p>
+                <div className="flex gap-2 flex-wrap">
+                  {[
+                    { label: 'Black', hex: 0x111111 }, { label: 'White', hex: 0xf0f0f0 }, { label: 'Red', hex: 0xcc1111 },
+                    { label: 'Blue', hex: 0x1565c0 }, { label: 'Gold', hex: 0xffcc00 },
+                  ].map(c => (
+                    <button key={c.label} onClick={() => buyClothing('shoe', c.hex, `${c.label} Shoes`, 20)}
+                      className="flex flex-col items-center gap-1 p-2 rounded-xl bg-slate-900/60 border border-slate-800/60 hover:border-blue-500/50 active:scale-95 transition-all cursor-pointer">
+                      <div className="w-7 h-7 rounded-full border-2 border-slate-700" style={{ backgroundColor: `#${c.hex.toString(16).padStart(6,'0')}` }} />
+                      <span className="text-[8px] text-slate-400">{c.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-center text-[10px] text-slate-500">You have <span className="text-amber-400 font-bold">{shunyaCoins} SC</span></p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BARBER SHOP MODAL ─────────────────────────────────────────────────────── */}
+      {showBarberShop && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowBarberShop(false)}>
+          <div className="bg-slate-950/95 border border-purple-800/40 rounded-3xl shadow-2xl shadow-purple-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-purple-900/80 to-slate-900/80 p-5 flex items-center justify-between border-b border-purple-800/30">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">✂️</span>
+                <div>
+                  <h3 className="text-lg font-black text-white">City Barber</h3>
+                  <p className="text-xs text-purple-300">Change your hair color — 30–40 SC</p>
+                </div>
+              </div>
+              <button onClick={() => setShowBarberShop(false)} className="text-slate-400 hover:text-white transition-colors cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5">
+              <p className="text-xs text-slate-400 mb-3">Current hair: <span className="font-bold" style={{ color: playerHairColor }}>■</span> {playerHairColor}</p>
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { label: 'Classic Dark', hex: '#1a1a1a', cost: 30 },
+                  { label: 'Auburn', hex: '#4a2f13', cost: 30 },
+                  { label: 'Blonde', hex: '#d9a752', cost: 30 },
+                  { label: 'Red', hex: '#b83b1d', cost: 30 },
+                  { label: 'Blue Punk', hex: '#1a44bb', cost: 40 },
+                  { label: 'Silver', hex: '#c0c0c0', cost: 40 },
+                  { label: 'Green', hex: '#1a8b1a', cost: 40 },
+                  { label: 'Pink', hex: '#e91e8c', cost: 40 },
+                ].map(h => (
+                  <button key={h.hex} onClick={() => changeHairColor(h.hex, h.label, h.cost)}
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl border transition-all cursor-pointer active:scale-95 hover:scale-105 ${playerHairColor === h.hex ? 'border-purple-400 bg-purple-900/30' : 'border-slate-800/60 bg-slate-900/60 hover:border-purple-700/50'}`}>
+                    <div className="w-8 h-8 rounded-full border-2 border-slate-700 shadow-inner" style={{ backgroundColor: h.hex }} />
+                    <span className="text-[8px] text-slate-300 font-semibold text-center leading-tight">{h.label}</span>
+                    <span className="text-[8px] text-amber-400">{h.cost} SC</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-center text-[10px] text-slate-500 mt-4">You have <span className="text-amber-400 font-bold">{shunyaCoins} SC</span></p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── POLICE STATION MODAL ──────────────────────────────────────────────────── */}
+      {showPoliceStation && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowPoliceStation(false)}>
+          <div className="bg-slate-950/95 border border-blue-900/40 rounded-3xl shadow-2xl shadow-blue-950/50 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-blue-950/90 to-slate-950/90 p-5 flex items-center justify-between border-b border-blue-900/30">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">🚔</span>
+                <div>
+                  <h3 className="text-lg font-black text-white">Police Station</h3>
+                  <p className="text-xs text-blue-300">Report rule-breakers</p>
+                </div>
+              </div>
+              <button onClick={() => setShowPoliceStation(false)} className="text-slate-400 hover:text-white transition-colors cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 flex flex-col gap-4">
+              <div className="bg-blue-950/30 border border-blue-800/30 rounded-2xl p-4 text-sm text-slate-300 leading-relaxed">
+                <p className="font-bold text-blue-300 mb-1">📋 Online Players</p>
+                {otherPlayers.length === 0 ? (
+                  <p className="text-slate-500 text-xs italic">No other players online right now.</p>
+                ) : (
+                  <div className="flex flex-col gap-2 mt-2">
+                    {otherPlayers.map(p => (
+                      <div key={p._id} className="flex items-center justify-between bg-slate-900/60 border border-slate-800/50 rounded-xl px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white"
+                            style={{ backgroundColor: p.clothingColor ? `#${p.clothingColor.toString(16).padStart(6,'0')}` : '#3b82f6' }}>
+                            {p.name?.charAt(0) ?? '?'}
+                          </div>
+                          <span className="text-xs font-semibold text-slate-200">{p.name}</span>
+                          <span className="text-[9px] text-slate-500">Lvl {p.level ?? 1}</span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            showToast(`🚔 Reported ${p.name} to police! (Session-only report)`, 'warning');
+                            setShowPoliceStation(false);
+                          }}
+                          className="px-2 py-1 rounded-lg text-[9px] font-bold bg-red-900/40 border border-red-800/40 text-red-400 hover:bg-red-800/50 active:scale-95 transition-all cursor-pointer"
+                        >
+                          Report
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="bg-slate-900/40 border border-slate-800/40 rounded-2xl p-3 text-[10px] text-slate-500 leading-relaxed">
+                <p><strong className="text-slate-300">ℹ️ Note:</strong> Reports are session-only and visible only to you. Backend enforcement coming soon.</p>
+              </div>
+              <button onClick={() => setShowPoliceStation(false)}
+                className="py-2.5 rounded-xl bg-blue-900/40 border border-blue-800/30 text-blue-300 text-sm font-bold hover:bg-blue-800/50 active:scale-95 transition-all cursor-pointer">
+                Close Station
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast Notifications */}
       <div className="absolute top-24 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full">
+
         {toasts.map(toast => (
           <div
             key={toast.id}

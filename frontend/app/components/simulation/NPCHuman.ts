@@ -661,7 +661,7 @@ export function updateHumans(
             canMoveX = false;
           } else {
             const cell = ctx.grid[gxX][gzX];
-            if (cell.type === 'house' || cell.type === 'skyscraper' || cell.type === 'tree' || cell.type === 'construction') {
+            if (cell.type === 'house' || cell.type === 'skyscraper' || cell.type === 'tree' || cell.type === 'construction' || cell.type === 'restaurant' || cell.type === 'clothshop' || cell.type === 'barbershop' || cell.type === 'policestation') {
               canMoveX = false;
             }
           }
@@ -673,7 +673,7 @@ export function updateHumans(
             canMoveZ = false;
           } else {
             const cell = ctx.grid[gxZ][gzZ];
-            if (cell.type === 'house' || cell.type === 'skyscraper' || cell.type === 'tree' || cell.type === 'construction') {
+            if (cell.type === 'house' || cell.type === 'skyscraper' || cell.type === 'tree' || cell.type === 'construction' || cell.type === 'restaurant' || cell.type === 'clothshop' || cell.type === 'barbershop' || cell.type === 'policestation') {
               canMoveZ = false;
             }
           }

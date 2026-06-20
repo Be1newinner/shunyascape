@@ -7,6 +7,7 @@ import {
   Building2, 
   Trash2, 
   Eye, 
+  EyeOff,
   Sun, 
   Moon, 
   Volume2, 
@@ -19,7 +20,8 @@ import {
   Play,
   Pause,
   Compass,
-  LogOut
+  LogOut,
+  X
 } from 'lucide-react';
 import { ThreeCity } from './simulation/ThreeCity';
 import { BuildType, CityStats } from './simulation/Types';
@@ -48,7 +50,10 @@ export default function CitySimulator() {
   const [showProfilePopup, setShowProfilePopup] = useState<boolean>(false);
 
   // Authentication & Session states
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [resetSuccessMsg, setResetSuccessMsg] = useState<string>('');
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [playerName, setPlayerName] = useState<string>('');
@@ -61,7 +66,35 @@ export default function CitySimulator() {
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
+    setResetSuccessMsg('');
     setAuthLoading(true);
+
+    if (authMode === 'reset') {
+      try {
+        const res = await fetch('/api/auth/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          setAuthError(data.error || 'Password reset failed');
+          setAuthLoading(false);
+          return;
+        }
+
+        setResetSuccessMsg('Password reset successfully! Please sign in with your new password.');
+        setPassword('');
+        setAuthMode('login');
+        setAuthLoading(false);
+      } catch (err) {
+        console.error(err);
+        setAuthError('Connection failed. Please verify database availability.');
+        setAuthLoading(false);
+      }
+      return;
+    }
 
     const url = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
     const body = authMode === 'register' 
@@ -86,6 +119,7 @@ export default function CitySimulator() {
       localStorage.setItem('shunyascape_user', JSON.stringify(user));
       setCurrentUser(user);
       setHasSpawned(true);
+      setShowAuthModal(false);
       setAuthLoading(false);
 
       if (cityRef.current) {
@@ -244,6 +278,7 @@ export default function CitySimulator() {
       localStorage.removeItem('shunyascape_user');
       setCurrentUser(null);
       setHasSpawned(false);
+      setShowAuthModal(true);
       setShowProfilePopup(false);
       if (cityRef.current) {
         cityRef.current.destroy();
@@ -369,7 +404,7 @@ export default function CitySimulator() {
         {/* Right Side: Profile icon and/or simulation controller */}
         <div className="flex flex-col items-end gap-3 pointer-events-auto max-w-sm w-full md:w-auto">
           {/* User Icon Avatar (if logged in) */}
-          {hasSpawned && currentUser && (
+          {hasSpawned && currentUser ? (
             <button
               onClick={() => setShowProfilePopup(true)}
               className="w-12 h-12 rounded-full border border-slate-700/50 shadow-2xl flex items-center justify-center font-bold text-sm text-white uppercase transition-all duration-300 hover:scale-105 active:scale-95 hover:border-sky-500/50 pointer-events-auto"
@@ -381,6 +416,14 @@ export default function CitySimulator() {
               title="View Profile Details"
             >
               {currentUser.name.charAt(0)}
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/30 active:scale-95 transition-all duration-300 pointer-events-auto border border-cyan-400/30 flex items-center gap-1.5"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Log In</span>
             </button>
           )}
 
@@ -595,12 +638,21 @@ export default function CitySimulator() {
       )}
 
       {/* Onboarding Login / Register Modal */}
-      {!hasSpawned && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4">
+      {!hasSpawned && showAuthModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
           <form 
             onSubmit={handleAuthSubmit}
-            className="w-full max-w-sm bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center pointer-events-auto"
+            className="relative w-full max-w-sm bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center pointer-events-auto"
           >
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => setShowAuthModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-slate-800/40"
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
             <div className="flex flex-col items-center gap-2">
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 via-sky-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
                 <Users className="w-6 h-6 text-white animate-pulse" />
@@ -614,34 +666,49 @@ export default function CitySimulator() {
             </div>
 
             {/* Mode Switch Tabs */}
-            <div className="flex bg-slate-950/60 p-1 rounded-xl border border-slate-800">
-              <button
-                type="button"
-                onClick={() => { setAuthMode('login'); setAuthError(''); }}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  authMode === 'login' 
-                    ? 'bg-sky-500 text-white shadow-md' 
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => { setAuthMode('register'); setAuthError(''); }}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  authMode === 'register' 
-                    ? 'bg-sky-500 text-white shadow-md' 
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Register
-              </button>
-            </div>
+            {authMode !== 'reset' ? (
+              <div className="flex bg-slate-950/60 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('login'); setAuthError(''); setResetSuccessMsg(''); }}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    authMode === 'login' 
+                      ? 'bg-sky-500 text-white shadow-md' 
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('register'); setAuthError(''); setResetSuccessMsg(''); }}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    authMode === 'register' 
+                      ? 'bg-sky-500 text-white shadow-md' 
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Register
+                </button>
+              </div>
+            ) : (
+              <div className="text-center bg-slate-950/40 py-2.5 px-3 rounded-2xl border border-slate-800/40">
+                <h3 className="text-xs font-bold text-slate-200">Reset Your Password</h3>
+                <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+                  Provide your email address and new password to reset it.
+                </p>
+              </div>
+            )}
 
             {authError && (
               <div className="px-3 py-2 bg-red-950/40 border border-red-800/40 text-red-400 text-xs font-medium rounded-lg text-left">
                 {authError}
+              </div>
+            )}
+
+            {resetSuccessMsg && (
+              <div className="px-3 py-2 bg-emerald-950/40 border border-emerald-800/40 text-emerald-400 text-xs font-medium rounded-lg text-left">
+                {resetSuccessMsg}
               </div>
             )}
 
@@ -680,19 +747,56 @@ export default function CitySimulator() {
 
               <div className="flex flex-col gap-1 text-left">
                 <label htmlFor="authPass" className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">
-                  Password
+                  {authMode === 'reset' ? 'New Password' : 'Password'}
                 </label>
-                <input
-                  id="authPass"
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950/50 border border-slate-800 rounded-lg text-xs font-semibold text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/40"
-                />
+                <div className="relative">
+                  <input
+                    id="authPass"
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-3 pr-10 py-2 bg-slate-950/50 border border-slate-800 rounded-lg text-xs font-semibold text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 focus:outline-none transition-colors"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
+
+            {authMode === 'login' && (
+              <div className="text-right -mt-2">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('reset'); setAuthError(''); setResetSuccessMsg(''); }}
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300 font-medium transition-colors cursor-pointer"
+                >
+                  Forgot Password?
+                </button>
+              </div>
+            )}
+
+            {authMode === 'reset' && (
+              <div className="text-center -mt-2">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('login'); setAuthError(''); setResetSuccessMsg(''); }}
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300 font-medium transition-colors cursor-pointer"
+                >
+                  Back to Sign In
+                </button>
+              </div>
+            )}
 
             <button
               type="submit"
@@ -703,7 +807,9 @@ export default function CitySimulator() {
                 ? 'Connecting to Server...' 
                 : authMode === 'register' 
                   ? 'Register & Spawn' 
-                  : 'Log In & Spawn'
+                  : authMode === 'reset'
+                    ? 'Reset Password'
+                    : 'Log In & Spawn'
               }
             </button>
 

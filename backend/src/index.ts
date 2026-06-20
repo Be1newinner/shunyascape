@@ -20,10 +20,22 @@ const PORT = process.env.PORT || 8005;
 // Basic middleware
 app.use(express.json());
 app.use(cookieParser());
+
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+].filter(Boolean) as string[];
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      callback(null, true);
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origin ${origin} not allowed by CORS`));
+      }
     },
     credentials: true,
   }),

@@ -769,11 +769,32 @@ export default function CitySimulator() {
     const connectWebSocket = () => {
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
 
-      const isProd = process.env.NODE_ENV === 'production';
-      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = isProd 
-        ? `${wsProto}//${window.location.host}/ws` 
-        : `ws://localhost:8005/ws`;
+      let wsUrl = '';
+      const backendApiUrl = process.env.BACKEND_API_URL;
+      if (backendApiUrl) {
+        try {
+          let urlStr = backendApiUrl;
+          if (!/^https?:\/\//i.test(urlStr)) {
+            urlStr = `${window.location.protocol}//${urlStr}`;
+          }
+          const url = new URL(urlStr);
+          const wsProto = url.protocol === 'https:' ? 'wss:' : 'ws:';
+          wsUrl = `${wsProto}//${url.host}/ws`;
+        } catch (urlErr) {
+          console.error('Failed to parse BACKEND_API_URL as URL:', backendApiUrl, urlErr);
+          const isProd = process.env.NODE_ENV === 'production';
+          const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          wsUrl = isProd 
+            ? `${wsProto}//${window.location.host}/ws` 
+            : `ws://localhost:8005/ws`;
+        }
+      } else {
+        const isProd = process.env.NODE_ENV === 'production';
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = isProd 
+          ? `${wsProto}//${window.location.host}/ws` 
+          : `ws://localhost:8005/ws`;
+      }
 
       console.log('Connecting to WebSocket:', wsUrl);
       socket = new WebSocket(wsUrl);

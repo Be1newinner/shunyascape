@@ -58,6 +58,7 @@ export class ThreeCity {
   // Simulation States
   public buildMode: BuildType = "road";
   public timeOfDay = 8.0; // 0 to 24 (starts at 8:00 AM)
+  public ws: WebSocket | null = null;
   public timeSpeed = 0.5; // default scale speed
   public audio = new CityAudio();
   private onStatsChange: (stats: CityStats) => void;
@@ -161,6 +162,7 @@ export class ThreeCity {
           z,
         );
       },
+      ws: this.ws,
     };
   }
 
@@ -402,26 +404,42 @@ export class ThreeCity {
     this.updateStats();
 
     if (this.isAdmin && this.player) {
-      fetch("/api/grid", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          x,
-          z,
-          type: "construction",
-          targetType: type,
-          constructionProgress: 0,
-          height: cell.height,
-        }),
-      })
-        .then((res) => {
-          if (res.status === 401) {
-            window.dispatchEvent(new CustomEvent("auth-unauthorized"));
-          }
-        })
-        .catch((err) =>
-          console.error("Failed to save grid construction:", err),
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(
+          JSON.stringify({
+            type: "grid-update",
+            cell: {
+              x,
+              z,
+              type: "construction",
+              targetType: type,
+              constructionProgress: 0,
+              height: cell.height,
+            },
+          }),
         );
+      } else {
+        fetch("/api/grid", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            x,
+            z,
+            type: "construction",
+            targetType: type,
+            constructionProgress: 0,
+            height: cell.height,
+          }),
+        })
+          .then((res) => {
+            if (res.status === 401) {
+              window.dispatchEvent(new CustomEvent("auth-unauthorized"));
+            }
+          })
+          .catch((err) =>
+            console.error("Failed to save grid construction:", err),
+          );
+      }
     }
   }
 
@@ -463,24 +481,40 @@ export class ThreeCity {
     this.updateStats();
 
     if (this.isAdmin && this.player) {
-      fetch("/api/grid", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          x,
-          z,
-          type: "empty",
-          targetType: "empty",
-          constructionProgress: 0,
-          height: 0,
-        }),
-      })
-        .then((res) => {
-          if (res.status === 401) {
-            window.dispatchEvent(new CustomEvent("auth-unauthorized"));
-          }
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(
+          JSON.stringify({
+            type: "grid-update",
+            cell: {
+              x,
+              z,
+              type: "empty",
+              targetType: "empty",
+              constructionProgress: 0,
+              height: 0,
+            },
+          }),
+        );
+      } else {
+        fetch("/api/grid", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            x,
+            z,
+            type: "empty",
+            targetType: "empty",
+            constructionProgress: 0,
+            height: 0,
+          }),
         })
-        .catch((err) => console.error("Failed to save grid demolition:", err));
+          .then((res) => {
+            if (res.status === 401) {
+              window.dispatchEvent(new CustomEvent("auth-unauthorized"));
+            }
+          })
+          .catch((err) => console.error("Failed to save grid demolition:", err));
+      }
     }
   }
 
@@ -578,24 +612,40 @@ export class ThreeCity {
     this.updateStats();
 
     if (this.isAdmin && this.player) {
-      fetch("/api/grid", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          x,
-          z,
-          type,
-          targetType: type,
-          constructionProgress: 100,
-          height: cell.height,
-        }),
-      })
-        .then((res) => {
-          if (res.status === 401) {
-            window.dispatchEvent(new CustomEvent("auth-unauthorized"));
-          }
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(
+          JSON.stringify({
+            type: "grid-update",
+            cell: {
+              x,
+              z,
+              type,
+              targetType: type,
+              constructionProgress: 100,
+              height: cell.height,
+            },
+          }),
+        );
+      } else {
+        fetch("/api/grid", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            x,
+            z,
+            type,
+            targetType: type,
+            constructionProgress: 100,
+            height: cell.height,
+          }),
         })
-        .catch((err) => console.error("Failed to save grid completion:", err));
+          .then((res) => {
+            if (res.status === 401) {
+              window.dispatchEvent(new CustomEvent("auth-unauthorized"));
+            }
+          })
+          .catch((err) => console.error("Failed to save grid completion:", err));
+      }
     }
   }
 
@@ -801,6 +851,40 @@ export class ThreeCity {
       users,
       currentPlayerEmail,
     );
+  }
+
+  public updateOtherPlayerPosition(userId: string, x: number, z: number) {
+    if (this.isDestroyed) return;
+    if (this.player && this.player.id === `db_user_${userId}`) return; // ignore self
+
+    const existing = this.humans.find(h => h.id === `db_user_${userId}`);
+    if (existing) {
+      existing.targetX = x;
+      existing.targetZ = z;
+
+      const dx = Math.abs(existing.mesh.position.x - x);
+      const dz = Math.abs(existing.mesh.position.z - z);
+      if (dx > 8.0 || dz > 8.0) {
+        existing.mesh.position.set(x, 0, z);
+        existing.x = x;
+        existing.z = z;
+      }
+    }
+  }
+
+  public removePlayerAvatar(userId: string) {
+    if (this.isDestroyed) return;
+    const existingIndex = this.humans.findIndex(h => h.id === `db_user_${userId}`);
+    if (existingIndex !== -1) {
+      const h = this.humans[existingIndex];
+      this.scene.remove(h.mesh);
+      this.humans.splice(existingIndex, 1);
+
+      const halfGrid = (this.gridSize * this.cellSize) / 2;
+      const cx = Math.max(0, Math.min(this.gridSize - 1, Math.floor((h.mesh.position.x + halfGrid) / this.cellSize)));
+      const cz = Math.max(0, Math.min(this.gridSize - 1, Math.floor((h.mesh.position.z + halfGrid) / this.cellSize)));
+      this.spawnParticle(cx, cz, "#ff4444", 10);
+    }
   }
 
   public syncGrid(cells: any[]) {

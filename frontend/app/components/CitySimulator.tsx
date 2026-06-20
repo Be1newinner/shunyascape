@@ -162,74 +162,139 @@ export default function CitySimulator() {
     }
   }, [hasSpawned]);
 
-  // Poll database to synchronize other users' coordinates and registrations
+  // Establish WebSocket connection & do initial syncs
   useEffect(() => {
-    const fetchUsers = async () => {
+    // 1. Initial HTTP fetches for bootstrap
+    const initialSync = async () => {
       try {
-        const res = await fetch('/api/users');
-        if (res.status === 401) {
-          if (currentUser) {
-            window.dispatchEvent(new CustomEvent('auth-unauthorized'));
-          }
-          return;
-        }
-        const data = await res.json();
-        if (res.ok && cityRef.current) {
-          const playerEmail = currentUser?.email || '';
-          cityRef.current.loadAllDatabaseUsers(data.users, playerEmail);
-
-          // Synchronize global environment settings from DB
-          if (data.settings) {
-            const { timeOfDay: dbTime, timeSpeed: dbSpeed, isPlaying: dbPlaying } = data.settings;
-            
-            // Only update if there is a substantial difference or not admin
-            const isAdmin = currentUser?.role === 'admin';
-            const isDifferent = Math.abs(cityRef.current.timeOfDay - dbTime) > 0.5 || isPlaying !== dbPlaying;
-            if (!isAdmin || isDifferent) {
-              cityRef.current.timeOfDay = dbTime;
-              cityRef.current.timeSpeed = dbPlaying ? dbSpeed : 0.0;
-              setTimeOfDay(dbTime);
-              setTimeSpeed(dbSpeed);
-              setIsPlaying(dbPlaying);
-            }
-          }
-        }
-
-        // Synchronize grid cells
         const gridRes = await fetch('/api/grid');
-        if (gridRes.status === 401) {
-          if (currentUser) {
-            window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+        if (gridRes.ok && cityRef.current) {
+          const gridData = await gridRes.json();
+          if (gridData.cells) {
+            cityRef.current.syncGrid(gridData.cells);
           }
-          return;
-        }
-        const gridData = await gridRes.json();
-        if (gridRes.ok && cityRef.current && gridData.cells) {
-          cityRef.current.syncGrid(gridData.cells);
-        }
-
-        // Synchronize NPCs
-        const npcsRes = await fetch('/api/npcs');
-        if (npcsRes.status === 401) {
-          if (currentUser) {
-            window.dispatchEvent(new CustomEvent('auth-unauthorized'));
-          }
-          return;
-        }
-        const npcsData = await npcsRes.json();
-        if (npcsRes.ok && cityRef.current && npcsData.npcs) {
-          const isAdmin = currentUser?.role === 'admin';
-          cityRef.current.syncNpcs(npcsData.npcs, isAdmin);
         }
       } catch (err) {
-        console.error('Failed to sync other users, settings, grid, and NPCs:', err);
+        console.error('Failed to run initial grid sync:', err);
       }
     };
+    initialSync();
 
-    fetchUsers();
-    const interval = setInterval(fetchUsers, 4000);
-    return () => clearInterval(interval);
-  }, [currentUser, isPlaying]);
+    // 2. Open WebSocket connection
+    let socket: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+
+    const connectWebSocket = () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+
+      const isProd = process.env.NODE_ENV === 'production';
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = isProd 
+        ? `${wsProto}//${window.location.host}/ws` 
+        : `ws://localhost:8005/ws`;
+
+      console.log('Connecting to WebSocket:', wsUrl);
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        console.log('WebSocket connection established.');
+        if (cityRef.current) {
+          cityRef.current.ws = socket;
+        }
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (!cityRef.current) return;
+
+          switch (data.type) {
+            case 'init':
+              // Load users
+              const playerEmail = currentUser?.email || '';
+              cityRef.current.loadAllDatabaseUsers(data.users, playerEmail);
+              
+              // Load NPCs
+              const isAdmin = currentUser?.role === 'admin';
+              cityRef.current.syncNpcs(data.npcs, isAdmin);
+
+              // Load settings
+              if (data.settings) {
+                const { timeOfDay: dbTime, timeSpeed: dbSpeed, isPlaying: dbPlaying } = data.settings;
+                const isDifferent = Math.abs(cityRef.current.timeOfDay - dbTime) > 0.5 || isPlaying !== dbPlaying;
+                if (!isAdmin || isDifferent) {
+                  cityRef.current.timeOfDay = dbTime;
+                  cityRef.current.timeSpeed = dbPlaying ? dbSpeed : 0.0;
+                  setTimeOfDay(dbTime);
+                  setTimeSpeed(dbSpeed);
+                  setIsPlaying(dbPlaying);
+                }
+              }
+              break;
+
+            case 'player-moved':
+              cityRef.current.updateOtherPlayerPosition(data.userId, data.x, data.z);
+              break;
+
+            case 'npcs-updated':
+              const isUserAdmin = currentUser?.role === 'admin';
+              cityRef.current.syncNpcs(data.npcs, isUserAdmin);
+              break;
+
+            case 'settings-updated':
+              const userIsAdmin = currentUser?.role === 'admin';
+              const { timeOfDay: dbTime, timeSpeed: dbSpeed, isPlaying: dbPlaying } = data.settings;
+              const diff = Math.abs(cityRef.current.timeOfDay - dbTime) > 0.5 || isPlaying !== dbPlaying;
+              if (!userIsAdmin || diff) {
+                cityRef.current.timeOfDay = dbTime;
+                cityRef.current.timeSpeed = dbPlaying ? dbSpeed : 0.0;
+                setTimeOfDay(dbTime);
+                setTimeSpeed(dbSpeed);
+                setIsPlaying(dbPlaying);
+              }
+              break;
+
+            case 'grid-updated':
+              cityRef.current.syncGrid([data.cell]);
+              break;
+
+            case 'player-disconnected':
+              cityRef.current.removePlayerAvatar(data.userId);
+              break;
+
+            default:
+              break;
+          }
+        } catch (err) {
+          console.error('Error handling WebSocket message:', err);
+        }
+      };
+
+      socket.onclose = (e) => {
+        console.log('WebSocket closed. Attempting reconnect in 3s...', e.reason);
+        if (cityRef.current) {
+          cityRef.current.ws = null;
+        }
+        reconnectTimeout = setTimeout(connectWebSocket, 3000);
+      };
+
+      socket.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        socket?.close();
+      };
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (socket) {
+        socket.close();
+      }
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+    };
+  }, [currentUser]);
 
   // Initialize Simulation Engine
   useEffect(() => {

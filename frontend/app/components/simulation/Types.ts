@@ -15,6 +15,7 @@ export interface SimContext {
   completeConstruction: (x: number, z: number) => void;
   recalculateRoadConnections: () => void;
   spawnVehicleOnRoad: (x: number, z: number) => void;
+  ws?: WebSocket | null;
 }
 
 export type BuildType = 'road' | 'tree' | 'house' | 'skyscraper' | 'delete' | null;

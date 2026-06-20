@@ -1,6 +1,4 @@
 import crypto from 'crypto';
-import { cookies } from 'next/headers';
-import User from '../models/User';
 
 const SALT = 'shunyascape-3d-secret-salt-string';
 const JWT_SECRET = process.env.JWT_SECRET || 'shunyascape-secret-key-for-jwt-signing-12345678';
@@ -65,54 +63,4 @@ export function verifyToken(token: string): any {
   } catch (err) {
     return null;
   }
-}
-
-export async function getAuthenticatedUser() {
-  try {
-    const cookieStore = await cookies();
-    const accessTokenCookie = cookieStore.get('accessToken');
-    const refreshTokenCookie = cookieStore.get('refreshToken');
-
-    if (!accessTokenCookie && !refreshTokenCookie) {
-      return null;
-    }
-
-    // 1. Try to verify access token
-    if (accessTokenCookie) {
-      const payload = verifyToken(accessTokenCookie.value);
-      if (payload) {
-        // Access token is valid. Verify session version in DB (strict single system check)
-        const user = await User.findById(payload.userId);
-        if (user && user.currentSessionId === payload.sessionId) {
-          return { user };
-        }
-      }
-    }
-
-    // 2. If access token is invalid/expired, try refresh token
-    if (refreshTokenCookie) {
-      const payload = verifyToken(refreshTokenCookie.value);
-      if (payload) {
-        const user = await User.findById(payload.userId);
-        // Verify that the refresh token matches the one in DB and session matches
-        if (
-          user &&
-          user.currentRefreshToken === refreshTokenCookie.value &&
-          user.currentSessionId === payload.sessionId
-        ) {
-          // Generate new access token
-          const newAccessToken = signToken(
-            { userId: user._id, email: user.email, role: user.role, sessionId: user.currentSessionId },
-            '1d'
-          );
-          // Return the user and the new access token so it can be set on NextResponse by the caller
-          return { user, newAccessToken };
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Error authenticating user from cookies:', error);
-  }
-
-  return null;
 }

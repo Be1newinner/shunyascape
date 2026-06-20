@@ -600,22 +600,37 @@ export function updateHumans(
       // Periodic database sync
       syncStates.positionSyncTimer -= delta;
       if (syncStates.positionSyncTimer <= 0) {
-        syncStates.positionSyncTimer = 0.5;
+        const hasWs = ctx.ws && ctx.ws.readyState === WebSocket.OPEN;
+        syncStates.positionSyncTimer = hasWs ? 0.1 : 0.5;
         const distSq = h.mesh.position.distanceToSquared(syncStates.lastSyncedPosition);
-        if (distSq > 0.01 && h.playerEmail) {
+        if (distSq > 0.005 && h.playerEmail) {
           syncStates.lastSyncedPosition.copy(h.mesh.position);
-          fetch('/api/users/position', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              x: h.mesh.position.x,
-              z: h.mesh.position.z
+          if (hasWs && ctx.ws) {
+            ctx.ws.send(
+              JSON.stringify({
+                type: "player-move",
+                x: h.mesh.position.x,
+                z: h.mesh.position.z,
+              }),
+            );
+          } else {
+            fetch("/api/users/position", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                x: h.mesh.position.x,
+                z: h.mesh.position.z,
+              }),
             })
-          }).then(res => {
-            if (res.status === 401) {
-              window.dispatchEvent(new CustomEvent('auth-unauthorized'));
-            }
-          }).catch(err => console.error('Failed to sync player position:', err));
+              .then((res) => {
+                if (res.status === 401) {
+                  window.dispatchEvent(new CustomEvent("auth-unauthorized"));
+                }
+              })
+              .catch((err) =>
+                console.error("Failed to sync player position:", err),
+              );
+          }
         }
       }
     } else if (h.playerEmail) {
@@ -835,18 +850,27 @@ export async function syncNpcsToDatabase(ctx: SimContext, humansList: HumanAgent
       clothingColor: h.clothingColor
     }));
 
-  try {
-    const res = await fetch('/api/npcs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        npcs: npcsData
-      })
-    });
-    if (res.status === 401) {
-      window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+  if (ctx.ws && ctx.ws.readyState === WebSocket.OPEN) {
+    ctx.ws.send(
+      JSON.stringify({
+        type: "npc-sync",
+        npcs: npcsData,
+      }),
+    );
+  } else {
+    try {
+      const res = await fetch("/api/npcs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          npcs: npcsData,
+        }),
+      });
+      if (res.status === 401) {
+        window.dispatchEvent(new CustomEvent("auth-unauthorized"));
+      }
+    } catch (e) {
+      console.error("Failed to sync NPCs to database:", e);
     }
-  } catch (e) {
-    console.error('Failed to sync NPCs to database:', e);
   }
 }

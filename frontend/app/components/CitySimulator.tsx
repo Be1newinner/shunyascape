@@ -12,10 +12,8 @@ import {
   Moon, 
   Volume2, 
   VolumeX, 
-  RotateCcw, 
   Users, 
   Hammer, 
-  Construction, 
   Sparkles,
   Play,
   Pause,
@@ -23,10 +21,16 @@ import {
   LogOut,
   X,
   Trophy,
-  Award
+  Award,
+  Map,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
 } from 'lucide-react';
 import { ThreeCity } from './simulation/ThreeCity';
 import { BuildType, CityStats } from './simulation/Types';
+import { LandExpansionManager, LandPlot, PLOT_COST_RING1 } from './simulation/LandExpansion';
 
 export default function CitySimulator() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -82,6 +86,9 @@ export default function CitySimulator() {
   const [showPermitStore, setShowPermitStore] = useState<boolean>(false);
   const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
   const [showAchievements, setShowAchievements] = useState<boolean>(false);
+  const [showLandShop, setShowLandShop] = useState<boolean>(false);
+  const [availablePlots, setAvailablePlots] = useState<LandPlot[]>([]);
+  const [cityGridSize, setCityGridSize] = useState<number>(32);
 
   // Toast notifier helper
   const showToast = (message: string, type: 'info' | 'success' | 'warning' = 'info') => {
@@ -250,6 +257,35 @@ export default function CitySimulator() {
     addProgress(-cost, 10, 0, undefined, nextPermits);
     showToast(`Purchased ${permitKey.charAt(0).toUpperCase() + permitKey.slice(1)} Permit!`, 'success');
   };
+
+  const openLandShop = () => {
+    if (cityRef.current) {
+      const plots = cityRef.current.landExpansionManager.getAvailablePlots();
+      setAvailablePlots(plots);
+    }
+    setShowLandShop(true);
+  };
+
+  const buyLandPlot = (plot: LandPlot) => {
+    if (shunyaCoins < plot.cost) {
+      showToast("Not enough ShunyaCoins to buy this land plot!", "warning");
+      return;
+    }
+    if (!cityRef.current) return;
+
+    const success = cityRef.current.expandGrid(plot.id);
+    if (success) {
+      addProgress(-plot.cost, 25); // Deduct coins, give 25 XP for expansion
+      setCityGridSize(cityRef.current.gridSize);
+      // Refresh available plots after purchase
+      const newPlots = cityRef.current.landExpansionManager.getAvailablePlots();
+      setAvailablePlots(newPlots);
+      showToast(`🗺️ Land expanded ${LandExpansionManager.directionLabel(plot.direction)}! New area revealed.`, 'success');
+    } else {
+      showToast("Could not expand land in that direction.", "warning");
+    }
+  };
+
 
   const triggerUnlock = (achKey: string, title: string, xpReward: number) => {
     if (completedAchievements.includes(achKey)) return;
@@ -946,9 +982,22 @@ export default function CitySimulator() {
                   <Trophy className="w-3.5 h-3.5" />
                   <span>Achievements</span>
                 </button>
+
+                <button
+                  onClick={openLandShop}
+                  className="px-3 py-2 rounded-xl bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 hover:border-green-500/50 hover:scale-105 active:scale-95 transition-all text-xs font-bold text-green-400 flex items-center gap-1.5 shadow-lg cursor-pointer relative"
+                  title="Buy more land to expand your city!"
+                >
+                  <Map className="w-3.5 h-3.5" />
+                  <span>Expand Land</span>
+                  <span className="absolute -top-1 -right-1 text-[8px] bg-green-600 text-white px-1 py-0.5 rounded-full font-bold">
+                    {cityGridSize}²
+                  </span>
+                </button>
               </>
             )}
           </div>
+
 
           {/* Level and XP progress bar (Glassmorphic) */}
           {hasSpawned && (
@@ -1867,8 +1916,137 @@ export default function CitySimulator() {
         </div>
       )}
 
+      {/* Land Expansion Shop Modal */}
+      {hasSpawned && showLandShop && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 pointer-events-auto">
+          <div className="w-full max-w-lg bg-slate-900/90 backdrop-blur-2xl border border-green-700/40 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowLandShop(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer"
+              title="Close Land Shop"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Header */}
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-green-500/30">
+                <Map className="w-7 h-7 text-white" />
+              </div>
+              <h2 className="text-2xl font-black bg-gradient-to-r from-green-400 via-emerald-300 to-teal-300 bg-clip-text text-transparent">
+                Land Expansion
+              </h2>
+              <p className="text-[11px] text-slate-400 text-center max-w-sm">
+                Purchase new 8×8 plots to grow your city beyond its current borders.
+                Each expansion reveals new terrain, trees, and building opportunities!
+              </p>
+              <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-slate-800/60 border border-slate-700/40 mt-1">
+                <span className="text-slate-400">Current World Size:</span>
+                <span className="text-green-400 font-bold">{cityGridSize} × {cityGridSize} cells</span>
+                <span className="text-slate-500">·</span>
+                <span className="text-slate-400">Balance:</span>
+                <span className="text-amber-400 font-bold">{shunyaCoins} SC</span>
+              </div>
+            </div>
+
+            {/* Mini city map visualization */}
+            <div className="flex justify-center">
+              <div className="relative w-40 h-40">
+                {/* Center city */}
+                <div className="absolute inset-0 m-auto w-16 h-16 bg-gradient-to-br from-emerald-600/60 to-green-700/60 border-2 border-green-500/50 rounded-lg flex items-center justify-center z-10">
+                  <span className="text-[9px] text-green-300 font-bold text-center leading-tight">YOUR<br/>CITY</span>
+                </div>
+                {/* Expansion indicators */}
+                {availablePlots.map(plot => (
+                  <div
+                    key={plot.id}
+                    className={`absolute border border-dashed rounded-lg flex items-center justify-center opacity-60 hover:opacity-100 transition-opacity cursor-pointer ${shunyaCoins >= plot.cost ? 'border-green-500 bg-green-900/30' : 'border-red-700 bg-red-900/20'}`}
+                    style={{
+                      width: 52, height: 52,
+                      top: plot.direction === 'north' ? 0 : plot.direction === 'south' ? 88 : 44,
+                      left: plot.direction === 'west' ? 0 : plot.direction === 'east' ? 88 : 44,
+                    }}
+                    onClick={() => shunyaCoins >= plot.cost && buyLandPlot(plot)}
+                    title={`${LandExpansionManager.directionLabel(plot.direction)} — ${plot.cost} SC`}
+                  >
+                    <span className="text-[8px] text-green-400 font-bold">+8</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Plot Cards */}
+            <div className="flex flex-col gap-3">
+              <h3 className="text-xs font-bold text-slate-300 uppercase tracking-widest">Available Plots</h3>
+              {availablePlots.length === 0 && (
+                <div className="text-center text-slate-500 text-xs py-4">No plots available — you have max expansion!</div>
+              )}
+              {availablePlots.map(plot => {
+                const canAfford = shunyaCoins >= plot.cost;
+                const dirIcon = ({
+                  north: <ArrowUp className="w-4 h-4" />,
+                  south: <ArrowDown className="w-4 h-4" />,
+                  east: <ArrowRight className="w-4 h-4" />,
+                  west: <ArrowLeft className="w-4 h-4" />,
+                  northeast: <ArrowUp className="w-4 h-4" />,
+                  northwest: <ArrowUp className="w-4 h-4" />,
+                  southeast: <ArrowDown className="w-4 h-4" />,
+                  southwest: <ArrowDown className="w-4 h-4" />,
+                } as Record<string, React.ReactNode>)[plot.direction] ?? <Map className="w-4 h-4" />;
+
+                return (
+                  <div
+                    key={plot.id}
+                    className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${
+                      canAfford
+                        ? 'border-green-700/40 bg-green-900/20 hover:border-green-500/60 hover:bg-green-900/30'
+                        : 'border-slate-700/30 bg-slate-800/20 opacity-60'
+                    }`}
+                  >
+                    {/* Direction icon */}
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${canAfford ? 'bg-green-600/30 text-green-400' : 'bg-slate-700/30 text-slate-500'}`}>
+                      {dirIcon}
+                    </div>
+
+                    {/* Plot info */}
+                    <div className="flex-1 text-left">
+                      <div className="text-sm font-bold text-slate-200">
+                        {LandExpansionManager.directionLabel(plot.direction)} Expansion
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        +8×8 cells of buildable land · Ring {plot.ring}
+                      </div>
+                    </div>
+
+                    {/* Buy button */}
+                    <button
+                      onClick={() => buyLandPlot(plot)}
+                      disabled={!canAfford}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        canAfford
+                          ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white shadow-lg shadow-green-500/20 active:scale-95'
+                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      }`}
+                    >
+                      <span className="text-amber-400 font-black">⬡</span>
+                      {plot.cost} SC
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer note */}
+            <p className="text-[10px] text-slate-500 text-center">
+              🌟 Each expansion also spawns new trees and triggers a golden land-reveal animation!
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Permit Store Modal */}
       {hasSpawned && showPermitStore && (
+
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 pointer-events-auto">
           <div className="w-full max-w-md bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative max-h-[90vh] overflow-y-auto">
             <button

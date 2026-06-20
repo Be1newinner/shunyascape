@@ -37,6 +37,11 @@ import {
   syncNpcsToDatabase,
 } from "./NPCHuman";
 import { CollectibleManager } from "./Collectibles";
+import { createCentralPark, getParkCells } from "./CentralPark";
+import { createAllMountains } from "./Mountains";
+import { createRiver, RiverSystem } from "./River";
+import { LandExpansionManager, LandPlot, PLOT_SIZE } from "./LandExpansion";
+import { resizeGridHelper } from "./Land";
 
 export class ThreeCity {
   // Three.js Core
@@ -51,6 +56,13 @@ export class ThreeCity {
   public gridSize = 32;
   private cellSize = 3.0; // Size of each cell in world units
   public grid: GridCell[][] = [];
+  private parkCells: Set<string> = new Set();
+
+  // Land Expansion
+  public landExpansionManager: LandExpansionManager = new LandExpansionManager(32);
+
+  // Environment
+  private riverSystem: RiverSystem | null = null;
 
   // Weather & Environment
   private weatherManager!: WeatherManager;
@@ -170,6 +182,7 @@ export class ThreeCity {
         );
       },
       ws: this.ws,
+      parkCells: this.parkCells,
     };
   }
 
@@ -213,6 +226,13 @@ export class ThreeCity {
     const land = createLand(this.getSimContext());
     this.waterPlane = land.waterPlane;
     this.buildPreview = land.buildPreview;
+
+    // Mountains at all 4 corners
+    const halfGridWorld = (this.gridSize * this.cellSize) / 2;
+    createAllMountains(this.scene, halfGridWorld);
+
+    // Beautiful flowing river
+    this.riverSystem = createRiver(this.scene, halfGridWorld);
   }
 
   private initGrid() {
@@ -234,29 +254,60 @@ export class ThreeCity {
     }
 
     const center = Math.floor(this.gridSize / 2);
+    const parkRadius = 3;
 
-    // Initial trees
+    // Mark park cells (center 6×6 are protected park)
+    this.parkCells = getParkCells(this.gridSize);
+    this.parkCells.forEach(key => {
+      const [px, pz] = key.split('_').map(Number);
+      if (this.grid[px]?.[pz]) {
+        this.grid[px][pz].type = 'park';
+        this.grid[px][pz].targetType = 'park';
+      }
+    });
+
+    // Build the central park 3D geometry
+    createCentralPark(this.getSimContext());
+
+    // Initial trees (skip park zone and a safe border around it)
     for (let i = 0; i < 35; i++) {
       const tx = Math.floor(Math.random() * this.gridSize);
       const tz = Math.floor(Math.random() * this.gridSize);
-      if (Math.abs(tx - center) > 2 && Math.abs(tz - center) > 2) {
+      // Keep away from center park area
+      const awayFromCenter = Math.abs(tx - center) > parkRadius + 1 && Math.abs(tz - center) > parkRadius + 1;
+      if (awayFromCenter) {
         this.spawnInstantItem(tx, tz, "tree");
       }
     }
 
-    // Initial connecting road (Main horizontal & vertical cross)
-    for (let z = 4; z <= 27; z++) {
-      this.spawnInstantItem(center, z, "road");
+    // Initial connecting road (cross) — skip over park zone
+    for (let z = 4; z <= this.gridSize - 5; z++) {
+      if (z < center - parkRadius || z >= center + parkRadius) {
+        this.spawnInstantItem(center, z, "road");
+      }
     }
-    for (let x = 4; x <= 27; x++) {
-      this.spawnInstantItem(x, center, "road");
+    for (let x = 4; x <= this.gridSize - 5; x++) {
+      if (x < center - parkRadius || x >= center + parkRadius) {
+        this.spawnInstantItem(x, center, "road");
+      }
     }
 
-    // Initial houses
-    this.spawnInstantItem(center - 1, 8, "house");
-    this.spawnInstantItem(center + 1, 22, "house");
-    this.spawnInstantItem(8, center - 1, "house");
-    this.spawnInstantItem(22, center + 1, "house");
+    // A ring road around the park
+    const pr = parkRadius;
+    for (let x = center - pr - 1; x <= center + pr; x++) {
+      this.spawnInstantItem(x, center - pr - 1, "road");
+      this.spawnInstantItem(x, center + pr, "road");
+    }
+    for (let z = center - pr - 1; z <= center + pr; z++) {
+      this.spawnInstantItem(center - pr - 1, z, "road");
+      this.spawnInstantItem(center + pr, z, "road");
+    }
+
+    // Initial houses (outside park ring)
+    this.spawnInstantItem(center - pr - 2, 8, "house");
+    this.spawnInstantItem(center + pr + 2, 22, "house");
+    this.spawnInstantItem(8, center - pr - 2, "house");
+    this.spawnInstantItem(22, center + pr + 2, "house");
 
     // Spawn starting humans
     for (let i = 0; i < 12; i++) {
@@ -321,9 +372,10 @@ export class ThreeCity {
             0xff0000,
           );
         } else {
+          const isPark = cell.type === 'park';
           const isValid = cell.type === "empty";
           (this.buildPreview.material as THREE.MeshBasicMaterial).color.setHex(
-            isValid ? 0x00ff00 : 0xffa500,
+            isPark ? 0x44ff88 : isValid ? 0x00ff00 : 0xffa500,
           );
         }
         return;
@@ -345,6 +397,8 @@ export class ThreeCity {
     if (!canBuild) return;
     if (this.currentHoverCell && this.buildMode) {
       const { x, z } = this.currentHoverCell;
+      // Block building on park cells
+      if (this.parkCells.has(`${x}_${z}`)) return;
       if (this.buildMode === "delete") {
         if (!this.isAdmin) return;
         this.demolishCell(x, z);
@@ -366,6 +420,8 @@ export class ThreeCity {
     type: "road" | "tree" | "house" | "skyscraper",
   ) {
     if (x < 0 || x >= this.gridSize || z < 0 || z >= this.gridSize) return;
+    // Never overwrite park cells
+    if (this.parkCells.has(`${x}_${z}`)) return;
 
     const cell = this.grid[x][z];
     if (cell.mesh) {
@@ -906,6 +962,118 @@ export class ThreeCity {
     }
   }
 
+  /**
+   * Expands the city grid by purchasing a land plot.
+   * Called by CitySimulator after coins are deducted.
+   */
+  public expandGrid(plotId: string): boolean {
+    const result = this.landExpansionManager.purchase(plotId);
+    if (!result) return false;
+
+    const { newGridCols, newGridRows, offsetX, offsetZ, newCells } = result;
+
+    // Build new 2D grid array with expanded dimensions
+    const newGrid: GridCell[][] = [];
+    for (let x = 0; x < newGridCols; x++) {
+      newGrid[x] = [];
+      for (let z = 0; z < newGridRows; z++) {
+        const oldX = x - offsetX;
+        const oldZ = z - offsetZ;
+        if (
+          oldX >= 0 && oldX < this.grid.length &&
+          this.grid[oldX] &&
+          oldZ >= 0 && oldZ < (this.grid[oldX]?.length ?? 0) &&
+          this.grid[oldX][oldZ]
+        ) {
+          // Existing cell — update its indices if shifted
+          const existing = this.grid[oldX][oldZ];
+          existing.x = x;
+          existing.z = z;
+          existing.id = `cell_${x}_${z}`;
+          // Update world position of any mesh
+          if (existing.mesh) {
+            const halfGridNew = (newGridCols * this.cellSize) / 2;
+            const wx = x * this.cellSize - halfGridNew + this.cellSize / 2;
+            const wz = z * this.cellSize - halfGridNew + this.cellSize / 2;
+            existing.mesh.position.x = wx;
+            existing.mesh.position.z = wz;
+          }
+          newGrid[x][z] = existing;
+        } else {
+          // New cell
+          newGrid[x][z] = {
+            x,
+            z,
+            type: 'empty',
+            mesh: null,
+            constructionProgress: 0,
+            targetType: 'empty',
+            height: 0,
+            id: `cell_${x}_${z}`,
+          };
+        }
+      }
+    }
+
+    this.grid = newGrid;
+    this.gridSize = Math.max(newGridCols, newGridRows);
+
+    // Shift all scene objects if grid origin moved (north/west expansion)
+    if (offsetX !== 0 || offsetZ !== 0) {
+      const dx = offsetX * this.cellSize;
+      const dz = offsetZ * this.cellSize;
+      this.scene.traverse(obj => {
+        if (obj === this.scene) return;
+        // Only shift if it's a positioned object that's not the ground/water
+        if ((obj as THREE.Mesh).isMesh || (obj as THREE.Group).isGroup) {
+          const parent = obj.parent;
+          if (parent === this.scene) {
+            obj.position.x += dx;
+            obj.position.z += dz;
+          }
+        }
+      });
+    }
+
+    // Rebuild raycasting plane
+    if (this.gridPlane) {
+      this.scene.remove(this.gridPlane);
+    }
+    const planeGeom = new THREE.PlaneGeometry(
+      newGridCols * this.cellSize,
+      newGridRows * this.cellSize,
+    );
+    const planeMat = new THREE.MeshBasicMaterial({ visible: false });
+    this.gridPlane = new THREE.Mesh(planeGeom, planeMat);
+    this.gridPlane.rotation.x = -Math.PI / 2;
+    this.gridPlane.position.set(0, 0, 0);
+    this.scene.add(this.gridPlane);
+
+    // Resize the grid helper overlay
+    resizeGridHelper(this.scene, Math.max(newGridCols, newGridRows), this.cellSize);
+
+    // Seed a few trees on new land
+    const newAreaCells = newCells.filter(c => c.type === 'empty');
+    const treesToSeed = Math.floor(newAreaCells.length * 0.08);
+    for (let i = 0; i < treesToSeed; i++) {
+      const rCell = newAreaCells[Math.floor(Math.random() * newAreaCells.length)];
+      this.spawnInstantItem(rCell.x, rCell.z, 'tree');
+    }
+
+    // Reveal animation — golden particle sweep across new cells
+    newAreaCells.forEach((cell, idx) => {
+      setTimeout(() => {
+        if (!this.isDestroyed) {
+          this.spawnParticle(cell.x, cell.z, '#ffcc33', 2);
+        }
+      }, idx * 8 + Math.random() * 120);
+    });
+
+    this.audio.playPop();
+    this.updateStats();
+    return true;
+  }
+
   public loadAllDatabaseUsers(users: any[], currentPlayerEmail: string) {
     if (this.isDestroyed) return;
     loadAllDatabaseUsers(
@@ -1358,6 +1526,11 @@ export class ThreeCity {
         -0.02 + Math.sin(this.clock.getElapsedTime() * 1.2) * 0.025;
     }
 
+    // 7. River system animation
+    if (this.riverSystem) {
+      this.riverSystem.update(delta, this.clock.getElapsedTime());
+    }
+
     // standing cell check
     if (this.player) {
       const halfGrid = (this.gridSize * this.cellSize) / 2;
@@ -1388,14 +1561,17 @@ export class ThreeCity {
     let roads = 0;
     let activeConstruction = 0;
 
-    for (let x = 0; x < this.gridSize; x++) {
-      for (let z = 0; z < this.gridSize; z++) {
+    for (let x = 0; x < this.grid.length; x++) {
+      if (!this.grid[x]) continue;
+      for (let z = 0; z < this.grid[x].length; z++) {
         const cell = this.grid[x][z];
+        if (!cell) continue;
         if (cell.type === "house") houses++;
         else if (cell.type === "skyscraper") skyscrapers++;
         else if (cell.type === "tree") trees++;
         else if (cell.type === "road") roads++;
         else if (cell.type === "construction") activeConstruction++;
+        // 'park' cells are intentionally excluded from counts
       }
     }
 

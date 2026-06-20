@@ -16,6 +16,7 @@ export interface SimContext {
   recalculateRoadConnections: () => void;
   spawnVehicleOnRoad: (x: number, z: number) => void;
   ws?: WebSocket | null;
+  parkCells?: Set<string>; // set of 'x_z' keys belonging to central park
 }
 
 export type BuildType = 'road' | 'tree' | 'house' | 'skyscraper' | 'delete' | null;
@@ -32,10 +33,10 @@ export interface CityStats {
 export interface GridCell {
   x: number;
   z: number;
-  type: 'empty' | 'road' | 'tree' | 'house' | 'skyscraper' | 'construction';
+  type: 'empty' | 'road' | 'tree' | 'house' | 'skyscraper' | 'construction' | 'park';
   mesh: THREE.Group | null;
   constructionProgress: number; // 0 to 100
-  targetType: 'road' | 'tree' | 'house' | 'skyscraper' | 'empty';
+  targetType: 'road' | 'tree' | 'house' | 'skyscraper' | 'empty' | 'park';
   height: number;
   id: string;
 }

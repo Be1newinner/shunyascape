@@ -40,7 +40,7 @@ export default function CitySimulator() {
   });
 
   const [timeOfDay, setTimeOfDay] = useState<number>(8.0);
-  const [timeSpeed, setTimeSpeed] = useState<number>(0.5);
+  const [timeSpeed, setTimeSpeed] = useState<number>(1.0);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [showControls, setShowControls] = useState<boolean>(false);
@@ -203,7 +203,7 @@ export default function CitySimulator() {
 
     // Set initial configuration
     citySim.buildMode = 'road';
-    citySim.timeSpeed = 0.5;
+    citySim.timeSpeed = 1.0;
     citySim.audio.toggle(false);
 
     // Verify session dynamically with /api/auth/me on page load
@@ -254,7 +254,7 @@ export default function CitySimulator() {
           });
           cityRef.current = newCity;
           newCity.buildMode = 'road';
-          newCity.timeSpeed = 0.5;
+          newCity.timeSpeed = 1.0;
           newCity.audio.toggle(false);
         }
       }
@@ -364,52 +364,6 @@ export default function CitySimulator() {
             <Sparkles className="w-5 h-5 text-cyan-400 animate-pulse" />
           </button>
 
-          {/* City Live Statistics Grid */}
-          {hasSpawned && currentUser?.role === 'admin' && (
-            <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 grid grid-cols-3 gap-3 w-full">
-              {/* Pop */}
-              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-                <Users className="w-4 h-4 text-cyan-400 mb-1" />
-                <span className="text-[10px] text-slate-400">Population</span>
-                <span className="text-sm font-semibold mt-0.5">{stats.population}</span>
-              </div>
-
-              {/* Trees */}
-              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-                <TreePine className="w-4 h-4 text-emerald-400 mb-1" />
-                <span className="text-[10px] text-slate-400">Forestry</span>
-                <span className="text-sm font-semibold mt-0.5">{stats.trees}</span>
-              </div>
-
-              {/* Roads */}
-              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-                <div className="w-4 h-4 text-slate-400 font-bold border border-slate-400 rounded-sm text-[8px] flex items-center justify-center mb-1">R</div>
-                <span className="text-[10px] text-slate-400">Roads</span>
-                <span className="text-sm font-semibold mt-0.5">{stats.roads}</span>
-              </div>
-
-              {/* Houses */}
-              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-                <Home className="w-4 h-4 text-amber-400 mb-1" />
-                <span className="text-[10px] text-slate-400">Houses</span>
-                <span className="text-sm font-semibold mt-0.5">{stats.houses}</span>
-              </div>
-
-              {/* Skyscrapers */}
-              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-                <Building2 className="w-4 h-4 text-indigo-400 mb-1" />
-                <span className="text-[10px] text-slate-400">Towers</span>
-                <span className="text-sm font-semibold mt-0.5">{stats.skyscrapers}</span>
-              </div>
-
-              {/* Under construction */}
-              <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all hover:bg-slate-800/60">
-                <Hammer className="w-4 h-4 text-yellow-500 mb-1 animate-bounce" />
-                <span className="text-[10px] text-slate-400">Building</span>
-                <span className="text-sm font-semibold mt-0.5 text-yellow-400">{stats.activeConstruction}</span>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Right Side: Profile icon and/or simulation controller */}
@@ -770,6 +724,61 @@ export default function CitySimulator() {
         </div>
       )}
 
+      {/* City Live Statistics List in bottom left */}
+      {hasSpawned && currentUser?.role === 'admin' && (
+        <div className="absolute bottom-4 left-4 md:bottom-6 md:left-6 z-30 flex flex-col items-start gap-2 pointer-events-auto">
+          <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-3.5 flex flex-col gap-2 w-44">
+            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-1.5 mb-0.5">
+              City Statistics
+            </h4>
+            <div className="flex flex-col gap-2 text-xs">
+              <div className="flex items-center justify-between text-slate-300">
+                <div className="flex items-center gap-2">
+                  <Users className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Population</span>
+                </div>
+                <span className="font-semibold text-slate-100">{stats.population}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <div className="flex items-center gap-2">
+                  <TreePine className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Forestry</span>
+                </div>
+                <span className="font-semibold text-slate-100">{stats.trees}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <div className="flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 text-slate-400 font-bold border border-slate-500 rounded-sm text-[7px] flex items-center justify-center">R</div>
+                  <span>Roads</span>
+                </div>
+                <span className="font-semibold text-slate-100">{stats.roads}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <div className="flex items-center gap-2">
+                  <Home className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Houses</span>
+                </div>
+                <span className="font-semibold text-slate-100">{stats.houses}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Towers</span>
+                </div>
+                <span className="font-semibold text-slate-100">{stats.skyscrapers}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <div className="flex items-center gap-2">
+                  <Hammer className="w-3.5 h-3.5 text-yellow-500 animate-pulse" />
+                  <span>Building</span>
+                </div>
+                <span className="font-semibold text-yellow-400">{stats.activeConstruction}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Avatar Controls Floating HUD & Info Button in bottom right */}
       {hasSpawned && (
         <div className="absolute bottom-4 right-4 md:bottom-6 md:right-6 z-30 flex flex-col items-end gap-2 pointer-events-auto">
@@ -948,7 +957,7 @@ export default function CitySimulator() {
                       });
                       cityRef.current = newCity;
                       newCity.buildMode = 'road';
-                      newCity.timeSpeed = 0.5;
+                      newCity.timeSpeed = 1.0;
                       newCity.audio.toggle(false);
                     }
                   }

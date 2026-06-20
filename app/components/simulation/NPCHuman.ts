@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SimContext, HumanAgent, GridCell } from './Types';
+import { SimContext, HumanAgent } from './Types';
 import { findPath } from './Pathfinding';
 
 export function createRefinedHumanMesh(
@@ -25,8 +25,6 @@ export function createRefinedHumanMesh(
   const hairColor = ['#1a1a1a', '#4a2f13', '#d9a752', '#b83b1d'][Math.floor(Math.random() * 4)];
   const hairMat = ctx.getMaterial(`hair_${hairColor}`, { color: hairColor, roughness: 0.9, flatShading: true });
 
-  // Eye Material
-  const eyeMat = ctx.getMaterial('eye_black', { color: '#000000', roughness: 0.1 });
   const mouthMat = ctx.getMaterial('mouth_pink', { color: '#e57373', roughness: 0.9 });
 
   // Left Leg
@@ -38,7 +36,14 @@ export function createRefinedHumanMesh(
   leftLeg.castShadow = true;
   leftLegPivot.add(leftLeg);
   
-  // Shoe to left leg
+  // Sock and Shoe to left leg
+  const sockMat = ctx.getMaterial('socks_white', { color: '#ffffff', roughness: 0.9 });
+  const sockGeom = ctx.getGeometry('limb_sock', () => new THREE.BoxGeometry(0.082, 0.04, 0.082));
+  const leftSock = new THREE.Mesh(sockGeom, sockMat);
+  leftSock.position.set(0, -0.18, 0);
+  leftSock.castShadow = true;
+  leftLegPivot.add(leftSock);
+
   const shoeGeom = ctx.getGeometry('limb_shoe', () => new THREE.BoxGeometry(0.09, 0.04, 0.12));
   const leftShoe = new THREE.Mesh(shoeGeom, shoeMat);
   leftShoe.position.set(0, -0.24 + 0.02, 0.02);
@@ -56,7 +61,12 @@ export function createRefinedHumanMesh(
   rightLeg.castShadow = true;
   rightLegPivot.add(rightLeg);
 
-  // Shoe to right leg
+  // Sock and Shoe to right leg
+  const rightSock = new THREE.Mesh(sockGeom, sockMat);
+  rightSock.position.set(0, -0.18, 0);
+  rightSock.castShadow = true;
+  rightLegPivot.add(rightSock);
+
   const rightShoe = new THREE.Mesh(shoeGeom, shoeMat);
   rightShoe.position.set(0, -0.24 + 0.02, 0.02);
   rightShoe.castShadow = true;
@@ -80,22 +90,70 @@ export function createRefinedHumanMesh(
   torso.receiveShadow = true;
   upperBody.add(torso);
 
+  // Neck
+  const neckGeom = ctx.getGeometry('neck_box', () => new THREE.BoxGeometry(0.06, 0.05, 0.06));
+  const neck = new THREE.Mesh(neckGeom, skinMat);
+  neck.position.set(0, 0.335, 0);
+  neck.castShadow = true;
+  upperBody.add(neck);
+
+  // Shirt Collar
+  const collarGeom = ctx.getGeometry('collar_box', () => new THREE.BoxGeometry(0.12, 0.02, 0.10));
+  const collar = new THREE.Mesh(collarGeom, torsoMat);
+  collar.position.set(0, 0.315, 0.035);
+  collar.castShadow = true;
+  upperBody.add(collar);
+
   // Head
   const headGeom = ctx.getGeometry('head_box', () => new THREE.BoxGeometry(0.18, 0.18, 0.18));
   const head = new THREE.Mesh(headGeom, skinMat);
-  head.position.set(0, 0.41, 0);
+  head.position.set(0, 0.44, 0); // Raised slightly to fit neck
   head.castShadow = true;
   upperBody.add(head);
 
-  // Eyes
-  const eyeGeom = ctx.getGeometry('eye_box', () => new THREE.BoxGeometry(0.03, 0.03, 0.015));
-  const leftEye = new THREE.Mesh(eyeGeom, eyeMat);
-  leftEye.position.set(-0.045, 0.03, 0.091);
-  head.add(leftEye);
+  // Detailed Eyes (White Sclera + Black Pupil)
+  const scleraGeom = ctx.getGeometry('sclera_box', () => new THREE.BoxGeometry(0.04, 0.03, 0.015));
+  const scleraMat = ctx.getMaterial('sclera_white', { color: '#ffffff', roughness: 0.1 });
+  const pupilGeom = ctx.getGeometry('pupil_box', () => new THREE.BoxGeometry(0.02, 0.025, 0.016));
+  const pupilMat = ctx.getMaterial('pupil_black', { color: '#000000', roughness: 0.1 });
 
-  const rightEye = new THREE.Mesh(eyeGeom, eyeMat);
-  rightEye.position.set(0.045, 0.03, 0.091);
-  head.add(rightEye);
+  const leftSclera = new THREE.Mesh(scleraGeom, scleraMat);
+  leftSclera.position.set(-0.045, 0.03, 0.091);
+  head.add(leftSclera);
+
+  const leftPupil = new THREE.Mesh(pupilGeom, pupilMat);
+  leftPupil.position.set(-0.04, 0.03, 0.096);
+  head.add(leftPupil);
+
+  const rightSclera = new THREE.Mesh(scleraGeom, scleraMat);
+  rightSclera.position.set(0.045, 0.03, 0.091);
+  head.add(rightSclera);
+
+  const rightPupil = new THREE.Mesh(pupilGeom, pupilMat);
+  rightPupil.position.set(0.04, 0.03, 0.096);
+  head.add(rightPupil);
+
+  // Eyebrows
+  const eyebrowGeom = ctx.getGeometry('eyebrow_box', () => new THREE.BoxGeometry(0.045, 0.01, 0.01));
+  const leftEyebrow = new THREE.Mesh(eyebrowGeom, hairMat);
+  leftEyebrow.position.set(-0.045, 0.06, 0.092);
+  head.add(leftEyebrow);
+
+  const rightEyebrow = new THREE.Mesh(eyebrowGeom, hairMat);
+  rightEyebrow.position.set(0.045, 0.06, 0.092);
+  head.add(rightEyebrow);
+
+  // Blush Cheeks
+  const blushGeom = ctx.getGeometry('blush_box', () => new THREE.BoxGeometry(0.03, 0.02, 0.01));
+  const blushMat = ctx.getMaterial('blush_pink', { color: '#ff8a8a', roughness: 0.9, transparent: true, opacity: 0.5 });
+  
+  const leftBlush = new THREE.Mesh(blushGeom, blushMat);
+  leftBlush.position.set(-0.05, -0.01, 0.091);
+  head.add(leftBlush);
+
+  const rightBlush = new THREE.Mesh(blushGeom, blushMat);
+  rightBlush.position.set(0.05, -0.01, 0.091);
+  head.add(rightBlush);
 
   // Nose
   const noseGeom = ctx.getGeometry('nose_box', () => new THREE.BoxGeometry(0.025, 0.04, 0.025));
@@ -109,7 +167,7 @@ export function createRefinedHumanMesh(
   mouth.position.set(0, -0.045, 0.091);
   head.add(mouth);
 
-  // Hair
+  // Hair Base
   const hairGeom = ctx.getGeometry('hair_box', () => new THREE.BoxGeometry(0.19, 0.1, 0.19));
   const hairMain = new THREE.Mesh(hairGeom, hairMat);
   hairMain.position.set(0, 0.06, 0);
@@ -120,23 +178,68 @@ export function createRefinedHumanMesh(
   hairBack.position.set(0, 0.01, -0.055);
   head.add(hairBack);
 
+  // Hair Bangs (Fringe) & Sideburns
+  const bangsGeom = ctx.getGeometry('hair_bangs', () => new THREE.BoxGeometry(0.19, 0.04, 0.04));
+  const hairBangs = new THREE.Mesh(bangsGeom, hairMat);
+  hairBangs.position.set(0, 0.06, 0.08);
+  head.add(hairBangs);
+
+  const sideburnGeom = ctx.getGeometry('hair_sideburn', () => new THREE.BoxGeometry(0.025, 0.08, 0.04));
+  const leftSideburn = new THREE.Mesh(sideburnGeom, hairMat);
+  leftSideburn.position.set(-0.095, 0.01, 0.03);
+  head.add(leftSideburn);
+
+  const rightSideburn = new THREE.Mesh(sideburnGeom, hairMat);
+  rightSideburn.position.set(0.095, 0.01, 0.03);
+  head.add(rightSideburn);
+
   // Special crown for player
   if (isPlayer) {
     const crownMat = ctx.getMaterial('crown_gold', { color: '#ffbd03', metalness: 0.8, roughness: 0.1 });
-    const crownGeom = ctx.getGeometry('player_crown', () => new THREE.CylinderGeometry(0.1, 0.11, 0.06, 6));
-    const crown = new THREE.Mesh(crownGeom, crownMat);
-    crown.position.set(0, 0.13, 0);
-    head.add(crown);
+    const crownGroup = new THREE.Group();
+    crownGroup.position.set(0, 0.14, 0);
+    
+    // Base ring
+    const baseGeom = ctx.getGeometry('crown_base', () => new THREE.CylinderGeometry(0.08, 0.09, 0.03, 8));
+    const base = new THREE.Mesh(baseGeom, crownMat);
+    crownGroup.add(base);
+
+    // Spikes
+    const spikeGeom = ctx.getGeometry('crown_spike', () => new THREE.ConeGeometry(0.02, 0.05, 4));
+    for (let angle = 0; angle < Math.PI * 2; angle += (Math.PI * 2) / 5) {
+      const spike = new THREE.Mesh(spikeGeom, crownMat);
+      const r = 0.085;
+      spike.position.set(Math.cos(angle) * r, 0.035, Math.sin(angle) * r);
+      spike.rotation.y = -angle;
+      spike.rotation.x = 0.2;
+      crownGroup.add(spike);
+    }
+
+    // Gem on front spike
+    const gemMat = ctx.getMaterial('crown_gem', { color: '#ff0055', metalness: 0.9, roughness: 0.05 });
+    const gemGeom = ctx.getGeometry('crown_gem_box', () => new THREE.BoxGeometry(0.02, 0.02, 0.02));
+    const gem = new THREE.Mesh(gemGeom, gemMat);
+    gem.position.set(0, 0.03, 0.09);
+    crownGroup.add(gem);
+
+    head.add(crownGroup);
   }
 
-  // Left Arm
-  const armGeom = ctx.getGeometry('limb_arm', () => new THREE.BoxGeometry(0.07, 0.24, 0.07));
+  // Left Arm (Short sleeve + bare forearm)
   const leftArmPivot = new THREE.Group();
   leftArmPivot.position.set(-0.16, 0.24, 0);
-  const leftArm = new THREE.Mesh(armGeom, torsoMat);
-  leftArm.position.y = -0.12;
-  leftArm.castShadow = true;
-  leftArmPivot.add(leftArm);
+  
+  const sleeveGeom = ctx.getGeometry('limb_sleeve', () => new THREE.BoxGeometry(0.072, 0.10, 0.072));
+  const leftSleeve = new THREE.Mesh(sleeveGeom, torsoMat);
+  leftSleeve.position.y = -0.05;
+  leftSleeve.castShadow = true;
+  leftArmPivot.add(leftSleeve);
+
+  const forearmGeom = ctx.getGeometry('limb_forearm', () => new THREE.BoxGeometry(0.06, 0.14, 0.06));
+  const leftForearm = new THREE.Mesh(forearmGeom, skinMat);
+  leftForearm.position.y = -0.17;
+  leftForearm.castShadow = true;
+  leftArmPivot.add(leftForearm);
 
   const handGeom = ctx.getGeometry('limb_hand', () => new THREE.BoxGeometry(0.07, 0.05, 0.07));
   const leftHand = new THREE.Mesh(handGeom, skinMat);
@@ -147,13 +250,19 @@ export function createRefinedHumanMesh(
   upperBody.add(leftArmPivot);
   agent.leftArmPivot = leftArmPivot;
 
-  // Right Arm
+  // Right Arm (Short sleeve + bare forearm)
   const rightArmPivot = new THREE.Group();
   rightArmPivot.position.set(0.16, 0.24, 0);
-  const rightArm = new THREE.Mesh(armGeom, torsoMat);
-  rightArm.position.y = -0.12;
-  rightArm.castShadow = true;
-  rightArmPivot.add(rightArm);
+
+  const rightSleeve = new THREE.Mesh(sleeveGeom, torsoMat);
+  rightSleeve.position.y = -0.05;
+  rightSleeve.castShadow = true;
+  rightArmPivot.add(rightSleeve);
+
+  const rightForearm = new THREE.Mesh(forearmGeom, skinMat);
+  rightForearm.position.y = -0.17;
+  rightForearm.castShadow = true;
+  rightArmPivot.add(rightForearm);
 
   const rightHand = new THREE.Mesh(handGeom, skinMat);
   rightHand.position.y = -0.24 - 0.025;

@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     } else if (settings.isPlaying) {
       const lastUpdatedTime = settings.lastUpdated ? new Date(settings.lastUpdated).getTime() : Date.now();
       const elapsedSeconds = (Date.now() - lastUpdatedTime) / 1000;
-      const elapsedHours = elapsedSeconds * settings.timeSpeed;
+      const elapsedHours = elapsedSeconds * settings.timeSpeed * 0.1;
       settings.timeOfDay = (settings.timeOfDay + elapsedHours) % 24;
     }
 

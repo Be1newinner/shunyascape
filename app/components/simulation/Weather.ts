@@ -99,7 +99,7 @@ export class WeatherManager {
   }
 
   public updateTime(timeOfDay: number, timeSpeed: number, delta: number): number {
-    const nextTime = (timeOfDay + delta * timeSpeed) % 24;
+    const nextTime = (timeOfDay + delta * timeSpeed * 0.1) % 24;
 
     const angle = ((nextTime - 6) / 24) * Math.PI * 2;
     this.dirLight.position.x = Math.cos(angle) * 60;

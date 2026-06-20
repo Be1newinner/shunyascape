@@ -16,12 +16,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ────────────────────────────────────────────────────────────────────────────
-  # JOB 1 — Type-check & build on the GitHub runner (fast fail before VPS)
-  # ────────────────────────────────────────────────────────────────────────────
-  build:
-    name: 🔨 Build Backend
+  deploy:
+    name: 🚀 Build and Deploy to Oracle VPS
     runs-on: ubuntu-latest
+    environment: production
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -43,16 +42,6 @@ jobs:
         working-directory: backend
         run: npm run build
 
-  # ────────────────────────────────────────────────────────────────────────────
-  # JOB 2 — SSH into Oracle VPS and deploy
-  # ────────────────────────────────────────────────────────────────────────────
-  deploy:
-    name: 🚀 Deploy to Oracle VPS
-    runs-on: ubuntu-latest
-    needs: build
-    environment: production
-
-    steps:
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
@@ -60,7 +49,18 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p "${{ secrets.VPS_PORT }}" -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy backend on VPS
+      - name: Package and transfer files to VPS
+        run: |
+          # Package the built backend and config
+          tar -czf deploy.tar.gz backend/package.json backend/dist ecosystem.config.cjs
+          
+          # Create project directory on VPS if not exists
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.VPS_PORT }}" -o StrictHostKeyChecking=no "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "mkdir -p ${{ secrets.VPS_PROJECT_DIR }}"
+          
+          # Transfer the archive
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" -o StrictHostKeyChecking=no deploy.tar.gz "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_PROJECT_DIR }}/"
+
+      - name: Extract and Deploy on VPS
         run: |
           ssh -i ~/.ssh/deploy_key \
               -p "${{ secrets.VPS_PORT }}" \
@@ -70,15 +70,13 @@ jobs:
             set -e
             cd "${{ secrets.VPS_PROJECT_DIR }}"
 
-            echo "⬇️  Pulling latest code..."
-            git pull origin main
+            echo "📦 Extracting package..."
+            tar -xzf deploy.tar.gz
+            rm -f deploy.tar.gz
 
             echo "📦 Installing backend dependencies..."
-            cd "${{ secrets.VPS_PROJECT_DIR }}/backend"
+            cd backend
             npm install --omit=dev
-
-            echo "🔨 Building backend..."
-            npm run build
 
             echo "♻️  Restarting PM2 service..."
             cd "${{ secrets.VPS_PROJECT_DIR }}"

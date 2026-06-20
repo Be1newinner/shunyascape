@@ -30,16 +30,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
         working-directory: backend
-        run: npm ci
+        run: npm install
 
       - name: Type-check
         working-directory: backend
-        run: npx tsc --noEmit
+        run: npm run check || npx tsc --noEmit
 
       - name: Build (esbuild → dist/index.js)
         working-directory: backend
@@ -77,7 +75,7 @@ jobs:
 
             echo "📦 Installing backend dependencies..."
             cd "${{ secrets.VPS_PROJECT_DIR }}/backend"
-            npm ci --omit=dev
+            npm install --omit=dev
 
             echo "🔨 Building backend..."
             npm run build

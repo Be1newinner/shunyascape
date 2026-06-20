@@ -365,6 +365,13 @@ export function loadAllDatabaseUsers(
 
     // Skip player
     if (emailLower === emailLowerPlayer) {
+      // Clean up any stale duplicate NPC avatar representing this player (e.g. from prior guest load or REST load before auth state resolved)
+      const npcIndex = humansList.findIndex(h => !h.isPlayer && h.playerEmail === emailLower);
+      if (npcIndex !== -1) {
+        const npc = humansList[npcIndex];
+        ctx.scene.remove(npc.mesh);
+        humansList.splice(npcIndex, 1);
+      }
       return;
     }
 
@@ -460,6 +467,103 @@ export function loadAllDatabaseUsers(
   const updatedList = humansList.filter(h => h.isPlayer || !h.playerEmail || dbEmails.has(h.playerEmail));
   humansList.length = 0;
   humansList.push(...updatedList);
+}
+
+export function addDatabaseUser(
+  ctx: SimContext,
+  humansList: HumanAgent[],
+  u: any,
+  currentPlayerEmail: string
+) {
+  const emailLowerPlayer = currentPlayerEmail.toLowerCase().trim();
+  const emailLower = u.email.toLowerCase().trim();
+
+  // Skip player
+  if (emailLower === emailLowerPlayer) {
+    // Clean up any stale duplicate NPC avatar representing this player (e.g. from prior guest load or REST load before auth state resolved)
+    const npcIndex = humansList.findIndex(h => !h.isPlayer && h.playerEmail === emailLower);
+    if (npcIndex !== -1) {
+      const npc = humansList[npcIndex];
+      ctx.scene.remove(npc.mesh);
+      humansList.splice(npcIndex, 1);
+    }
+    return;
+  }
+
+  const existing = humansList.find(h => h.playerEmail === emailLower);
+  if (existing) {
+    // If already seated, skip manual update
+    if (existing.seatedInVehicleId) return;
+
+    const dx = Math.abs(existing.mesh.position.x - u.x);
+    const dz = Math.abs(existing.mesh.position.z - u.z);
+    if (dx > 8.0 || dz > 8.0) {
+      existing.mesh.position.set(u.x, 0, u.z);
+      existing.x = u.x;
+      existing.z = u.z;
+      existing.targetX = u.x;
+      existing.targetZ = u.z;
+      const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
+      const cx = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.x + halfGrid) / ctx.cellSize)));
+      const cz = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.z + halfGrid) / ctx.cellSize)));
+      ctx.spawnParticle(cx, cz, '#38bdf8', 6);
+    } else {
+      existing.targetX = u.x;
+      existing.targetZ = u.z;
+    }
+    return;
+  }
+
+  // Spawn user avatar NPC
+  const clothingColor = u.clothingColor || 0x4287f5;
+  const humanGroup = new THREE.Group();
+  humanGroup.position.set(u.x, 0, u.z);
+
+  const agent: Partial<HumanAgent> = {};
+  const mesh = createRefinedHumanMesh(ctx, clothingColor, false, agent);
+  humanGroup.add(mesh);
+
+  const nameTag = createNameTag(u.name);
+  humanGroup.add(nameTag);
+
+  ctx.scene.add(humanGroup);
+
+  const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
+  const cellX = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.x + halfGrid) / ctx.cellSize)));
+  const cellZ = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.z + halfGrid) / ctx.cellSize)));
+
+  const npcAgent: HumanAgent = {
+    id: `db_user_${u._id || Math.random().toString(36).substr(2, 9)}`,
+    mesh: humanGroup,
+    x: u.x,
+    z: u.z,
+    targetX: u.x,
+    targetZ: u.z,
+    state: 'idle',
+    targetCellX: cellX,
+    targetCellZ: cellZ,
+    path: [],
+    pathIndex: 0,
+    speed: 1.5 + Math.random() * 0.8,
+    bounceTimer: Math.random() * 10,
+    workTimer: 0,
+    jobCellX: null,
+    jobCellZ: null,
+    clothingColor,
+    isPlayer: false,
+    playerName: u.name,
+    playerEmail: emailLower,
+    upperBody: agent.upperBody,
+    leftLegPivot: agent.leftLegPivot,
+    rightLegPivot: agent.rightLegPivot,
+    leftArmPivot: agent.leftArmPivot,
+    rightArmPivot: agent.rightArmPivot,
+    actionState: 'idle',
+    actionTimer: 0,
+    jumpVelocity: 0,
+  };
+
+  humansList.push(npcAgent);
 }
 
 export function updateHumans(
@@ -601,7 +705,7 @@ export function updateHumans(
       syncStates.positionSyncTimer -= delta;
       if (syncStates.positionSyncTimer <= 0) {
         const hasWs = ctx.ws && ctx.ws.readyState === WebSocket.OPEN;
-        syncStates.positionSyncTimer = hasWs ? 0.1 : 0.5;
+        syncStates.positionSyncTimer = hasWs ? 0.1 : 10.0;
         const distSq = h.mesh.position.distanceToSquared(syncStates.lastSyncedPosition);
         if (distSq > 0.005 && h.playerEmail) {
           syncStates.lastSyncedPosition.copy(h.mesh.position);

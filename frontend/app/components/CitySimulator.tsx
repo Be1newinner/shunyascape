@@ -124,7 +124,7 @@ export default function CitySimulator() {
 
       if (cityRef.current) {
         cityRef.current.isAdmin = user.role === 'admin';
-        cityRef.current.spawnPlayer(user.name, user.x, user.z, user.email, user.clothingColor);
+        cityRef.current.spawnPlayer(user.name, user.x, user.z, user.email, user.clothingColor, user.id);
         setSoundEnabled(true);
         cityRef.current.audio.toggle(true);
       }
@@ -232,6 +232,11 @@ export default function CitySimulator() {
               }
               break;
 
+            case 'player-connected':
+              const currentEmail = currentUser?.email || '';
+              cityRef.current.addDatabaseUser(data.user, currentEmail);
+              break;
+
             case 'player-moved':
               cityRef.current.updateOtherPlayerPosition(data.userId, data.x, data.z);
               break;
@@ -323,7 +328,7 @@ export default function CitySimulator() {
             setCurrentUser(data.user);
             setHasSpawned(true);
             citySim.isAdmin = data.user.role === 'admin';
-            citySim.spawnPlayer(data.user.name, data.user.x, data.user.z, data.user.email, data.user.clothingColor);
+            citySim.spawnPlayer(data.user.name, data.user.x, data.user.z, data.user.email, data.user.clothingColor, data.user.id);
             setSoundEnabled(true);
             citySim.audio.toggle(true);
             return;
@@ -452,7 +457,7 @@ export default function CitySimulator() {
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
       
       {/* 3D Canvas Container */}
-      <div ref={containerRef} className="absolute inset-0 w-full h-full z-0" />
+      <div ref={containerRef} className="absolute inset-0 w-full h-full z-0" style={{ touchAction: 'none' }} />
 
       {/* Ambient sky overlay color mask for premium cinematic overlay */}
       <div className={`absolute inset-0 pointer-events-none transition-colors duration-1000 bg-gradient-to-t ${getSkyPhaseColor()} z-5`} />

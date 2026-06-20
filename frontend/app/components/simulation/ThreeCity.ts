@@ -32,6 +32,7 @@ import {
   wanderHuman,
   dispatchWorkerTo,
   loadAllDatabaseUsers,
+  addDatabaseUser,
   updateHumans,
   syncNpcsToDatabase,
 } from "./NPCHuman";
@@ -729,6 +730,7 @@ export class ThreeCity {
     z: number = 0,
     email?: string,
     clothingColor?: number,
+    dbUserId?: string,
   ) {
     if (this.isDestroyed) return;
 
@@ -779,6 +781,7 @@ export class ThreeCity {
 
     const playerAgent: HumanAgent = {
       id: `player_${Math.random().toString(36).substr(2, 9)}`,
+      dbUserId,
       mesh: humanGroup,
       x: worldX,
       z: worldZ,
@@ -853,9 +856,19 @@ export class ThreeCity {
     );
   }
 
+  public addDatabaseUser(user: any, currentPlayerEmail: string) {
+    if (this.isDestroyed) return;
+    addDatabaseUser(
+      this.getSimContext(),
+      this.humans,
+      user,
+      currentPlayerEmail,
+    );
+  }
+
   public updateOtherPlayerPosition(userId: string, x: number, z: number) {
     if (this.isDestroyed) return;
-    if (this.player && this.player.id === `db_user_${userId}`) return; // ignore self
+    if (this.player && (this.player.id === `db_user_${userId}` || this.player.dbUserId === userId)) return; // ignore self
 
     const existing = this.humans.find(h => h.id === `db_user_${userId}`);
     if (existing) {
@@ -1142,6 +1155,16 @@ export class ThreeCity {
 
     const delta = Math.min(this.clock.getDelta(), 0.1);
 
+    // Keyboard Camera Rotation (for touchpad/laptop usability)
+    if (this.keysPressed["q"] || this.keysPressed["e"]) {
+      const offset = new THREE.Vector3().copy(this.camera.position).sub(this.controls.target);
+      const rotationSpeed = 1.5 * delta;
+      const angle = this.keysPressed["q"] ? rotationSpeed : -rotationSpeed;
+      offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+      this.camera.position.copy(this.controls.target).add(offset);
+      this.controls.update();
+    }
+
     // 1. Weather Update
     this.timeOfDay = this.weatherManager.updateTime(
       this.timeOfDay,
@@ -1169,7 +1192,8 @@ export class ThreeCity {
     if (this.isAdmin && this.player && this.player.playerEmail) {
       this.npcSyncTimer -= delta;
       if (this.npcSyncTimer <= 0) {
-        this.npcSyncTimer = 1.0;
+        const hasWs = this.ws && this.ws.readyState === WebSocket.OPEN;
+        this.npcSyncTimer = hasWs ? 1.0 : 10.0;
         syncNpcsToDatabase(this.getSimContext(), this.humans);
       }
     }

@@ -17,9 +17,21 @@
 ## 3. High-Performance In-Memory DB Caching
 * Maintains active player coordinates, NPC arrays, and global environment states in local server memory.
 * Broadcasts real-time events immediately in-memory without blocking on database I/O.
-* A background write-back thread runs every **5 seconds** to flush modified cached data in bulk (using MongoDB `bulkWrite`) to MongoDB, preventing database write throttling.
+* A background write-back thread runs every **10 seconds** to flush modified cached data in bulk (using MongoDB `bulkWrite`) to MongoDB, preventing database write throttling.
 * Triggers an immediate database flush of a user's final coordinates when their WebSocket connection terminates to guarantee data consistency.
 
 ## 4. Spectator Mode for Guest Sessions
 * Allows guest (unauthenticated) users to establish a spectator WebSocket connection.
 * Spectators receive all real-time player, NPC, settings, and grid cell updates to view the simulation in real time but are restricted from emitting updates or executing administrative actions.
+
+## 5. Touchpad & Keyboard Camera Controls
+* Added `touchAction: 'none'` styling on the main 3D canvas container to prevent the browser from capturing scroll/pinch trackpad gestures, routing them to OrbitControls instead.
+* Implemented `Q` and `E` key listeners in the simulation tick loop to rotate the camera azimuthal angle horizontally around the target, providing trackpad/laptop users an easy navigation alternative when mouse dragging is occupied by construction tools.
+
+## 6. Database Write & Sync Frequency Optimization
+* **10-Second Database Writes**: Reduced database write-back flush operations on the Express server to a maximum frequency of once every 10 seconds.
+* **HTTP Sync Fallbacks**: In the event of a WebSocket disconnect, the frontend uses a fallback HTTP synchronization mechanism. Fallback position updates (for both active players and NPC coordination driven by the admin client) are throttled to a safe frequency of once every **10 seconds** to avoid database bloat and query throttling.
+* **Bandwidth & State Optimization**:
+  * **NPC Humans**: Admin coordinates and pushes updates to the server cache; non-admin clients interpolate coordinates smoothly to ensure accurate positioning without direct DB polling.
+  * **NPC Animals**: Cows, Dogs, Cats, and Birds are simulated locally on each client's browser as ambient animations. This entirely removes the need to sync animals over the network.
+  * **Clouds & Weather**: Clouds are generated and simulated client-side. The network only synchronizes Time of Day and Play Speed settings parameters.

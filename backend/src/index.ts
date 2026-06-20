@@ -96,7 +96,7 @@ async function initCache() {
   }
 }
 
-// 5-Second Write-Back Database Flush Loop
+// 10-Second Write-Back Database Flush Loop
 setInterval(async () => {
   try {
     await connectDB();
@@ -151,7 +151,7 @@ setInterval(async () => {
             },
           },
           upsert: true,
-        },
+          },
       }));
       if (bulkOps.length > 0) {
         await Npc.bulkWrite(bulkOps);
@@ -183,7 +183,7 @@ setInterval(async () => {
   } catch (error) {
     console.error("Database flush error:", error);
   }
-}, 5000);
+}, 10000);
 
 // Helper to flush a single user immediately (e.g. on disconnect)
 async function flushUserPosition(userId: string) {
@@ -1040,6 +1040,20 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
           dirty: false,
         });
       }
+
+      // Broadcast player-connected to all other clients
+      broadcast({
+        type: "player-connected",
+        user: {
+          _id: uId,
+          name: dbUser.name,
+          email: dbUser.email,
+          role: dbUser.role,
+          x: dbUser.x,
+          z: dbUser.z,
+          clothingColor: dbUser.clothingColor
+        }
+      });
     } else {
       spectatorClients.add(ws);
       console.log(`WebSocket connected: Guest Spectator`);
@@ -1051,15 +1065,17 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
         type: "init",
         settings: settingsCache,
         npcs: npcCache,
-        users: Array.from(userCache.values()).map(u => ({
-          _id: u.id,
-          name: u.name,
-          email: u.email,
-          role: u.role,
-          x: u.x,
-          z: u.z,
-          clothingColor: u.clothingColor
-        }))
+        users: Array.from(userCache.values())
+          .filter(u => activeClients.has(u.id))
+          .map(u => ({
+            _id: u.id,
+            name: u.name,
+            email: u.email,
+            role: u.role,
+            x: u.x,
+            z: u.z,
+            clothingColor: u.clothingColor
+          }))
       })
     );
 

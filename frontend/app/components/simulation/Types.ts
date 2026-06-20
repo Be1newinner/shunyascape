@@ -42,6 +42,7 @@ export interface GridCell {
 
 export interface HumanAgent {
   id: string;
+  dbUserId?: string;
   mesh: THREE.Group;
   x: number; // world x
   z: number; // world z

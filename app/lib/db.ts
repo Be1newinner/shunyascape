@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/dreamcity';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/shunyascape';
 
 interface MongooseCache {
   conn: mongoose.Mongoose | null;

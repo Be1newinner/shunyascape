@@ -2,8 +2,8 @@ import crypto from 'crypto';
 import { cookies } from 'next/headers';
 import User from '../models/User';
 
-const SALT = 'dreamcity-3d-secret-salt-string';
-const JWT_SECRET = process.env.JWT_SECRET || 'dreamcity-secret-key-for-jwt-signing-12345678';
+const SALT = 'shunyascape-3d-secret-salt-string';
+const JWT_SECRET = process.env.JWT_SECRET || 'shunyascape-secret-key-for-jwt-signing-12345678';
 
 export function hashPassword(password: string): string {
   return crypto.pbkdf2Sync(password, SALT, 1000, 64, 'sha512').toString('hex');

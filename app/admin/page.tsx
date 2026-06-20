@@ -70,7 +70,7 @@ export default function AdminPage() {
         if (res.ok) {
           const data = await res.json();
           if (data.user && data.user.role === 'admin') {
-            localStorage.setItem('dreamcity_user', JSON.stringify(data.user));
+            localStorage.setItem('shunyascape_user', JSON.stringify(data.user));
             setCurrentUser(data.user);
             fetchUsers(data.user.email);
             
@@ -84,7 +84,7 @@ export default function AdminPage() {
       } catch (e) {
         console.error(e);
       }
-      localStorage.removeItem('dreamcity_user');
+      localStorage.removeItem('shunyascape_user');
       setCurrentUser(null);
       setLoading(false);
     };
@@ -102,7 +102,7 @@ export default function AdminPage() {
     try {
       const res = await fetch('/api/users');
       if (res.status === 401) {
-        localStorage.removeItem('dreamcity_user');
+        localStorage.removeItem('shunyascape_user');
         setCurrentUser(null);
         setError('Session expired or logged out from another system.');
         return;
@@ -152,7 +152,7 @@ export default function AdminPage() {
         body: JSON.stringify(updates)
       });
       if (res.status === 401) {
-        localStorage.removeItem('dreamcity_user');
+        localStorage.removeItem('shunyascape_user');
         setCurrentUser(null);
         setError('Session expired or logged out from another system.');
         return;
@@ -252,7 +252,7 @@ export default function AdminPage() {
         })
       });
       if (res.status === 401) {
-        localStorage.removeItem('dreamcity_user');
+        localStorage.removeItem('shunyascape_user');
         setCurrentUser(null);
         setError('Session expired or logged out from another system.');
         return;
@@ -307,7 +307,7 @@ export default function AdminPage() {
               <Lock className="w-6 h-6 text-white animate-pulse" />
             </div>
             <h2 className="text-xl font-black tracking-tight bg-gradient-to-r from-red-400 via-orange-350 to-amber-300 bg-clip-text text-transparent uppercase tracking-wider">
-              DreamCity Admin Portal
+              ShunyaScape Admin Portal
             </h2>
             <p className="text-[11px] text-slate-450 max-w-xs leading-normal">
               Authentication required. Only registered admin users can access these controls.
@@ -396,7 +396,7 @@ export default function AdminPage() {
             </a>
             <div>
               <h1 className="text-xl md:text-2xl font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
-                DreamCity Dashboard
+                ShunyaScape Dashboard
               </h1>
               <p className="text-xs text-slate-450">Administrative Control Panel & User Coordination</p>
             </div>
@@ -409,7 +409,7 @@ export default function AdminPage() {
             </div>
             <button
               onClick={() => {
-                localStorage.removeItem('dreamcity_user');
+                localStorage.removeItem('shunyascape_user');
                 setCurrentUser(null);
                 setUsers([]);
               }}

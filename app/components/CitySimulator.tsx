@@ -83,7 +83,7 @@ export default function CitySimulator() {
       }
 
       const user = data.user;
-      localStorage.setItem('dreamcity_user', JSON.stringify(user));
+      localStorage.setItem('shunyascape_user', JSON.stringify(user));
       setCurrentUser(user);
       setHasSpawned(true);
       setAuthLoading(false);
@@ -213,7 +213,7 @@ export default function CitySimulator() {
         if (res.ok) {
           const data = await res.json();
           if (data.user) {
-            localStorage.setItem('dreamcity_user', JSON.stringify(data.user));
+            localStorage.setItem('shunyascape_user', JSON.stringify(data.user));
             setCurrentUser(data.user);
             setHasSpawned(true);
             citySim.isAdmin = data.user.role === 'admin';
@@ -226,7 +226,7 @@ export default function CitySimulator() {
       } catch (err) {
         console.error('Session restore failed:', err);
       }
-      localStorage.removeItem('dreamcity_user');
+      localStorage.removeItem('shunyascape_user');
     };
     checkSession();
 
@@ -241,7 +241,7 @@ export default function CitySimulator() {
     // Global unauthorized event handler (used to force log out when single system login fails)
     const handleUnauthorized = () => {
       setAuthError('You have been logged out because another system logged in or session expired.');
-      localStorage.removeItem('dreamcity_user');
+      localStorage.removeItem('shunyascape_user');
       setCurrentUser(null);
       setHasSpawned(false);
       setShowProfilePopup(false);
@@ -606,7 +606,7 @@ export default function CitySimulator() {
                 <Users className="w-6 h-6 text-white animate-pulse" />
               </div>
               <h2 className="text-xl font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
-                DreamCity 3D Avatar
+                ShunyaScape 3D Avatar
               </h2>
               <p className="text-[11px] text-slate-400 max-w-xs leading-normal">
                 Sign in or register to persist your avatar in the persistent simulation.
@@ -856,7 +856,7 @@ export default function CitySimulator() {
                 <Sparkles className="w-8 h-8 text-white animate-pulse" />
               </div>
               <h2 className="text-2xl font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
-                DreamCity 3D
+                ShunyaScape 3D
               </h2>
               <p className="text-xs text-slate-400 font-medium">Interactive Agentic Simulation</p>
             </div>
@@ -944,7 +944,7 @@ export default function CitySimulator() {
                   // Logout on server
                   fetch('/api/auth/logout', { method: 'POST' }).catch(err => console.error(err));
                   // Logout / Reset session
-                  localStorage.removeItem('dreamcity_user');
+                  localStorage.removeItem('shunyascape_user');
                   setCurrentUser(null);
                   setHasSpawned(false);
                   setShowProfilePopup(false);

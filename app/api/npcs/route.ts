@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '../../lib/db';
 import User from '../../models/User';
 import Npc from '../../models/Npc';
+import { getAuthenticatedUser } from '../../lib/auth';
 
 export async function GET() {
   try {
@@ -21,17 +22,17 @@ export async function POST(request: Request) {
   try {
     await connectDB();
 
-    const { requesterEmail, npcs } = await request.json();
-
-    if (!requesterEmail) {
-      return NextResponse.json({ error: 'requesterEmail is required' }, { status: 400 });
+    const authResult = await getAuthenticatedUser();
+    if (!authResult) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const { user: requester, newAccessToken } = authResult;
 
-    // Verify requester is an admin (only admins can host and push NPC coordinates)
-    const requester = await User.findOne({ email: requesterEmail.toLowerCase().trim() });
-    if (!requester || requester.role !== 'admin') {
+    if (requester.role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden: Admin access required to update NPCs' }, { status: 403 });
     }
+
+    const { npcs } = await request.json();
 
     if (!npcs || !Array.isArray(npcs)) {
       return NextResponse.json({ error: 'An array of npcs is required' }, { status: 400 });
@@ -62,9 +63,21 @@ export async function POST(request: Request) {
 
     // Optional: clean up any NPCs from database that are no longer present in the payload list
     const currentNpcIds = npcs.map((npc: any) => npc.npcId);
-    await Npc.deleteMany({ npcId: { $notin: currentNpcIds } });
+    await Npc.deleteMany({ npcId: { $nin: currentNpcIds } });
 
-    return NextResponse.json({ message: 'NPCs synchronized successfully' }, { status: 200 });
+    const response = NextResponse.json({ message: 'NPCs synchronized successfully' }, { status: 200 });
+
+    if (newAccessToken) {
+      response.cookies.set('accessToken', newAccessToken, {
+        maxAge: 24 * 60 * 60,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
+
+    return response;
   } catch (error: any) {
     console.error('Synchronize NPCs API Error:', error);
     return NextResponse.json(
@@ -76,16 +89,29 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   try {
     await connectDB();
-    const { requesterEmail } = await request.json();
-    if (!requesterEmail) {
-      return NextResponse.json({ error: 'requesterEmail is required' }, { status: 400 });
+    const authResult = await getAuthenticatedUser();
+    if (!authResult) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const requester = await User.findOne({ email: requesterEmail.toLowerCase().trim() });
-    if (!requester || requester.role !== 'admin') {
+    const { user: requester, newAccessToken } = authResult;
+
+    if (requester.role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     await Npc.deleteMany({});
-    return NextResponse.json({ message: 'All NPCs cleared successfully' }, { status: 200 });
+    const response = NextResponse.json({ message: 'All NPCs cleared successfully' }, { status: 200 });
+
+    if (newAccessToken) {
+      response.cookies.set('accessToken', newAccessToken, {
+        maxAge: 24 * 60 * 60,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
+
+    return response;
   } catch (e: any) {
     return NextResponse.json({ error: 'Failed to clear NPCs' }, { status: 500 });
   }

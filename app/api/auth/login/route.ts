@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import crypto from 'crypto';
 import { connectDB } from '../../../lib/db';
 import User from '../../../models/User';
-import { verifyPassword } from '../../../lib/auth';
+import { verifyPassword, signToken } from '../../../lib/auth';
 
 export async function POST(request: Request) {
   try {
@@ -36,7 +38,23 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(
+    // Generate strict single session details
+    const sessionId = crypto.randomUUID();
+    const accessToken = signToken(
+      { userId: user._id, email: user.email, role: user.role, sessionId },
+      '1d'
+    );
+    const refreshToken = signToken(
+      { userId: user._id, email: user.email, role: user.role, sessionId },
+      '30d'
+    );
+
+    // Save active session in DB
+    user.currentRefreshToken = refreshToken;
+    user.currentSessionId = sessionId;
+    await user.save();
+
+    const response = NextResponse.json(
       {
         message: 'Login successful',
         user: {
@@ -51,6 +69,24 @@ export async function POST(request: Request) {
       },
       { status: 200 }
     );
+
+    // Set HTTP-only cookies directly on response
+    response.cookies.set('accessToken', accessToken, {
+      maxAge: 24 * 60 * 60, // 1 day
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+    });
+    response.cookies.set('refreshToken', refreshToken, {
+      maxAge: 30 * 24 * 60 * 60, // 30 days
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+    });
+
+    return response;
   } catch (error: any) {
     console.error('Login API Error:', error);
     return NextResponse.json(

@@ -1,28 +1,27 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '../../../lib/db';
 import User from '../../../models/User';
+import { getAuthenticatedUser } from '../../../lib/auth';
 
 export async function POST(request: Request) {
   try {
     await connectDB();
 
-    const { email, x, z } = await request.json();
-
-    if (!email || x === undefined || z === undefined) {
+    const authResult = await getAuthenticatedUser();
+    if (!authResult) {
       return NextResponse.json(
-        { error: 'Email and coordinates (x, z) are required' },
-        { status: 400 }
+        { error: 'Unauthorized' },
+        { status: 401 }
       );
     }
+    const { user, newAccessToken } = authResult;
 
-    const emailLower = email.toLowerCase().trim();
+    const { x, z } = await request.json();
 
-    // Find the user
-    const user = await User.findOne({ email: emailLower });
-    if (!user) {
+    if (x === undefined || z === undefined) {
       return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
+        { error: 'Coordinates (x, z) are required' },
+        { status: 400 }
       );
     }
 
@@ -36,7 +35,7 @@ export async function POST(request: Request) {
 
     await user.save();
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         message: 'Position updated successfully',
         x: user.x,
@@ -46,6 +45,18 @@ export async function POST(request: Request) {
       },
       { status: 200 }
     );
+
+    if (newAccessToken) {
+      response.cookies.set('accessToken', newAccessToken, {
+        maxAge: 24 * 60 * 60,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
+
+    return response;
   } catch (error: any) {
     console.error('Position Update API Error:', error);
     return NextResponse.json(

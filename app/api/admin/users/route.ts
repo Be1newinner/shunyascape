@@ -1,26 +1,34 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '../../../lib/db';
 import User from '../../../models/User';
+import { getAuthenticatedUser } from '../../../lib/auth';
 
 export async function POST(request: Request) {
   try {
     await connectDB();
 
-    const { requesterEmail, action, targetUserId, ...data } = await request.json();
-
-    if (!requesterEmail || !action || !targetUserId) {
+    const authResult = await getAuthenticatedUser();
+    if (!authResult) {
       return NextResponse.json(
-        { error: 'Missing required parameters (requesterEmail, action, targetUserId)' },
-        { status: 400 }
+        { error: 'Unauthorized' },
+        { status: 401 }
       );
     }
+    const { user: requester, newAccessToken } = authResult;
 
-    // Verify requester is an admin
-    const requester = await User.findOne({ email: requesterEmail.toLowerCase().trim() });
-    if (!requester || requester.role !== 'admin') {
+    if (requester.role !== 'admin') {
       return NextResponse.json(
         { error: 'Forbidden: Admin access required' },
         { status: 403 }
+      );
+    }
+
+    const { action, targetUserId, ...data } = await request.json();
+
+    if (!action || !targetUserId) {
+      return NextResponse.json(
+        { error: 'Missing required parameters (action, targetUserId)' },
+        { status: 400 }
       );
     }
 
@@ -32,6 +40,8 @@ export async function POST(request: Request) {
         { status: 404 }
       );
     }
+
+    let response: NextResponse;
 
     if (action === 'teleport') {
       const { x, z } = data;
@@ -50,13 +60,11 @@ export async function POST(request: Request) {
 
       await targetUser.save();
 
-      return NextResponse.json({
+      response = NextResponse.json({
         message: `Teleported ${targetUser.name} successfully`,
         user: targetUser,
       });
-    }
-
-    if (action === 'changeRole') {
+    } else if (action === 'changeRole') {
       const { role } = data;
       if (!role || !['user', 'admin'].includes(role)) {
         return NextResponse.json(
@@ -76,13 +84,11 @@ export async function POST(request: Request) {
       targetUser.role = role;
       await targetUser.save();
 
-      return NextResponse.json({
+      response = NextResponse.json({
         message: `Updated role for ${targetUser.name} to ${role}`,
         user: targetUser,
       });
-    }
-
-    if (action === 'delete') {
+    } else if (action === 'delete') {
       // Prevent self-deletion
       if (targetUser._id.toString() === requester._id.toString()) {
         return NextResponse.json(
@@ -93,16 +99,28 @@ export async function POST(request: Request) {
 
       await User.findByIdAndDelete(targetUserId);
 
-      return NextResponse.json({
+      response = NextResponse.json({
         message: `Deleted user ${targetUser.name} successfully`,
         deletedUserId: targetUserId,
       });
+    } else {
+      return NextResponse.json(
+        { error: `Unknown action: ${action}` },
+        { status: 400 }
+      );
     }
 
-    return NextResponse.json(
-      { error: `Unknown action: ${action}` },
-      { status: 400 }
-    );
+    if (newAccessToken) {
+      response.cookies.set('accessToken', newAccessToken, {
+        maxAge: 24 * 60 * 60,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
+
+    return response;
   } catch (error: any) {
     console.error('Admin API Error:', error);
     return NextResponse.json(

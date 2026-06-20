@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '../../lib/db';
 import User from '../../models/User';
 import GridCell from '../../models/GridCell';
+import { getAuthenticatedUser } from '../../lib/auth';
 
 export async function GET() {
   try {
@@ -76,17 +77,17 @@ export async function POST(request: Request) {
   try {
     await connectDB();
 
-    const { requesterEmail, x, z, type, targetType, constructionProgress, height } = await request.json();
-
-    if (!requesterEmail) {
-      return NextResponse.json({ error: 'requesterEmail is required' }, { status: 400 });
+    const authResult = await getAuthenticatedUser();
+    if (!authResult) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const { user: requester, newAccessToken } = authResult;
 
-    // Verify requester is an admin
-    const requester = await User.findOne({ email: requesterEmail.toLowerCase().trim() });
-    if (!requester || requester.role !== 'admin') {
+    if (requester.role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden: Admin access required to build/modify city grid' }, { status: 403 });
     }
+
+    const { x, z, type, targetType, constructionProgress, height } = await request.json();
 
     if (x === undefined || z === undefined) {
       return NextResponse.json({ error: 'Coordinates x and z are required' }, { status: 400 });
@@ -104,7 +105,19 @@ export async function POST(request: Request) {
       { new: true, upsert: true }
     );
 
-    return NextResponse.json({ message: 'Grid cell updated successfully', cell }, { status: 200 });
+    const response = NextResponse.json({ message: 'Grid cell updated successfully', cell }, { status: 200 });
+
+    if (newAccessToken) {
+      response.cookies.set('accessToken', newAccessToken, {
+        maxAge: 24 * 60 * 60,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
+
+    return response;
   } catch (error: any) {
     console.error('Update Grid Cell API Error:', error);
     return NextResponse.json(

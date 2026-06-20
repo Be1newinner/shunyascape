@@ -60,33 +60,39 @@ export default function AdminPage() {
   // Load user session on mount and poll database
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const storedUser = localStorage.getItem('dreamcity_user');
-    if (!storedUser) {
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(storedUser);
-      if (parsed && parsed.role === 'admin') {
-        setCurrentUser(parsed);
-        
-        // Initial fetch
-        fetchUsers(parsed.email);
-        
-        // Polling loop
-        const pollInterval = setInterval(() => {
-          fetchUsers(parsed.email);
-        }, 4000);
-        
-        return () => clearInterval(pollInterval);
-      } else {
-        setLoading(false);
+    
+    let pollInterval: NodeJS.Timeout;
+    
+    const checkSession = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.user && data.user.role === 'admin') {
+            localStorage.setItem('dreamcity_user', JSON.stringify(data.user));
+            setCurrentUser(data.user);
+            fetchUsers(data.user.email);
+            
+            // Polling loop
+            pollInterval = setInterval(() => {
+              fetchUsers(data.user.email);
+            }, 4000);
+            return;
+          }
+        }
+      } catch (e) {
+        console.error(e);
       }
-    } catch (e) {
-      console.error(e);
+      localStorage.removeItem('dreamcity_user');
+      setCurrentUser(null);
       setLoading(false);
-    }
+    };
+    checkSession();
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, []);
 
   const fetchUsers = async (adminEmail: string) => {
@@ -95,6 +101,12 @@ export default function AdminPage() {
     }
     try {
       const res = await fetch('/api/users');
+      if (res.status === 401) {
+        localStorage.removeItem('dreamcity_user');
+        setCurrentUser(null);
+        setError('Session expired or logged out from another system.');
+        return;
+      }
       const data = await res.json();
       if (res.ok) {
         setUsers(data.users);
@@ -132,16 +144,19 @@ export default function AdminPage() {
       setLocalTimeSpeed(updates.timeSpeed);
     }
     if (updates.isPlaying !== undefined) setIsPlaying(updates.isPlaying);
-
+ 
     try {
       const res = await fetch('/api/admin/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requesterEmail: currentUser.email,
-          ...updates
-        })
+        body: JSON.stringify(updates)
       });
+      if (res.status === 401) {
+        localStorage.removeItem('dreamcity_user');
+        setCurrentUser(null);
+        setError('Session expired or logged out from another system.');
+        return;
+      }
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || 'Failed to update global simulation settings');
@@ -225,25 +240,30 @@ export default function AdminPage() {
     if (!currentUser) return;
     setError('');
     setSuccessMsg('');
-
+ 
     try {
       const res = await fetch('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          requesterEmail: currentUser.email,
           action,
           targetUserId,
           ...payload
         })
       });
+      if (res.status === 401) {
+        localStorage.removeItem('dreamcity_user');
+        setCurrentUser(null);
+        setError('Session expired or logged out from another system.');
+        return;
+      }
       const data = await res.json();
-
+ 
       if (!res.ok) {
         setError(data.error || `Failed to perform ${action}`);
         return;
       }
-
+ 
       setSuccessMsg(data.message || 'Action executed successfully!');
       
       // Update local state lists

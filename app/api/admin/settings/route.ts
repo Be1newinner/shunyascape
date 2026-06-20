@@ -2,28 +2,29 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '../../../lib/db';
 import User from '../../../models/User';
 import Settings from '../../../models/Settings';
+import { getAuthenticatedUser } from '../../../lib/auth';
 
 export async function POST(request: Request) {
   try {
     await connectDB();
 
-    const { requesterEmail, timeOfDay, timeSpeed, isPlaying } = await request.json();
-
-    if (!requesterEmail) {
+    const authResult = await getAuthenticatedUser();
+    if (!authResult) {
       return NextResponse.json(
-        { error: 'requesterEmail is required' },
-        { status: 400 }
+        { error: 'Unauthorized' },
+        { status: 401 }
       );
     }
+    const { user: requester, newAccessToken } = authResult;
 
-    // Verify requester is an admin
-    const requester = await User.findOne({ email: requesterEmail.toLowerCase().trim() });
-    if (!requester || requester.role !== 'admin') {
+    if (requester.role !== 'admin') {
       return NextResponse.json(
         { error: 'Forbidden: Admin access required' },
         { status: 403 }
       );
     }
+
+    const { timeOfDay, timeSpeed, isPlaying } = await request.json();
 
     // Update or create global settings document
     let settings = await Settings.findOne({ key: 'global' });
@@ -44,10 +45,22 @@ export async function POST(request: Request) {
 
     await settings.save();
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       message: 'Global simulation settings updated successfully',
       settings
     });
+
+    if (newAccessToken) {
+      response.cookies.set('accessToken', newAccessToken, {
+        maxAge: 24 * 60 * 60,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
+
+    return response;
   } catch (error: any) {
     console.error('Settings Update API Error:', error);
     return NextResponse.json(

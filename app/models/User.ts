@@ -41,6 +41,14 @@ const UserSchema = new Schema({
     type: Number, 
     default: () => [0x4287f5, 0xeb4034, 0x228b22, 0xe0c012, 0x8a2be2, 0xff69b4][Math.floor(Math.random() * 6)]
   },
+  currentRefreshToken: {
+    type: String,
+    default: null
+  },
+  currentSessionId: {
+    type: String,
+    default: null
+  },
   createdAt: { 
     type: Date, 
     default: Date.now 

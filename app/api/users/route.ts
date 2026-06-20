@@ -2,10 +2,17 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '../../lib/db';
 import User from '../../models/User';
 import Settings from '../../models/Settings';
+import { getAuthenticatedUser } from '../../lib/auth';
 
 export async function GET() {
   try {
     await connectDB();
+
+    const authResult = await getAuthenticatedUser();
+    if (!authResult) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const { user: authenticatedUser, newAccessToken } = authResult;
 
     // Fetch all users, omitting their hashed passwords
     const users = await User.find({}, { password: 0 }).sort({ createdAt: -1 });
@@ -24,7 +31,19 @@ export async function GET() {
       await settings.save();
     }
 
-    return NextResponse.json({ users, settings }, { status: 200 });
+    const response = NextResponse.json({ users, settings }, { status: 200 });
+
+    if (newAccessToken) {
+      response.cookies.set('accessToken', newAccessToken, {
+        maxAge: 24 * 60 * 60,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
+
+    return response;
   } catch (error: any) {
     console.error('Fetch Users API Error:', error);
     return NextResponse.json(

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { 
   TreePine, 
   Home, 
@@ -27,10 +27,99 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { ThreeCity } from './simulation/ThreeCity';
 import { BuildType, CityStats, EquippedClothes } from './simulation/Types';
 import { LandExpansionManager, LandPlot, PLOT_COST_RING1 } from './simulation/LandExpansion';
+
+
+// Lightweight custom hook to make modals/HUD elements draggable by their headers/handles
+function useDraggable() {
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const dragStart = useRef({ x: 0, y: 0 });
+  const isDragging = useRef(false);
+
+  const startDrag = useCallback((clientX: number, clientY: number, target: HTMLElement) => {
+    // Avoid dragging when clicking on buttons, inputs, links, or items with .no-drag class
+    if (
+      target.closest('button') || 
+      target.closest('input') || 
+      target.closest('select') || 
+      target.closest('a') || 
+      target.closest('.no-drag')
+    ) {
+      return false;
+    }
+    isDragging.current = true;
+    dragStart.current = {
+      x: clientX - position.x,
+      y: clientY - position.y
+    };
+    return true;
+  }, [position]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    if (e.button !== 0) return; // Only drag with left mouse button
+    const target = e.target as HTMLElement;
+    if (!startDrag(e.clientX, e.clientY, target)) return;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDragging.current) return;
+      setPosition({
+        x: moveEvent.clientX - dragStart.current.x,
+        y: moveEvent.clientY - dragStart.current.y
+      });
+    };
+
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [startDrag]);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLElement>) => {
+    const touch = e.touches[0];
+    const target = e.target as HTMLElement;
+    if (!startDrag(touch.clientX, touch.clientY, target)) return;
+
+    const handleTouchMove = (moveEvent: TouchEvent) => {
+      if (!isDragging.current) return;
+      const moveTouch = moveEvent.touches[0];
+      setPosition({
+        x: moveTouch.clientX - dragStart.current.x,
+        y: moveTouch.clientY - dragStart.current.y
+      });
+    };
+
+    const handleTouchEnd = () => {
+      isDragging.current = false;
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
+    };
+
+    document.addEventListener('touchmove', handleTouchMove, { passive: true });
+    document.addEventListener('touchend', handleTouchEnd);
+  }, [startDrag]);
+
+  const reset = useCallback(() => {
+    setPosition({ x: 0, y: 0 });
+  }, []);
+
+  return {
+    handleMouseDown,
+    handleTouchStart,
+    reset,
+    style: {
+      transform: `translate(${position.x}px, ${position.y}px)`
+    }
+  };
+}
 
 
 export default function CitySimulator() {
@@ -38,8 +127,8 @@ export default function CitySimulator() {
   const cityRef = useRef<ThreeCity | null>(null);
 
   // States
-  // States
   const [buildMode, setBuildMode] = useState<BuildType>('road');
+  const [selectedBuildScale, setSelectedBuildScale] = useState<number>(1.0);
   const [stats, setStats] = useState<CityStats>({
     population: 0,
     houses: 0,
@@ -50,7 +139,7 @@ export default function CitySimulator() {
   });
 
   const [timeOfDay, setTimeOfDay] = useState<number>(8.0);
-  const [timeSpeed, setTimeSpeed] = useState<number>(1.0);
+  const [timeSpeed, setTimeSpeed] = useState<number>(1 / 120);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [showControls, setShowControls] = useState<boolean>(false);
@@ -105,6 +194,17 @@ export default function CitySimulator() {
   const [showClothShop, setShowClothShop] = useState<boolean>(false);
   const [showBarberShop, setShowBarberShop] = useState<boolean>(false);
   const [showPoliceStation, setShowPoliceStation] = useState<boolean>(false);
+  const [activeStore, setActiveStore] = useState<{
+    type: string;
+    storeName: string;
+    emoji: string;
+    ownerName: string | null;
+    ownerEmail: string | null;
+    price: number;
+    isPurchased: boolean;
+    x: number;
+    z: number;
+  } | null>(null);
   const [showMinimapFull, setShowMinimapFull] = useState<boolean>(false);
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
   const minimapFullCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -138,6 +238,157 @@ export default function CitySimulator() {
   const [authError, setAuthError] = useState<string>('');
   const [authLoading, setAuthLoading] = useState<boolean>(false);
   const [isStuck, setIsStuck] = useState<boolean>(false);
+
+  // Draggable HUD & Modals
+  const mapDrag = useDraggable();
+  const statsDrag = useDraggable();
+  const permitDrag = useDraggable();
+  const leaderboardDrag = useDraggable();
+  const achievementsDrag = useDraggable();
+  const landDrag = useDraggable();
+  const profileDrag = useDraggable();
+  const developerDrag = useDraggable();
+  const foodDrag = useDraggable();
+  const clothDrag = useDraggable();
+  const barberDrag = useDraggable();
+  const policeDrag = useDraggable();
+  const hungerDrag = useDraggable();
+  const questsDrag = useDraggable();
+  const minimapDrag = useDraggable();
+  const cameraHudDrag = useDraggable();
+
+  // Reset draggable positions when modals/HUDs close
+  const { reset: resetMap } = mapDrag;
+  const { reset: resetPermit } = permitDrag;
+  const { reset: resetLeaderboard } = leaderboardDrag;
+  const { reset: resetAchievements } = achievementsDrag;
+  const { reset: resetLand } = landDrag;
+  const { reset: resetProfile } = profileDrag;
+  const { reset: resetDeveloper } = developerDrag;
+  const { reset: resetFood } = foodDrag;
+  const { reset: resetCloth } = clothDrag;
+  const { reset: resetBarber } = barberDrag;
+  const { reset: resetPolice } = policeDrag;
+  const { reset: resetHunger } = hungerDrag;
+  const { reset: resetQuests } = questsDrag;
+  const { reset: resetMinimap } = minimapDrag;
+  const { reset: resetCameraHud } = cameraHudDrag;
+
+  useEffect(() => {
+    if (!showMinimapFull) resetMap();
+  }, [showMinimapFull, resetMap]);
+
+  useEffect(() => {
+    if (!showPermitStore) resetPermit();
+  }, [showPermitStore, resetPermit]);
+
+  useEffect(() => {
+    if (!showLeaderboard) resetLeaderboard();
+  }, [showLeaderboard, resetLeaderboard]);
+
+  useEffect(() => {
+    if (!showAchievements) resetAchievements();
+  }, [showAchievements, resetAchievements]);
+
+  useEffect(() => {
+    if (!showLandShop) resetLand();
+  }, [showLandShop, resetLand]);
+
+  useEffect(() => {
+    if (!showProfilePopup) resetProfile();
+  }, [showProfilePopup, resetProfile]);
+
+  useEffect(() => {
+    if (!showDeveloperPopup) resetDeveloper();
+  }, [showDeveloperPopup, resetDeveloper]);
+
+  useEffect(() => {
+    if (!showFoodShop) resetFood();
+  }, [showFoodShop, resetFood]);
+
+  useEffect(() => {
+    if (!showClothShop) resetCloth();
+  }, [showClothShop, resetCloth]);
+
+  useEffect(() => {
+    if (!showBarberShop) resetBarber();
+  }, [showBarberShop, resetBarber]);
+
+  useEffect(() => {
+    if (!showPoliceStation) resetPolice();
+  }, [showPoliceStation, resetPolice]);
+
+  useEffect(() => {
+    if (!hasSpawned) {
+      resetHunger();
+      resetQuests();
+      resetMinimap();
+      resetCameraHud();
+    }
+  }, [hasSpawned, resetHunger, resetQuests, resetMinimap, resetCameraHud]);
+
+  const [joystickKnob, setJoystickKnob] = useState({ x: 0, y: 0 });
+  const joystickDragActive = useRef(false);
+  const joystickLastPos = useRef({ x: 0, y: 0 });
+  const joystickAccum = useRef({ x: 0, y: 0 });
+
+  const handleJoystickStart = useCallback((e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    joystickDragActive.current = true;
+    joystickLastPos.current = { x: clientX, y: clientY };
+    joystickAccum.current = { x: 0, y: 0 };
+    
+    const handleMove = (moveEvent: MouseEvent | TouchEvent) => {
+      if (!joystickDragActive.current) return;
+      
+      const curX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : moveEvent.clientX;
+      const curY = 'touches' in moveEvent ? moveEvent.touches[0].clientY : moveEvent.clientY;
+      
+      const dx = curX - joystickLastPos.current.x;
+      const dy = curY - joystickLastPos.current.y;
+      
+      joystickLastPos.current = { x: curX, y: curY };
+      
+      if (cityRef.current) {
+        cityRef.current.rotateCamera(dx * 0.007, dy * 0.007);
+      }
+      
+      joystickAccum.current.x += dx;
+      joystickAccum.current.y += dy;
+      
+      const dist = Math.sqrt(joystickAccum.current.x ** 2 + joystickAccum.current.y ** 2);
+      const maxRadius = 24; 
+      if (dist === 0) {
+        setJoystickKnob({ x: 0, y: 0 });
+      } else {
+        const capDist = Math.min(maxRadius, dist);
+        const ratio = capDist / dist;
+        setJoystickKnob({
+          x: joystickAccum.current.x * ratio,
+          y: joystickAccum.current.y * ratio
+        });
+      }
+    };
+    
+    const handleEnd = () => {
+      joystickDragActive.current = false;
+      setJoystickKnob({ x: 0, y: 0 });
+      
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleEnd);
+      document.removeEventListener('touchmove', handleMove);
+      document.removeEventListener('touchend', handleEnd);
+    };
+    
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleEnd);
+    document.addEventListener('touchmove', handleMove, { passive: true });
+    document.addEventListener('touchend', handleEnd);
+  }, []);
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -319,7 +570,8 @@ export default function CitySimulator() {
    */
   const drainHunger = () => {
     const now = Date.now();
-    const minRealMs = 5 * 60 * 1000; // 5 real minutes minimum per drain
+    // 1 real in-game day = 8 real hours = 28 800 s; guard at 7 h to allow tolerance
+    const minRealMs = 7 * 60 * 60 * 1000; // 7 real hours minimum per drain
     if (now - lastHungerDrainRef.current < minRealMs) return;
     lastHungerDrainRef.current = now;
 
@@ -473,6 +725,7 @@ export default function CitySimulator() {
               setFidoQuestState('active');
               showToast("Quest Started: Find Fido", 'info');
               setActiveNpcDialog(null);
+              cityRef.current?.setFidoQuestOwner(npc.id);
             }
           },
           {
@@ -504,6 +757,7 @@ export default function CitySimulator() {
               triggerUnlock('npc_helper', 'NPC Helper', 50);
               addProgress(150, 0); // Quest reward coins
               setActiveNpcDialog(null);
+              cityRef.current?.stopFidoFollowing();
             }
           }
         ]
@@ -589,8 +843,35 @@ export default function CitySimulator() {
           addProgress(200, 100);
           showToast("Quest Completed: Skyscraper Climber! (+200 SC, +100 XP)", 'success');
         }
+        setActiveStore(null);
       } else if (type === 'house') {
         triggerUnlock('skyscraper_climber', 'Skyscraper Climber', 100);
+        setActiveStore(null);
+      } else if (['restaurant', 'clothshop', 'barbershop', 'policestation'].includes(type)) {
+        // Show store notification when player walks near
+        const storeInfo: Record<string, { name: string; emoji: string }> = {
+          restaurant:    { name: 'Mac D Fast Food',   emoji: '🍔' },
+          clothshop:     { name: 'Cloth Shop',        emoji: '👕' },
+          barbershop:    { name: 'Barber Shop',       emoji: '✂️' },
+          policestation: { name: 'Police Station',    emoji: '🚔' },
+        };
+        const info = storeInfo[type];
+        if (cityRef.current) {
+          const cell = cityRef.current.grid[x]?.[z];
+          setActiveStore({
+            type,
+            storeName: info?.name ?? type,
+            emoji: info?.emoji ?? '🏪',
+            ownerName: cell?.ownerName ?? null,
+            ownerEmail: cell?.ownerEmail ?? null,
+            price: cell?.price ?? 0,
+            isPurchased: cell?.isPurchased ?? false,
+            x,
+            z,
+          });
+        }
+      } else {
+        setActiveStore(null);
       }
     };
 
@@ -604,6 +885,29 @@ export default function CitySimulator() {
       }
     };
 
+    const handleFidoReturned = () => {
+      if (fidoQuestState === 'fido_found') {
+        setFidoQuestState('completed');
+        triggerUnlock('npc_helper', 'NPC Helper', 50);
+        addProgress(150, 0); // Quest reward coins
+        showToast("Quest Completed: Returned Fido safely! (+150 SC)", 'success');
+        if (cityRef.current) {
+          cityRef.current.audio.playPop();
+          cityRef.current.stopFidoFollowing();
+        }
+      }
+    };
+
+    const handleCoinsSpent = (e: Event) => {
+      const { coins } = (e as CustomEvent).detail;
+      addProgress(-coins, 0);
+    };
+
+    const handleToast = (e: Event) => {
+      const { message, type } = (e as CustomEvent).detail;
+      showToast(message, type);
+    };
+
     window.addEventListener('shunya-collect', handleCollect);
     window.addEventListener('shunya-harvest', handleHarvest);
     window.addEventListener('shunya-build-completed', handleBuildCompleted);
@@ -612,6 +916,9 @@ export default function CitySimulator() {
     window.addEventListener('shunya-jumped', handleJumped);
     window.addEventListener('shunya-cell-change', handleCellChange);
     window.addEventListener('shunya-fido-near', handleFidoNear);
+    window.addEventListener('shunya-fido-returned', handleFidoReturned);
+    window.addEventListener('shunya-coins-spent', handleCoinsSpent);
+    window.addEventListener('shunya-toast', handleToast);
 
     return () => {
       window.removeEventListener('shunya-collect', handleCollect);
@@ -622,13 +929,16 @@ export default function CitySimulator() {
       window.removeEventListener('shunya-jumped', handleJumped);
       window.removeEventListener('shunya-cell-change', handleCellChange);
       window.removeEventListener('shunya-fido-near', handleFidoNear);
+      window.removeEventListener('shunya-fido-returned', handleFidoReturned);
+      window.removeEventListener('shunya-coins-spent', handleCoinsSpent);
+      window.removeEventListener('shunya-toast', handleToast);
     };
   }, [hasSpawned, shunyaCoins, level, xp, wood, unlockedPermits, completedAchievements, fidoQuestState, skyscraperClimbed]);
 
   // Keypress listener for E (interaction key)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'e') {
+      if (e.key && e.key.toLowerCase() === 'e') {
         // 1. Standing cell interaction
         if (standingCell && jobProgress === -1) {
           const type = standingCell.type;
@@ -743,6 +1053,13 @@ export default function CitySimulator() {
       return () => clearTimeout(timer);
     }
   }, [hasSpawned]);
+
+  // Synchronize Fido Quest state to ThreeCity
+  useEffect(() => {
+    if (cityRef.current) {
+      cityRef.current.fidoQuestState = fidoQuestState;
+    }
+  }, [fidoQuestState]);
 
   // Establish WebSocket connection & do initial syncs
   useEffect(() => {
@@ -944,7 +1261,7 @@ export default function CitySimulator() {
 
     // Set initial configuration
     citySim.buildMode = 'road';
-    citySim.timeSpeed = 1.0;
+    citySim.timeSpeed = 1 / 120; // 1 in-game day = 8 real hours (24 / (8*3600*0.1))
     citySim.audio.toggle(false);
 
     // Verify session dynamically with /api/auth/me on page load
@@ -997,7 +1314,7 @@ export default function CitySimulator() {
           const city = cityRef.current;
           const gridSize = city.gridSize ?? 32;
           const cellPx = size / gridSize;
-          const CELL_SIZE = 3.0; // must match ThreeCity.cellSize
+          const CELL_SIZE = 2.25; // must match ThreeCity.cellSize
           const halfGrid = (gridSize * CELL_SIZE) / 2;
 
           ctx.clearRect(0, 0, size, size);
@@ -1175,6 +1492,20 @@ export default function CitySimulator() {
     }
   }, [unlockedPermits]);
 
+  // Sync selectedBuildScale with the simulation engine
+  useEffect(() => {
+    if (cityRef.current) {
+      cityRef.current.selectedBuildScale = selectedBuildScale;
+    }
+  }, [selectedBuildScale]);
+
+  // Sync shunyaCoins with the simulation engine
+  useEffect(() => {
+    if (cityRef.current) {
+      cityRef.current.shunyaCoins = shunyaCoins;
+    }
+  }, [shunyaCoins]);
+
   // Update build mode
   const handleModeChange = (mode: BuildType) => {
     setBuildMode(mode);
@@ -1240,6 +1571,17 @@ export default function CitySimulator() {
   };
 
   // Helper to format time (e.g. 14.5 -> "02:30 PM")
+  const baseCostMap: Record<string, number> = {
+    road: 5,
+    tree: 10,
+    house: 50,
+    skyscraper: 150,
+    restaurant: 100,
+    clothshop: 80,
+    barbershop: 60,
+    policestation: 120
+  };
+
   // Build menu items — all 8 placeable types shown in the popup
   const buildMenuItems = [
     { key: 'road',         emoji: '🛣️',  label: 'Road'        },
@@ -1460,13 +1802,13 @@ export default function CitySimulator() {
               <div className="flex flex-col gap-1">
                 <div className="flex justify-between text-[10px] text-slate-400 font-medium">
                   <span>Day Cycle Speed</span>
-                  <span>{isPlaying ? `${timeSpeed.toFixed(1)}x` : 'Paused'}</span>
+                  <span>{isPlaying ? `${(8 / (timeSpeed * 120)).toFixed(1)}h/day` : 'Paused'}</span>
                 </div>
                 <input 
                   type="range" 
-                  min="0.1" 
-                  max="3.0" 
-                  step="0.1"
+                  min="0.00417"
+                  max="0.0833"
+                  step="0.00417"
                   value={timeSpeed}
                   onChange={handleSpeedChange}
                   disabled={!isPlaying}
@@ -1566,6 +1908,32 @@ export default function CitySimulator() {
               </button>
             )}
 
+            {/* Area Size Selector (Visible only when placing a buildable item) */}
+            {buildMode !== null && buildMode !== 'delete' && (
+              <div className="flex items-center gap-1.5 bg-slate-950/40 border border-slate-800/80 rounded-xl px-2.5 py-1.5">
+                <span className="text-[10px] font-black text-slate-400 mr-1 tracking-wider uppercase">Area:</span>
+                {[
+                  { label: 'Small (0.5x)', value: 0.5, short: 'S' },
+                  { label: 'Medium (1.0x)', value: 1.0, short: 'M' },
+                  { label: 'Large (1.5x)', value: 1.5, short: 'L' },
+                  { label: 'Huge (2.0x)', value: 2.0, short: 'XL' }
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setSelectedBuildScale(opt.value)}
+                    title={opt.label}
+                    className={`px-2 py-1 text-[9px] font-extrabold rounded-lg transition-all cursor-pointer ${
+                      selectedBuildScale === opt.value
+                        ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25 scale-105'
+                        : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+                    }`}
+                  >
+                    {opt.short}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* ── BUILD POPUP MENU ── floats above the toolbar ── */}
             {showBuildMenu && (
               <div
@@ -1623,7 +1991,10 @@ export default function CitySimulator() {
                       Active: <span className="text-cyan-300 font-bold">
                         {buildMenuItems.find(i => i.key === buildMode)?.emoji} {buildMenuItems.find(i => i.key === buildMode)?.label}
                       </span>
-                      <span className="ml-2 text-slate-500">— click the map to place</span>
+                      <span className="ml-1 text-amber-400 font-extrabold">
+                        ({Math.round((baseCostMap[buildMode] || 0) * selectedBuildScale)} SC)
+                      </span>
+                      <span className="ml-1.5 text-slate-500">— click map to place</span>
                     </div>
                   )}
                 </div>
@@ -1837,9 +2208,13 @@ export default function CitySimulator() {
 
       {/* City Live Statistics List in bottom left */}
       {hasSpawned && currentUser?.role === 'admin' && (
-        <div className="absolute bottom-4 left-4 md:bottom-6 md:left-6 z-30 flex flex-col items-start gap-2 pointer-events-auto">
+        <div className="absolute bottom-4 left-4 md:bottom-6 md:left-6 z-30 flex flex-col items-start gap-2 pointer-events-auto" style={statsDrag.style}>
           <div className="bg-slate-900/75 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-3.5 flex flex-col gap-2 w-44">
-            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-1.5 mb-0.5">
+            <h4 
+              className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-1.5 mb-0.5 select-none cursor-grab active:cursor-grabbing w-full"
+              onMouseDown={statsDrag.handleMouseDown}
+              onTouchStart={statsDrag.handleTouchStart}
+            >
               City Statistics
             </h4>
             <div className="flex flex-col gap-2 text-xs">
@@ -1886,6 +2261,75 @@ export default function CitySimulator() {
                 <span className="font-semibold text-yellow-400">{stats.activeConstruction}</span>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DRAGGABLE 3D CAMERA CONTROLLER (Middle Left) ────────────────────────── */}
+      {hasSpawned && (
+        <div 
+          className="absolute left-4 top-1/2 -translate-y-1/2 z-35 flex flex-col items-center gap-2 pointer-events-auto"
+          style={cameraHudDrag.style}
+        >
+          <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 shadow-2xl rounded-2xl p-3 flex flex-col items-center gap-3 w-32">
+            <h4 
+              className="text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-1.5 select-none cursor-grab active:cursor-grabbing w-full text-center flex items-center justify-center gap-1"
+              onMouseDown={cameraHudDrag.handleMouseDown}
+              onTouchStart={cameraHudDrag.handleTouchStart}
+            >
+              ✥ Camera
+            </h4>
+            
+            {/* Circular Orbit Joystick Pad */}
+            <div 
+              className="relative w-16 h-16 rounded-full border border-slate-700/60 bg-slate-950/60 flex items-center justify-center cursor-grab active:cursor-grabbing hover:border-cyan-500/50 transition-colors select-none"
+              onMouseDown={handleJoystickStart}
+              onTouchStart={handleJoystickStart}
+              title="Drag in any direction to rotate 3D view"
+            >
+              {/* Compass ticks decoration */}
+              <div className="absolute w-full h-px bg-slate-800/40 pointer-events-none" />
+              <div className="absolute w-px h-full bg-slate-800/40 pointer-events-none" />
+              <div className="absolute w-12 h-12 rounded-full border border-dashed border-slate-800/40 pointer-events-none" />
+              
+              {/* Floating metallic joystick knob */}
+              <div 
+                className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-lg shadow-cyan-500/20 border border-cyan-300/30 flex items-center justify-center pointer-events-none"
+                style={{ 
+                  transform: `translate(${joystickKnob.x}px, ${joystickKnob.y}px)`,
+                  transition: joystickDragActive.current ? 'none' : 'transform 0.15s ease-out'
+                }}
+              >
+                <div className="w-2.5 h-2.5 rounded-full bg-white/25 border border-white/10" />
+              </div>
+            </div>
+            
+            {/* Zoom Controls */}
+            <div className="flex gap-2 w-full">
+              <button
+                onClick={() => cityRef.current?.zoomCamera(true)}
+                className="flex-1 h-7 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-white border border-slate-700/50 flex items-center justify-center transition-all cursor-pointer shadow active:scale-95"
+                title="Zoom In"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => cityRef.current?.zoomCamera(false)}
+                className="flex-1 h-7 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-white border border-slate-700/50 flex items-center justify-center transition-all cursor-pointer shadow active:scale-95"
+                title="Zoom Out"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            
+            {/* Reset view button */}
+            <button
+              onClick={() => cityRef.current?.resetCamera()}
+              className="w-full py-1.5 bg-slate-800 hover:bg-slate-750 border border-slate-700/50 text-slate-355 hover:text-white font-bold rounded-lg text-[9px] uppercase tracking-wider transition-all cursor-pointer active:scale-95 hover:border-cyan-500/30"
+              title="Reset to default camera angle"
+            >
+              Reset View
+            </button>
           </div>
         </div>
       )}
@@ -1955,21 +2399,25 @@ export default function CitySimulator() {
       {/* Developer Details Modal */}
       {showDeveloperPopup && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 pointer-events-auto">
-          <div className="w-full max-w-sm bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative">
+          <div className="w-full max-w-sm bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative" style={developerDrag.style}>
             <button
               onClick={() => setShowDeveloperPopup(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors z-10"
             >
               ✕
             </button>
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-500 via-sky-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+            <div 
+              className="flex flex-col items-center gap-2 select-none cursor-grab active:cursor-grabbing w-full"
+              onMouseDown={developerDrag.handleMouseDown}
+              onTouchStart={developerDrag.handleTouchStart}
+            >
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-500 via-sky-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 pointer-events-none">
                 <Sparkles className="w-8 h-8 text-white animate-pulse" />
               </div>
-              <h2 className="text-2xl font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
+              <h2 className="text-2xl font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent pointer-events-none">
                 ShunyaScape 3D
               </h2>
-              <p className="text-xs text-slate-400 font-medium">Interactive Agentic Simulation</p>
+              <p className="text-xs text-slate-400 font-medium pointer-events-none">Interactive Agentic Simulation</p>
             </div>
 
             <div className="border-t border-slate-800/80 pt-4 flex flex-col gap-3 text-left">
@@ -2004,16 +2452,20 @@ export default function CitySimulator() {
       {/* User Profile Modal */}
       {showProfilePopup && currentUser && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 pointer-events-auto">
-          <div className="w-full max-w-sm bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative">
+          <div className="w-full max-w-sm bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative" style={profileDrag.style}>
             <button
               onClick={() => setShowProfilePopup(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors z-10"
             >
               ✕
             </button>
-            <div className="flex flex-col items-center gap-3">
+            <div 
+              className="flex flex-col items-center gap-3 select-none cursor-grab active:cursor-grabbing w-full"
+              onMouseDown={profileDrag.handleMouseDown}
+              onTouchStart={profileDrag.handleTouchStart}
+            >
               <div 
-                className="w-20 h-20 rounded-full border-4 border-slate-750 flex items-center justify-center font-black text-3xl text-white uppercase shadow-2xl"
+                className="w-20 h-20 rounded-full border-4 border-slate-750 flex items-center justify-center font-black text-3xl text-white uppercase shadow-2xl pointer-events-none"
                 style={{
                   backgroundColor: currentUser.clothingColor 
                     ? `#${currentUser.clothingColor.toString(16).padStart(6, '0')}` 
@@ -2022,8 +2474,8 @@ export default function CitySimulator() {
               >
                 {currentUser.name.charAt(0)}
               </div>
-              <h2 className="text-xl font-bold text-slate-100">{currentUser.name}</h2>
-              <span className="text-[10px] bg-sky-500/20 text-sky-400 px-3 py-1 rounded-full border border-sky-400/25 font-bold uppercase tracking-wider">
+              <h2 className="text-xl font-bold text-slate-100 pointer-events-none">{currentUser.name}</h2>
+              <span className="text-[10px] bg-sky-500/20 text-sky-400 px-3 py-1 rounded-full border border-sky-400/25 font-bold uppercase tracking-wider pointer-events-none">
                 {currentUser.role} Account
               </span>
             </div>
@@ -2068,7 +2520,7 @@ export default function CitySimulator() {
                       });
                       cityRef.current = newCity;
                       newCity.buildMode = 'road';
-                      newCity.timeSpeed = 1.0;
+                      newCity.timeSpeed = 1 / 120;
                       newCity.audio.toggle(false);
                     }
                   }
@@ -2111,11 +2563,15 @@ export default function CitySimulator() {
 
       {/* Quest Tracker Sidebar (Floating Right) */}
       {hasSpawned && (
-        <div className="absolute right-4 top-48 md:right-6 z-25 flex flex-col items-end gap-3 pointer-events-none">
-          <div className="bg-slate-900/85 backdrop-blur-2xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 w-64 flex flex-col gap-3 pointer-events-auto text-left">
-            <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-              <Compass className="w-4 h-4 text-cyan-400 animate-spin-slow" />
-              <h3 className="text-xs font-bold text-slate-100 uppercase tracking-wider">Active Quests</h3>
+        <div className="absolute right-4 top-48 md:right-6 z-25 flex flex-col items-end gap-3 pointer-events-auto" style={questsDrag.style}>
+          <div className="bg-slate-900/85 backdrop-blur-2xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 w-64 flex flex-col gap-3 text-left">
+            <div 
+              className="flex items-center gap-2 border-b border-slate-800 pb-2 select-none cursor-grab active:cursor-grabbing w-full"
+              onMouseDown={questsDrag.handleMouseDown}
+              onTouchStart={questsDrag.handleTouchStart}
+            >
+              <Compass className="w-4 h-4 text-cyan-400 animate-spin-slow pointer-events-none" />
+              <h3 className="text-xs font-bold text-slate-100 uppercase tracking-wider pointer-events-none">Active Quests</h3>
             </div>
             
             <div className="flex flex-col gap-3">
@@ -2177,10 +2633,14 @@ export default function CitySimulator() {
 
       {/* Achievements Sidebar (Floating Left) */}
       {hasSpawned && showAchievements && (
-        <div className="absolute left-4 top-48 md:left-6 z-25 flex flex-col items-start gap-3 pointer-events-auto">
+        <div className="absolute left-4 top-48 md:left-6 z-25 flex flex-col items-start gap-3 pointer-events-auto" style={achievementsDrag.style}>
           <div className="bg-slate-900/85 backdrop-blur-2xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 w-72 flex flex-col gap-3 text-left">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <div className="flex items-center gap-2">
+            <div 
+              className="flex items-center justify-between border-b border-slate-800 pb-2 select-none cursor-grab active:cursor-grabbing w-full"
+              onMouseDown={achievementsDrag.handleMouseDown}
+              onTouchStart={achievementsDrag.handleTouchStart}
+            >
+              <div className="flex items-center gap-2 pointer-events-none">
                 <Trophy className="w-4 h-4 text-emerald-400" />
                 <h3 className="text-xs font-bold text-slate-100 uppercase tracking-wider">Achievements</h3>
               </div>
@@ -2278,31 +2738,35 @@ export default function CitySimulator() {
       {/* Land Expansion Shop Modal */}
       {hasSpawned && showLandShop && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 pointer-events-auto">
-          <div className="w-full max-w-lg bg-slate-900/90 backdrop-blur-2xl border border-green-700/40 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 relative max-h-[90vh] overflow-y-auto">
+          <div className="w-full max-w-lg bg-slate-900/90 backdrop-blur-2xl border border-green-700/40 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 relative max-h-[90vh] overflow-y-auto" style={landDrag.style}>
             <button
               onClick={() => setShowLandShop(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer z-10"
               title="Close Land Shop"
             >
               <X className="w-4 h-4" />
             </button>
 
             {/* Header */}
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-green-500/30">
+            <div 
+              className="flex flex-col items-center gap-2 select-none cursor-grab active:cursor-grabbing"
+              onMouseDown={landDrag.handleMouseDown}
+              onTouchStart={landDrag.handleTouchStart}
+            >
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-green-500/30 pointer-events-none">
                 <Map className="w-7 h-7 text-white" />
               </div>
-              <h2 className="text-2xl font-black bg-gradient-to-r from-green-400 via-emerald-300 to-teal-300 bg-clip-text text-transparent">
+              <h2 className="text-2xl font-black bg-gradient-to-r from-green-400 via-emerald-300 to-teal-300 bg-clip-text text-transparent pointer-events-none">
                 Land Expansion
               </h2>
-              <p className="text-[11px] text-slate-400 text-center max-w-sm">
+              <p className="text-[11px] text-slate-400 text-center max-w-sm pointer-events-none">
                 Purchase new 8×8 plots to grow your city beyond its current borders.
                 Each expansion reveals new terrain, trees, and building opportunities!
               </p>
-              <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-slate-800/60 border border-slate-700/40 mt-1">
+              <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-slate-800/60 border border-slate-700/40 mt-1 pointer-events-none">
                 <span className="text-slate-400">Current World Size:</span>
                 <span className="text-green-400 font-bold">{cityGridSize} × {cityGridSize} cells</span>
-                <span className="text-slate-500">·</span>
+                <span className="text-slate-550">·</span>
                 <span className="text-slate-400">Balance:</span>
                 <span className="text-amber-400 font-bold">{shunyaCoins} SC</span>
               </div>
@@ -2407,23 +2871,27 @@ export default function CitySimulator() {
       {hasSpawned && showPermitStore && (
 
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 pointer-events-auto">
-          <div className="w-full max-w-md bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative max-h-[90vh] overflow-y-auto">
+          <div className="w-full max-w-md bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative max-h-[90vh] overflow-y-auto" style={permitDrag.style}>
             <button
               onClick={() => setShowPermitStore(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer z-10"
               title="Close Permit Shop"
             >
               <X className="w-4 h-4" />
             </button>
             
-            <div className="flex flex-col items-center gap-1.5">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/20">
+            <div 
+              className="flex flex-col items-center gap-1.5 select-none cursor-grab active:cursor-grabbing"
+              onMouseDown={permitDrag.handleMouseDown}
+              onTouchStart={permitDrag.handleTouchStart}
+            >
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/20 pointer-events-none">
                 <Award className="w-6 h-6 text-slate-950 font-bold" />
               </div>
-              <h2 className="text-xl font-black bg-gradient-to-r from-amber-400 via-orange-300 to-yellow-300 bg-clip-text text-transparent">
+              <h2 className="text-xl font-black bg-gradient-to-r from-amber-400 via-orange-300 to-yellow-300 bg-clip-text text-transparent pointer-events-none">
                 Permit Store
               </h2>
-              <p className="text-[10px] text-slate-400 max-w-xs">
+              <p className="text-[10px] text-slate-400 max-w-xs pointer-events-none">
                 Unlock permanent building permits using ShunyaCoins to construct on the map.
               </p>
             </div>
@@ -2476,23 +2944,27 @@ export default function CitySimulator() {
       {/* Leaderboard Modal */}
       {hasSpawned && showLeaderboard && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 pointer-events-auto">
-          <div className="w-full max-w-sm bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-4 text-center relative max-h-[90vh] overflow-y-auto">
+          <div className="w-full max-w-sm bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 shadow-2xl rounded-3xl p-6 flex flex-col gap-4 text-center relative max-h-[90vh] overflow-y-auto" style={leaderboardDrag.style}>
             <button
               onClick={() => setShowLeaderboard(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-800/40 cursor-pointer z-10"
               title="Close Leaderboard"
             >
               <X className="w-4 h-4" />
             </button>
             
-            <div className="flex flex-col items-center gap-1.5">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+            <div 
+              className="flex flex-col items-center gap-1.5 select-none cursor-grab active:cursor-grabbing"
+              onMouseDown={leaderboardDrag.handleMouseDown}
+              onTouchStart={leaderboardDrag.handleTouchStart}
+            >
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 pointer-events-none">
                 <Users className="w-6 h-6 text-white" />
               </div>
-              <h2 className="text-xl font-black bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
+              <h2 className="text-xl font-black bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent pointer-events-none">
                 Simulation Leaderboard
               </h2>
-              <p className="text-[10px] text-slate-400">
+              <p className="text-[10px] text-slate-400 pointer-events-none">
                 Rankings of active players by level and wealth.
               </p>
             </div>
@@ -2573,12 +3045,16 @@ export default function CitySimulator() {
 
       {/* ── HUNGER HUD BAR ───────────────────────────────────────────────────────── */}
       {hasSpawned && (
-        <div className="absolute left-4 bottom-32 z-20 flex flex-col gap-1 pointer-events-none">
-          <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 px-3 py-2 rounded-xl shadow-xl w-44">
-            <span className="text-base leading-none">
+        <div className="absolute left-4 bottom-32 z-20 flex flex-col gap-1 pointer-events-auto" style={hungerDrag.style}>
+          <div 
+            className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-xl border border-slate-700/40 px-3 py-2 rounded-xl shadow-xl w-44 select-none cursor-grab active:cursor-grabbing"
+            onMouseDown={hungerDrag.handleMouseDown}
+            onTouchStart={hungerDrag.handleTouchStart}
+          >
+            <span className="text-base leading-none pointer-events-none">
               {hungerLevel > 66 ? '🍗' : hungerLevel > 33 ? '😐' : '😵'}
             </span>
-            <div className="flex flex-col flex-1 gap-0.5">
+            <div className="flex flex-col flex-1 gap-0.5 pointer-events-none">
               <div className="flex justify-between items-center">
                 <span className="text-[9px] font-bold text-slate-300 uppercase tracking-widest">Hunger</span>
                 <span className={`text-[9px] font-bold ${hungerLevel > 66 ? 'text-emerald-400' : hungerLevel > 33 ? 'text-amber-400' : 'text-red-400'}`}>
@@ -2608,7 +3084,7 @@ export default function CitySimulator() {
 
       {/* ── MINIMAP ───────────────────────────────────────────────────────────────── */}
       {hasSpawned && (
-        <div className="absolute bottom-36 right-4 z-20 flex flex-col items-center gap-1 pointer-events-auto">
+        <div className="absolute bottom-36 right-4 z-20 flex flex-col items-center gap-1 pointer-events-auto" style={minimapDrag.style}>
           {/* Circle minimap */}
           <div
             className="relative cursor-pointer group"
@@ -2629,7 +3105,14 @@ export default function CitySimulator() {
               </svg>
             </div>
           </div>
-          <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Map</span>
+          <span 
+            className="text-[8px] font-bold text-slate-400 hover:text-cyan-400 uppercase tracking-widest select-none cursor-grab active:cursor-grabbing flex items-center gap-0.5"
+            onMouseDown={minimapDrag.handleMouseDown}
+            onTouchStart={minimapDrag.handleTouchStart}
+            title="Drag to move map"
+          >
+            ✥ Map
+          </span>
         </div>
       )}
 
@@ -2642,9 +3125,14 @@ export default function CitySimulator() {
           <div
             className="relative bg-slate-950/95 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden"
             onClick={e => e.stopPropagation()}
+            style={mapDrag.style}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800/60">
+            <div 
+              className="flex items-center justify-between px-5 py-3 border-b border-slate-800/60 select-none cursor-grab active:cursor-grabbing"
+              onMouseDown={mapDrag.handleMouseDown}
+              onTouchStart={mapDrag.handleTouchStart}
+            >
               <div className="flex items-center gap-2">
                 <span className="text-lg">🗺️</span>
                 <span className="text-sm font-black text-slate-200 tracking-wide">City Map</span>
@@ -2745,13 +3233,124 @@ export default function CitySimulator() {
         </div>
       )}
 
+      {/* ── STORE PROXIMITY NOTIFICATION ────────────────────────────────────────── */}
+      {activeStore && !showFoodShop && !showClothShop && !showBarberShop && !showPoliceStation && (
+        <div
+          className="fixed bottom-32 left-1/2 -translate-x-1/2 z-[120] w-full max-w-sm mx-4 pointer-events-auto"
+          style={{ animation: 'slideUpFade 0.35s ease forwards' }}
+        >
+          <div className="bg-slate-950/90 border rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl"
+            style={{
+              borderColor: activeStore.isPurchased ? 'rgba(45,212,191,0.35)' : 'rgba(245,158,11,0.35)',
+              boxShadow: activeStore.isPurchased
+                ? '0 0 30px rgba(20,184,166,0.25), 0 8px 32px rgba(0,0,0,0.6)'
+                : '0 0 30px rgba(245,158,11,0.2), 0 8px 32px rgba(0,0,0,0.6)',
+            }}
+          >
+            {/* Top bar */}
+            <div className="flex items-center gap-3 px-4 pt-4 pb-3"
+              style={{
+                background: activeStore.isPurchased
+                  ? 'linear-gradient(135deg, rgba(15,118,110,0.6), rgba(6,78,59,0.6))'
+                  : 'linear-gradient(135deg, rgba(146,64,14,0.6), rgba(120,53,15,0.6))',
+              }}
+            >
+              <span className="text-3xl">{activeStore.emoji}</span>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-black text-white leading-tight truncate">
+                  {activeStore.isPurchased && activeStore.ownerName
+                    ? `${activeStore.ownerName}'s ${activeStore.storeName}`
+                    : activeStore.storeName}
+                </h3>
+                <p className="text-xs mt-0.5"
+                  style={{ color: activeStore.isPurchased ? '#5eead4' : '#fcd34d' }}
+                >
+                  {activeStore.isPurchased
+                    ? `Owner: ${activeStore.ownerName ?? 'Unknown'}  ·  Paid ${activeStore.price > 0 ? `${activeStore.price} SC` : 'Free'}`
+                    : `For Sale · Price: ${activeStore.price > 0 ? `${activeStore.price} SC` : 'Free'}`}
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveStore(null)}
+                className="text-slate-400 hover:text-white transition-colors shrink-0 cursor-pointer"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* Info row */}
+            <div className="px-4 py-3 flex gap-3 border-b border-slate-800/60">
+              <div className="flex-1 text-center">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider">Type</p>
+                <p className="text-sm font-bold text-white capitalize">{activeStore.type.replace('policestation','Police Station').replace('clothshop','Cloth Shop').replace('barbershop','Barber Shop').replace('restaurant','Restaurant')}</p>
+              </div>
+              <div className="w-px bg-slate-800" />
+              <div className="flex-1 text-center">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider">Status</p>
+                <p className="text-sm font-bold" style={{ color: activeStore.isPurchased ? '#34d399' : '#fbbf24' }}>
+                  {activeStore.isPurchased ? '✓ Owned' : '🏷 Available'}
+                </p>
+              </div>
+              <div className="w-px bg-slate-800" />
+              <div className="flex-1 text-center">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider">Price</p>
+                <p className="text-sm font-bold text-amber-400">
+                  {activeStore.price > 0 ? `${activeStore.price} SC` : 'Free'}
+                </p>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="p-3 flex gap-2">
+              <button
+                id={`store-enter-btn-${activeStore.x}-${activeStore.z}`}
+                onClick={() => {
+                  setActiveStore(null);
+                  if (activeStore.type === 'restaurant') setShowFoodShop(true);
+                  else if (activeStore.type === 'clothshop') setShowClothShop(true);
+                  else if (activeStore.type === 'barbershop') setShowBarberShop(true);
+                  else if (activeStore.type === 'policestation') setShowPoliceStation(true);
+                }}
+                className="flex-1 py-2 rounded-xl text-sm font-bold text-white transition-all active:scale-95 cursor-pointer"
+                style={{
+                  background: activeStore.isPurchased
+                    ? 'linear-gradient(135deg, #0f766e, #0d9488)'
+                    : 'linear-gradient(135deg, #b45309, #d97706)',
+                }}
+              >
+                {activeStore.type === 'restaurant' ? '🍽 Enter & Order'
+                  : activeStore.type === 'clothshop' ? '👔 Browse Clothes'
+                  : activeStore.type === 'barbershop' ? '✂️ Get a Haircut'
+                  : activeStore.type === 'policestation' ? '🚔 Enter Station'
+                  : '🚪 Enter'}
+              </button>
+              <button
+                onClick={() => setActiveStore(null)}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-slate-400 bg-slate-800/80 hover:bg-slate-700 transition-all active:scale-95 cursor-pointer"
+              >
+                Skip
+              </button>
+            </div>
+
+            {/* Press E hint */}
+            <p className="text-center text-[10px] text-slate-600 pb-2">Press <kbd className="bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded text-[10px]">E</kbd> to interact</p>
+          </div>
+        </div>
+      )}
+
       {/* ── FOOD SHOP MODAL ───────────────────────────────────────────────────────── */}
       {showFoodShop && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowFoodShop(false)}>
-          <div className="bg-slate-950/95 border border-red-800/40 rounded-3xl shadow-2xl shadow-red-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="bg-slate-950/95 border border-red-800/40 rounded-3xl shadow-2xl shadow-red-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()} style={foodDrag.style}>
             {/* Header */}
-            <div className="bg-gradient-to-r from-red-900/80 to-amber-900/80 p-5 flex items-center justify-between border-b border-red-800/30">
-              <div className="flex items-center gap-3">
+            <div 
+              className="bg-gradient-to-r from-red-900/80 to-amber-900/80 p-5 flex items-center justify-between border-b border-red-800/30 select-none cursor-grab active:cursor-grabbing"
+              onMouseDown={foodDrag.handleMouseDown}
+              onTouchStart={foodDrag.handleTouchStart}
+            >
+              <div className="flex items-center gap-3 pointer-events-none">
                 <span className="text-3xl">🍔</span>
                 <div>
                   <h3 className="text-lg font-black text-white">Mac D Fast Food</h3>
@@ -2804,9 +3403,13 @@ export default function CitySimulator() {
       {/* ── CLOTH SHOP MODAL ──────────────────────────────────────────────────────── */}
       {showClothShop && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowClothShop(false)}>
-          <div className="bg-slate-950/95 border border-blue-800/40 rounded-3xl shadow-2xl shadow-blue-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="bg-gradient-to-r from-blue-900/80 to-indigo-900/80 p-5 flex items-center justify-between border-b border-blue-800/30">
-              <div className="flex items-center gap-3">
+          <div className="bg-slate-950/95 border border-blue-800/40 rounded-3xl shadow-2xl shadow-blue-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()} style={clothDrag.style}>
+            <div 
+              className="bg-gradient-to-r from-blue-900/80 to-indigo-900/80 p-5 flex items-center justify-between border-b border-blue-800/30 select-none cursor-grab active:cursor-grabbing"
+              onMouseDown={clothDrag.handleMouseDown}
+              onTouchStart={clothDrag.handleTouchStart}
+            >
+              <div className="flex items-center gap-3 pointer-events-none">
                 <span className="text-3xl">👕</span>
                 <div>
                   <h3 className="text-lg font-black text-white">Fashion Store</h3>
@@ -2873,9 +3476,13 @@ export default function CitySimulator() {
       {/* ── BARBER SHOP MODAL ─────────────────────────────────────────────────────── */}
       {showBarberShop && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowBarberShop(false)}>
-          <div className="bg-slate-950/95 border border-purple-800/40 rounded-3xl shadow-2xl shadow-purple-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="bg-gradient-to-r from-purple-900/80 to-slate-900/80 p-5 flex items-center justify-between border-b border-purple-800/30">
-              <div className="flex items-center gap-3">
+          <div className="bg-slate-950/95 border border-purple-800/40 rounded-3xl shadow-2xl shadow-purple-900/30 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()} style={barberDrag.style}>
+            <div 
+              className="bg-gradient-to-r from-purple-900/80 to-slate-900/80 p-5 flex items-center justify-between border-b border-purple-800/30 select-none cursor-grab active:cursor-grabbing"
+              onMouseDown={barberDrag.handleMouseDown}
+              onTouchStart={barberDrag.handleTouchStart}
+            >
+              <div className="flex items-center gap-3 pointer-events-none">
                 <span className="text-3xl">✂️</span>
                 <div>
                   <h3 className="text-lg font-black text-white">City Barber</h3>
@@ -2914,9 +3521,13 @@ export default function CitySimulator() {
       {/* ── POLICE STATION MODAL ──────────────────────────────────────────────────── */}
       {showPoliceStation && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowPoliceStation(false)}>
-          <div className="bg-slate-950/95 border border-blue-900/40 rounded-3xl shadow-2xl shadow-blue-950/50 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="bg-gradient-to-r from-blue-950/90 to-slate-950/90 p-5 flex items-center justify-between border-b border-blue-900/30">
-              <div className="flex items-center gap-3">
+          <div className="bg-slate-950/95 border border-blue-900/40 rounded-3xl shadow-2xl shadow-blue-950/50 max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()} style={policeDrag.style}>
+            <div 
+              className="bg-gradient-to-r from-blue-950/90 to-slate-950/90 p-5 flex items-center justify-between border-b border-blue-900/30 select-none cursor-grab active:cursor-grabbing"
+              onMouseDown={policeDrag.handleMouseDown}
+              onTouchStart={policeDrag.handleTouchStart}
+            >
+              <div className="flex items-center gap-3 pointer-events-none">
                 <span className="text-3xl">🚔</span>
                 <div>
                   <h3 className="text-lg font-black text-white">Police Station</h3>

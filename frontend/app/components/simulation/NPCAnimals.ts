@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SimContext, AnimalAgent } from './Types';
+import { SimContext, AnimalAgent, HumanAgent } from './Types';
 import { createNameTag } from './NPCHuman';
 
 export function createAnimalMesh(
@@ -179,24 +179,27 @@ export function createAnimalMesh(
       break;
     }
     case 'dog': {
+      const isFido = agent.isFido;
       // Body
-      const bodyGeom = ctx.getGeometry('dog_body', () => new THREE.BoxGeometry(0.28, 0.24, 0.5));
-      const bodyMat = ctx.getMaterial('dog_brown', { color: '#8b5a2b', roughness: 0.95 });
+      const bodyGeom = ctx.getGeometry(isFido ? 'dog_fido_body' : 'dog_body', () => new THREE.BoxGeometry(0.28, 0.24, 0.5));
+      const bodyColor = isFido ? '#ffb833' : '#8b5a2b'; // Golden yellow for Fido, brown for other dogs
+      const bodyMat = ctx.getMaterial(isFido ? 'dog_fido_gold' : 'dog_brown', { color: bodyColor, roughness: 0.95 });
       const body = new THREE.Mesh(bodyGeom, bodyMat);
       body.position.y = 0.26;
       body.castShadow = true;
       group.add(body);
 
       // Head
-      const headGeom = ctx.getGeometry('dog_head', () => new THREE.BoxGeometry(0.2, 0.2, 0.22));
+      const headGeom = ctx.getGeometry(isFido ? 'dog_fido_head' : 'dog_head', () => new THREE.BoxGeometry(0.2, 0.2, 0.22));
       const head = new THREE.Mesh(headGeom, bodyMat);
       head.position.set(0, 0.44, 0.2);
       head.castShadow = true;
       group.add(head);
 
-      // Ears (Floppy dark brown)
-      const earGeom = ctx.getGeometry('dog_ear', () => new THREE.BoxGeometry(0.05, 0.16, 0.08));
-      const earMat = ctx.getMaterial('dog_ears', { color: '#5c3818', roughness: 0.95 });
+      // Ears (Floppy dark brown/dark gold)
+      const earGeom = ctx.getGeometry(isFido ? 'dog_fido_ear' : 'dog_ear', () => new THREE.BoxGeometry(0.05, 0.16, 0.08));
+      const earColor = isFido ? '#cc8800' : '#5c3818';
+      const earMat = ctx.getMaterial(isFido ? 'dog_fido_ears' : 'dog_ears', { color: earColor, roughness: 0.95 });
       const e1 = new THREE.Mesh(earGeom, earMat);
       e1.position.set(0.11, 0.42, 0.2);
       const e2 = new THREE.Mesh(earGeom, earMat);
@@ -591,15 +594,24 @@ export function spawnAnimals(ctx: SimContext, animalsList: AnimalAgent[]) {
     const spawnZ = (Math.random() - 0.5) * (ctx.gridSize * ctx.cellSize - 4);
     const yVal = type === 'bird' ? 6.0 + Math.random() * 4.0 : 0;
 
+    let isFido = false;
+    if (type === 'dog' && !animalsList.some(a => a.isFido)) {
+      isFido = true;
+    }
+
     const group = new THREE.Group();
     group.position.set(spawnX, yVal, spawnZ);
 
-    const agent: Partial<AnimalAgent> = {};
+    const agent: Partial<AnimalAgent> = {
+      isFido
+    };
     const mesh = createAnimalMesh(ctx, type, agent);
+    mesh.scale.set(ctx.cellSize / 3.0, ctx.cellSize / 3.0, ctx.cellSize / 3.0);
     group.add(mesh);
     
-    if (type === 'dog') {
-      const nameTag = createNameTag("Fido [Lost Dog]");
+    let nameTag: THREE.Sprite | undefined = undefined;
+    if (type === 'dog' && isFido) {
+      nameTag = createNameTag("Fido [Lost Dog]");
       nameTag.position.set(0, 0.6, 0);
       group.add(nameTag);
     }
@@ -607,7 +619,7 @@ export function spawnAnimals(ctx: SimContext, animalsList: AnimalAgent[]) {
     ctx.scene.add(group);
 
     const fullAgent: AnimalAgent = {
-      id: `animal_${type}_${Math.random().toString(36).substr(2, 9)}`,
+      id: isFido ? 'fido' : `animal_${type}_${Math.random().toString(36).substr(2, 9)}`,
       type,
       mesh: group,
       x: spawnX,
@@ -622,7 +634,9 @@ export function spawnAnimals(ctx: SimContext, animalsList: AnimalAgent[]) {
       legSwingPivot2: agent.legSwingPivot2,
       tailPivot: agent.tailPivot,
       leftWingPivot: agent.leftWingPivot,
-      rightWingPivot: agent.rightWingPivot
+      rightWingPivot: agent.rightWingPivot,
+      isFido,
+      nameTag
     };
 
     animalsList.push(fullAgent);
@@ -632,18 +646,40 @@ export function spawnAnimals(ctx: SimContext, animalsList: AnimalAgent[]) {
 export function updateAnimals(
   ctx: SimContext,
   animalsList: AnimalAgent[],
-  delta: number
+  delta: number,
+  player?: HumanAgent | null
 ) {
   const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
 
   animalsList.forEach(a => {
+    // 0. Follow Player AI
+    if (a.type === 'dog' && a.isFido && a.isFollowingPlayer && player) {
+      const pX = player.mesh.position.x;
+      const pZ = player.mesh.position.z;
+      const dxToPlayer = pX - a.x;
+      const dzToPlayer = pZ - a.z;
+      const distToPlayer = Math.sqrt(dxToPlayer * dxToPlayer + dzToPlayer * dzToPlayer);
+
+      if (distToPlayer > 1.2) {
+        a.targetX = pX - (dxToPlayer / distToPlayer) * 1.0;
+        a.targetZ = pZ - (dzToPlayer / distToPlayer) * 1.0;
+        a.speed = Math.max(player.speed || 1.8, 2.5);
+      } else {
+        a.targetX = a.x;
+        a.targetZ = a.z;
+        if (distToPlayer > 0.1) {
+          a.mesh.rotation.y = Math.atan2(dxToPlayer, dzToPlayer);
+        }
+      }
+    }
+
     // 1. Movement AI
     const dx = a.targetX - a.x;
     const dz = a.targetZ - a.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
 
     if (dist > 0.1) {
-      a.state = a.type === 'bird' ? 'flying' : 'wandering';
+      a.state = a.type === 'dog' && a.isFollowingPlayer ? 'wandering' : (a.type === 'bird' ? 'flying' : 'wandering');
       const step = a.speed * delta;
       
       if (dist <= step) {
@@ -661,26 +697,28 @@ export function updateAnimals(
       a.mesh.position.z = a.z;
     } else {
       a.state = 'idle';
-      a.idleTimer -= delta;
-      
-      if (a.idleTimer <= 0) {
-        // Find a new target to wander/fly to
-        a.idleTimer = 3.0 + Math.random() * 5.0;
+      if (!(a.type === 'dog' && a.isFollowingPlayer)) {
+        a.idleTimer -= delta;
         
-        if (a.type === 'bird') {
-          // Fly to a random roof, tree, or high point
-          a.targetX = (Math.random() - 0.5) * (ctx.gridSize * ctx.cellSize - 6);
-          a.targetZ = (Math.random() - 0.5) * (ctx.gridSize * ctx.cellSize - 6);
+        if (a.idleTimer <= 0) {
+          // Find a new target to wander/fly to
+          a.idleTimer = 3.0 + Math.random() * 5.0;
           
-          // Randomly transition flying Y altitude
-          const nextY = 5.0 + Math.random() * 6.0;
-          a.mesh.position.y = nextY;
-        } else {
-          // Wander to nearby coordinates on ground
-          const rx = a.x + (Math.random() - 0.5) * 15;
-          const rz = a.z + (Math.random() - 0.5) * 15;
-          a.targetX = Math.max(-halfGrid + 1, Math.min(halfGrid - 1, rx));
-          a.targetZ = Math.max(-halfGrid + 1, Math.min(halfGrid - 1, rz));
+          if (a.type === 'bird') {
+            // Fly to a random roof, tree, or high point
+            a.targetX = (Math.random() - 0.5) * (ctx.gridSize * ctx.cellSize - 6);
+            a.targetZ = (Math.random() - 0.5) * (ctx.gridSize * ctx.cellSize - 6);
+            
+            // Randomly transition flying Y altitude
+            const nextY = 5.0 + Math.random() * 6.0;
+            a.mesh.position.y = nextY;
+          } else {
+            // Wander to nearby coordinates on ground
+            const rx = a.x + (Math.random() - 0.5) * 15;
+            const rz = a.z + (Math.random() - 0.5) * 15;
+            a.targetX = Math.max(-halfGrid + 1, Math.min(halfGrid - 1, rx));
+            a.targetZ = Math.max(-halfGrid + 1, Math.min(halfGrid - 1, rz));
+          }
         }
       }
     }

@@ -9,7 +9,7 @@ export function createRoadMesh(ctx: SimContext, x: number, z: number): THREE.Gro
   group.position.set(worldX, 0, worldZ);
 
   // Base dark grey asphalt
-  const roadGeom = ctx.getGeometry('road_base', () => new THREE.BoxGeometry(ctx.cellSize, 0.08, ctx.cellSize));
+  const roadGeom = ctx.getGeometry('road_base', () => new THREE.BoxGeometry(3.0, 0.08, 3.0));
   const roadMat = ctx.getMaterial('road_base', { color: '#2b2b2b', roughness: 0.8 });
   const roadMesh = new THREE.Mesh(roadGeom, roadMat);
   roadMesh.position.y = 0.04;

@@ -89,6 +89,13 @@ async function initCache() {
     }
     settingsCache = settings.toObject();
 
+    // Migrate: if timeSpeed is still the old default (>=0.5) reset to 8h/day rate
+    if (settingsCache.timeSpeed >= 0.5) {
+      settingsCache.timeSpeed = 0.00833;
+      settingsCacheDirty = true;
+      await Settings.updateOne({ key: "global" }, { $set: { timeSpeed: 0.00833 } });
+    }
+
     // 2. Load NPCs
     const npcs = await Npc.find({});
     npcCache = npcs.map((n) => n.toObject());
@@ -731,18 +738,25 @@ app.get("/api/grid", async (req: express.Request, res: express.Response) => {
             targetType = "tree";
           }
 
-          // Default shops: one of each in the four city quadrants
-          else if ((x === 6 && z === 6) || (x === 25 && z === 6) || (x === 6 && z === 25) || (x === 25 && z === 25)) {
+          // Default shops and skyscraper: one of each type
+          else if ((x === 6 && z === 6) || (x === 25 && z === 6) || (x === 6 && z === 25) || (x === 25 && z === 25) || (x === 22 && z === 19)) {
             const shopTypes: Record<string, string> = {
               '6_6': 'restaurant',
               '25_6': 'clothshop',
               '6_25': 'barbershop',
               '25_25': 'policestation',
+              '22_19': 'skyscraper',
             };
             type = shopTypes[`${x}_${z}`];
             constructionProgress = 100;
             targetType = type;
           }
+
+          let price = 0;
+          if (type === 'restaurant') price = 250;
+          else if (type === 'clothshop') price = 200;
+          else if (type === 'barbershop') price = 150;
+          else if (type === 'policestation') price = 300;
 
           initialCells.push({
             x,
@@ -751,13 +765,56 @@ app.get("/api/grid", async (req: express.Request, res: express.Response) => {
             targetType,
             constructionProgress,
             height: 0,
+            ownerName: null,
+            ownerEmail: null,
+            price,
+            isPurchased: false,
           });
         }
       }
-
+ 
       await GridCell.insertMany(initialCells);
       console.log("32x32 grid successfully initialized in database.");
     }
+ 
+    // Ensure default stores and skyscraper exist in the database (migration check)
+    const checkAndEnsureShop = async (x: number, z: number, shopType: string, shopPrice: number) => {
+      const exists = await GridCell.findOne({ x, z });
+      if (!exists) {
+        console.log(`Missing required shop type: ${shopType}. Injecting at (${x}, ${z})...`);
+        await GridCell.updateOne(
+          { x, z },
+          { 
+            type: shopType, 
+            targetType: shopType, 
+            constructionProgress: 100,
+            price: shopPrice,
+            isPurchased: false,
+            ownerName: null,
+            ownerEmail: null
+          },
+          { upsert: true }
+        );
+      } else if (exists.price === undefined || exists.price === 0) {
+        await GridCell.updateOne(
+          { x, z },
+          { 
+            $set: { 
+              price: shopPrice,
+              isPurchased: exists.isPurchased ?? false,
+              ownerName: exists.ownerName ?? null,
+              ownerEmail: exists.ownerEmail ?? null
+            } 
+          }
+        );
+      }
+    };
+ 
+    await checkAndEnsureShop(6, 6, "restaurant", 250);
+    await checkAndEnsureShop(25, 6, "clothshop", 200);
+    await checkAndEnsureShop(6, 25, "barbershop", 150);
+    await checkAndEnsureShop(25, 25, "policestation", 300);
+    await checkAndEnsureShop(22, 19, "skyscraper", 0);
 
     const cells = await GridCell.find({});
     res.status(200).json({ cells });
@@ -774,23 +831,23 @@ app.post(
   async (req: AuthenticatedRequest, res: express.Response) => {
     try {
       await connectDB();
-      const { x, z, type, targetType, constructionProgress, height } = req.body;
-
+      const { x, z, type, targetType, constructionProgress, height, scale, ownerName, ownerEmail, price, isPurchased } = req.body;
+ 
       if (x === undefined || z === undefined) {
         res.status(400).json({ error: "Coordinates x and z are required" });
         return;
       }
-
+ 
       const isUserAdmin = req.user?.role === "admin";
       const target = targetType || type || "empty";
       const isDemolish = target === "empty";
       const hasPermit = req.user?.unlockedPermits && req.user.unlockedPermits.includes(target);
-
+ 
       if (!isUserAdmin && (isDemolish || !hasPermit)) {
         res.status(403).json({ error: "Insufficient building permissions or missing permit" });
         return;
       }
-
+ 
       const cell = await GridCell.findOneAndUpdate(
         { x: Number(x), z: Number(z) },
         {
@@ -799,6 +856,11 @@ app.post(
           constructionProgress:
             constructionProgress !== undefined ? Number(constructionProgress) : 0,
           height: height !== undefined ? Number(height) : 0,
+          scale: scale !== undefined ? Number(scale) : 1.0,
+          ownerName: ownerName !== undefined ? ownerName : null,
+          ownerEmail: ownerEmail !== undefined ? ownerEmail : null,
+          price: price !== undefined ? Number(price) : 0,
+          isPurchased: isPurchased !== undefined ? Boolean(isPurchased) : false,
         },
         { new: true, upsert: true },
       );
@@ -898,7 +960,7 @@ app.post(
       const { timeOfDay, timeSpeed, isPlaying } = req.body;
 
       if (!settingsCache) {
-        settingsCache = { key: "global", timeOfDay: 8.0, timeSpeed: 0.5, isPlaying: true };
+        settingsCache = { key: "global", timeOfDay: 8.0, timeSpeed: 0.00833, isPlaying: true };
       }
 
       if (timeOfDay !== undefined) settingsCache.timeOfDay = Number(timeOfDay);
@@ -1000,6 +1062,37 @@ app.post(
 
         res.status(200).json({
           message: `Updated role for ${targetUser.name} to ${role}`,
+          user: targetUser,
+        });
+      } else if (action === "modifyCoins") {
+        const { shunyaCoins } = data;
+        if (shunyaCoins === undefined) {
+          res.status(400).json({ error: "Missing shunyaCoins parameter" });
+          return;
+        }
+
+        targetUser.shunyaCoins = Number(shunyaCoins);
+        await targetUser.save();
+
+        const cached = userCache.get(targetUserId);
+        if (cached) {
+          cached.shunyaCoins = Number(shunyaCoins);
+          cached.dirty = false;
+        }
+
+        // Notify client if active
+        const targetWs = activeClients.get(targetUserId);
+        if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+          targetWs.send(JSON.stringify({
+            type: "admin-coins-updated",
+            shunyaCoins: Number(shunyaCoins),
+            fromUser: "Admin Control Panel",
+            amount: 0,
+          }));
+        }
+
+        res.status(200).json({
+          message: `Updated coins for ${targetUser.name} to ${shunyaCoins}`,
           user: targetUser,
         });
       } else if (action === "delete") {
@@ -1302,7 +1395,7 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
               if (cached && cached.role === "admin") {
                 const { timeOfDay, timeSpeed, isPlaying } = msg;
                 if (!settingsCache) {
-                  settingsCache = { key: "global", timeOfDay: 8.0, timeSpeed: 0.5, isPlaying: true };
+                  settingsCache = { key: "global", timeOfDay: 8.0, timeSpeed: 0.00833, isPlaying: true };
                 }
 
                 if (timeOfDay !== undefined) settingsCache.timeOfDay = Number(timeOfDay);
@@ -1328,9 +1421,10 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
                 const target = msg.cell.targetType || msg.cell.type || "empty";
                 const isDemolish = target === "empty";
                 const hasPermit = cached.unlockedPermits && cached.unlockedPermits.includes(target);
+                const isMetadataUpdate = msg.cell.type === msg.cell.targetType && Number(msg.cell.constructionProgress) === 100;
 
-                if (cached.role === "admin" || (!isDemolish && hasPermit)) {
-                  const { x, z, type, targetType, constructionProgress, height } = msg.cell;
+                if (cached.role === "admin" || (!isDemolish && hasPermit) || isMetadataUpdate) {
+                  const { x, z, type, targetType, constructionProgress, height, scale, ownerName, ownerEmail, price, isPurchased } = msg.cell;
                   await connectDB();
                   const cell = await GridCell.findOneAndUpdate(
                     { x: Number(x), z: Number(z) },
@@ -1340,6 +1434,11 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
                       constructionProgress:
                         constructionProgress !== undefined ? Number(constructionProgress) : 0,
                       height: height !== undefined ? Number(height) : 0,
+                      scale: scale !== undefined ? Number(scale) : 1.0,
+                      ownerName: ownerName !== undefined ? ownerName : null,
+                      ownerEmail: ownerEmail !== undefined ? ownerEmail : null,
+                      price: price !== undefined ? Number(price) : 0,
+                      isPurchased: isPurchased !== undefined ? Boolean(isPurchased) : false,
                     },
                     { new: true, upsert: true },
                   );

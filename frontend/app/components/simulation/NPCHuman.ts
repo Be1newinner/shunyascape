@@ -446,6 +446,7 @@ export function loadAllDatabaseUsers(
       actionState: 'idle',
       actionTimer: 0,
       jumpVelocity: 0,
+      nameTag,
     };
 
     humansList.push(npcAgent);
@@ -561,6 +562,7 @@ export function addDatabaseUser(
     actionState: 'idle',
     actionTimer: 0,
     jumpVelocity: 0,
+    nameTag,
   };
 
   humansList.push(npcAgent);
@@ -575,11 +577,22 @@ export function updateHumans(
     positionSyncTimer: number;
     lastSyncedPosition: THREE.Vector3;
     lastPlayerPosition: THREE.Vector3 | null;
-  }
+  },
+  fidoQuestOwnerId?: string | null
 ) {
   const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
 
   humansList.forEach(h => {
+    // Lock the quest owner in place if Fido is found/quest is active
+    if (fidoQuestOwnerId && h.id === fidoQuestOwnerId) {
+      h.state = 'idle';
+      h.path = [];
+      h.pathIndex = 0;
+      h.targetX = h.mesh.position.x;
+      h.targetZ = h.mesh.position.z;
+      return;
+    }
+
     // Skip updates if they are sitting in a car
     if (h.seatedInVehicleId) return;
 

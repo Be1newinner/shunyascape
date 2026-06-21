@@ -62,8 +62,10 @@ export class ThreeCity {
 
   // Simulation Grid Configuration
   public gridSize = 32;
-  private cellSize = 3.0; // Size of each cell in world units
+  private cellSize = 2.25; // Size of each cell in world units (shrunk from 3.0)
   public grid: GridCell[][] = [];
+  public selectedBuildScale = 1.0;
+  public shunyaCoins = 100;
   private parkCells: Set<string> = new Set();
 
   // Land Expansion
@@ -97,6 +99,11 @@ export class ThreeCity {
   private particles: Particle[] = [];
   private animationFrameId: number | null = null;
   private timer = new THREE.Timer();
+
+  // Quest State
+  public fidoQuestState: "not_started" | "active" | "fido_found" | "completed" = "not_started";
+  public fidoQuestOwnerId: string | null = null;
+  private fidoQuestZone: THREE.Group | null = null;
 
   // Player Controls
   public player: HumanAgent | null = null;
@@ -235,6 +242,33 @@ export class ThreeCity {
     );
   };
 
+  public rotateCamera(dx: number, dy: number) {
+    if (this.controls) {
+      this.controls.rotateLeft(dx);
+      this.controls.rotateUp(dy);
+      this.controls.update();
+    }
+  }
+
+  public zoomCamera(zoomIn: boolean) {
+    if (this.controls) {
+      if (zoomIn) {
+        this.controls.dollyIn(1.15);
+      } else {
+        this.controls.dollyOut(1.15);
+      }
+      this.controls.update();
+    }
+  }
+
+  public resetCamera() {
+    if (this.camera && this.controls) {
+      this.camera.position.set(35, 30, 45);
+      this.controls.target.set(0, 0, 0);
+      this.controls.update();
+    }
+  }
+
   private initEnvironment() {
     this.weatherManager = new WeatherManager(this.getSimContext());
     const land = createLand(this.getSimContext());
@@ -263,6 +297,7 @@ export class ThreeCity {
           targetType: "empty",
           height: 0,
           id: `cell_${x}_${z}`,
+          scale: 1.0,
         };
       }
     }
@@ -322,6 +357,13 @@ export class ThreeCity {
     this.spawnInstantItem(center + pr + 2, 22, "house");
     this.spawnInstantItem(8, center - pr - 2, "house");
     this.spawnInstantItem(22, center + pr + 2, "house");
+
+    // Initial shops & skyscraper (one of each type)
+    this.spawnInstantItem(6, 6, "restaurant");
+    this.spawnInstantItem(25, 6, "clothshop");
+    this.spawnInstantItem(6, 25, "barbershop");
+    this.spawnInstantItem(25, 25, "policestation");
+    this.spawnInstantItem(22, 19, "skyscraper");
 
     // Spawn starting humans
     for (let i = 0; i < 12; i++) {
@@ -445,16 +487,21 @@ export class ThreeCity {
     cell.type = type;
     cell.constructionProgress = 100;
     cell.targetType = type;
+    cell.scale = cell.scale || 1.0;
 
     const mesh = this.createMeshForType(type, x, z);
     cell.mesh = mesh;
     this.scene.add(mesh);
 
     mesh.scale.set(0.01, 0.01, 0.01);
-    this.animateGrow(mesh, 1.0, 400);
+    const cellScale = cell.scale || 1.0;
+    const finalScale = (this.cellSize / 3.0) * cellScale;
+    this.animateGrow(mesh, finalScale, 400);
 
     if (type === "road") {
       this.recalculateRoadConnections();
+    } else {
+      this.updateStoreBoard(x, z);
     }
   }
 
@@ -466,15 +513,60 @@ export class ThreeCity {
     const cell = this.grid[x][z];
     if (cell.type !== "empty") return;
 
+    // Deduct coins if applicable based on building type and scale
+    const baseCostMap: Record<string, number> = {
+      road: 5,
+      tree: 10,
+      house: 50,
+      skyscraper: 150,
+      restaurant: 100,
+      clothshop: 80,
+      barbershop: 60,
+      policestation: 120
+    };
+
+    const baseCost = baseCostMap[type] || 0;
+    const selectedScale = this.selectedBuildScale || 1.0;
+    const finalCost = Math.round(baseCost * selectedScale);
+
+    if (!this.isAdmin && this.shunyaCoins < finalCost) {
+      window.dispatchEvent(new CustomEvent("shunya-toast", { 
+        detail: { message: `Not enough ShunyaCoins! Need ${finalCost} SC.`, type: "warning" } 
+      }));
+      return;
+    }
+
+    if (!this.isAdmin && finalCost > 0) {
+      window.dispatchEvent(new CustomEvent("shunya-coins-spent", { 
+        detail: { coins: finalCost } 
+      }));
+    }
+
+    const isStoreType = ["restaurant", "clothshop", "barbershop", "policestation"].includes(type);
+    if (isStoreType) {
+      cell.ownerName = this.player?.playerName || "System";
+      cell.ownerEmail = this.player?.playerEmail || "";
+      cell.isPurchased = true;
+      cell.price = finalCost;
+    } else {
+      cell.ownerName = null;
+      cell.ownerEmail = null;
+      cell.isPurchased = false;
+      cell.price = 0;
+    }
+
     cell.type = "construction";
     cell.targetType = type;
     cell.constructionProgress = 0;
+    cell.scale = selectedScale;
 
     const constructionMesh = createConstructionSiteMesh(
       this.getSimContext(),
       x,
       z,
     );
+    const finalScale = (this.cellSize / 3.0) * selectedScale;
+    constructionMesh.scale.set(finalScale, finalScale, finalScale);
     cell.mesh = constructionMesh;
     this.scene.add(constructionMesh);
 
@@ -496,6 +588,11 @@ export class ThreeCity {
               targetType: type,
               constructionProgress: 0,
               height: cell.height,
+              scale: selectedScale,
+              ownerName: cell.ownerName,
+              ownerEmail: cell.ownerEmail,
+              price: cell.price,
+              isPurchased: cell.isPurchased
             },
           }),
         );
@@ -510,6 +607,11 @@ export class ThreeCity {
             targetType: type,
             constructionProgress: 0,
             height: cell.height,
+            scale: selectedScale,
+            ownerName: cell.ownerName,
+            ownerEmail: cell.ownerEmail,
+            price: cell.price,
+            isPurchased: cell.isPurchased
           }),
         })
           .then((res) => {
@@ -608,24 +710,40 @@ export class ThreeCity {
     x: number,
     z: number,
   ): THREE.Group {
+    let mesh: THREE.Group;
     switch (type) {
       case "road":
-        return createRoadMesh(this.getSimContext(), x, z);
+        mesh = createRoadMesh(this.getSimContext(), x, z);
+        break;
       case "tree":
-        return createTreeMesh(this.getSimContext(), x, z);
+        mesh = createTreeMesh(this.getSimContext(), x, z);
+        break;
       case "house":
-        return createHouseMesh(this.getSimContext(), x, z);
+        mesh = createHouseMesh(this.getSimContext(), x, z);
+        break;
       case "skyscraper":
-        return createSkyscraperMesh(this.getSimContext(), x, z);
+        mesh = createSkyscraperMesh(this.getSimContext(), x, z);
+        break;
       case "restaurant":
-        return createRestaurantMesh(this.getSimContext(), x, z);
+        mesh = createRestaurantMesh(this.getSimContext(), x, z);
+        break;
       case "clothshop":
-        return createClothShopMesh(this.getSimContext(), x, z);
+        mesh = createClothShopMesh(this.getSimContext(), x, z);
+        break;
       case "barbershop":
-        return createBarbershopMesh(this.getSimContext(), x, z);
+        mesh = createBarbershopMesh(this.getSimContext(), x, z);
+        break;
       case "policestation":
-        return createPoliceStationMesh(this.getSimContext(), x, z);
+        mesh = createPoliceStationMesh(this.getSimContext(), x, z);
+        break;
     }
+
+    const cell = this.grid[x]?.[z];
+    const cellScale = cell?.scale ?? 1.0;
+    const baseScale = this.cellSize / 3.0;
+    const finalScale = baseScale * cellScale;
+    mesh.scale.set(finalScale, finalScale, finalScale);
+    return mesh;
   }
 
   private animateGrow(
@@ -675,8 +793,13 @@ export class ThreeCity {
     cell.mesh = mesh;
     this.scene.add(mesh);
 
+    // Render store board
+    this.updateStoreBoard(x, z);
+
     mesh.scale.set(0.01, 0.01, 0.01);
-    this.animateGrow(mesh, 1.0, 500);
+    const cellScale = cell.scale || 1.0;
+    const finalScale = (this.cellSize / 3.0) * cellScale;
+    this.animateGrow(mesh, finalScale, 500);
 
     this.audio.playPop();
     this.spawnParticle(x, z, "#5cd65c", 12);
@@ -720,6 +843,11 @@ export class ThreeCity {
               targetType: type,
               constructionProgress: 100,
               height: cell.height,
+              scale: cell.scale,
+              ownerName: cell.ownerName,
+              ownerEmail: cell.ownerEmail,
+              price: cell.price,
+              isPurchased: cell.isPurchased
             },
           }),
         );
@@ -734,6 +862,11 @@ export class ThreeCity {
             targetType: type,
             constructionProgress: 100,
             height: cell.height,
+            scale: cell.scale,
+            ownerName: cell.ownerName,
+            ownerEmail: cell.ownerEmail,
+            price: cell.price,
+            isPurchased: cell.isPurchased
           }),
         })
           .then((res) => {
@@ -784,6 +917,7 @@ export class ThreeCity {
       false,
       agent,
     );
+    mesh.scale.set(this.cellSize / 3.0, this.cellSize / 3.0, this.cellSize / 3.0);
     humanGroup.add(mesh);
 
     this.scene.add(humanGroup);
@@ -842,14 +976,10 @@ export class ThreeCity {
     }
 
     const halfGrid = (this.gridSize * this.cellSize) / 2;
-    let worldX = x;
-    let worldZ = z;
-
-    if (x === 0 && z === 0) {
-      const center = Math.floor(this.gridSize / 2);
-      worldX = center * this.cellSize - halfGrid + this.cellSize / 2;
-      worldZ = center * this.cellSize - halfGrid + this.cellSize / 2;
-    }
+    // Always spawn users in the central park (center of the grid) when they start
+    const center = Math.floor(this.gridSize / 2);
+    const worldX = center * this.cellSize - halfGrid + this.cellSize / 2;
+    const worldZ = center * this.cellSize - halfGrid + this.cellSize / 2;
 
     const col = clothingColor ?? 0xff3b30;
 
@@ -858,6 +988,7 @@ export class ThreeCity {
 
     const agent: Partial<HumanAgent> = {};
     const mesh = createRefinedHumanMesh(this.getSimContext(), col, true, agent);
+    mesh.scale.set(this.cellSize / 3.0, this.cellSize / 3.0, this.cellSize / 3.0);
     humanGroup.add(mesh);
 
     const nameTag = createNameTag(`[Lvl ${level}] ${name}`);
@@ -910,6 +1041,7 @@ export class ThreeCity {
       actionState: "jumping", // Drop animation
       actionTimer: 0,
       jumpVelocity: 0,
+      nameTag,
     };
 
     this.humans.push(playerAgent);
@@ -956,6 +1088,7 @@ export class ThreeCity {
       }
       const newTag = createNameTag(`[Lvl ${newLvl}] ${this.player.playerName || ""}`);
       this.player.mesh.add(newTag);
+      this.player.nameTag = newTag;
     }
   }
 
@@ -969,6 +1102,7 @@ export class ThreeCity {
       }
       const newTag = createNameTag(`[Lvl ${newLevel}] ${existing.playerName || ""}`);
       existing.mesh.add(newTag);
+      existing.nameTag = newTag;
     }
   }
 
@@ -983,6 +1117,20 @@ export class ThreeCity {
     if (this.player) {
       this.player.state = "idle";
     }
+  }
+
+  public setFidoQuestOwner(npcId: string) {
+    this.fidoQuestOwnerId = npcId;
+  }
+
+  public stopFidoFollowing() {
+    if (this.animals) {
+      const dog = this.animals.find((a) => a.type === "dog" && a.isFido);
+      if (dog) {
+        dog.isFollowingPlayer = false;
+      }
+    }
+    this.fidoQuestOwnerId = null;
   }
 
   /** Changes the player's hair color instantly by traversing mesh materials */
@@ -1212,25 +1360,40 @@ export class ThreeCity {
       const needsUpdate =
         localCell.type !== c.type ||
         localCell.targetType !== c.targetType ||
-        localCell.constructionProgress !== c.constructionProgress;
+        localCell.constructionProgress !== c.constructionProgress ||
+        localCell.scale !== c.scale ||
+        localCell.ownerName !== c.ownerName ||
+        localCell.ownerEmail !== c.ownerEmail ||
+        localCell.price !== c.price ||
+        localCell.isPurchased !== c.isPurchased;
 
       if (needsUpdate) {
+        const typeOrScaleChanged = localCell.type !== c.type || localCell.scale !== c.scale;
+
         localCell.type = c.type;
         localCell.targetType = c.targetType;
         localCell.constructionProgress = c.constructionProgress;
+        localCell.scale = c.scale !== undefined ? c.scale : 1.0;
+        localCell.ownerName = c.ownerName !== undefined ? c.ownerName : null;
+        localCell.ownerEmail = c.ownerEmail !== undefined ? c.ownerEmail : null;
+        localCell.price = c.price !== undefined ? c.price : 0;
+        localCell.isPurchased = c.isPurchased !== undefined ? c.isPurchased : false;
 
-        if (localCell.mesh) {
+        if (typeOrScaleChanged && localCell.mesh) {
           this.scene.remove(localCell.mesh);
           localCell.mesh = null;
+          localCell.boardSprite = null;
         }
 
-        if (c.type !== "empty") {
+        if (!localCell.mesh && c.type !== "empty") {
           if (c.type === "construction") {
             localCell.mesh = createConstructionSiteMesh(
               this.getSimContext(),
               c.x,
               c.z,
             );
+            const scaleMultiplier = (this.cellSize / 3.0) * (localCell.scale ?? 1.0);
+            localCell.mesh.scale.set(scaleMultiplier, scaleMultiplier, scaleMultiplier);
           } else {
             localCell.mesh = this.createMeshForType(c.type, c.x, c.z);
           }
@@ -1240,6 +1403,9 @@ export class ThreeCity {
         if (c.type === "road" || localCell.type === "road") {
           this.recalculateRoadConnections();
         }
+
+        // Draw/update store boards
+        this.updateStoreBoard(c.x, c.z);
       }
     });
     this.updateStats();
@@ -1302,6 +1468,7 @@ export class ThreeCity {
       false,
       agent,
     );
+    mesh.scale.set(this.cellSize / 3.0, this.cellSize / 3.0, this.cellSize / 3.0);
     humanGroup.add(mesh);
 
     const nameTag = createNameTag(n.name);
@@ -1346,6 +1513,7 @@ export class ThreeCity {
       actionState: "idle",
       actionTimer: 0,
       jumpVelocity: 0,
+      nameTag,
     };
 
     this.humans.push(npc);
@@ -1513,6 +1681,22 @@ export class ThreeCity {
       this.controls.update();
     }
 
+    // Keyboard Camera Zooming (2 to zoom in, 3 to zoom out)
+    if (this.keysPressed["2"] || this.keysPressed["3"]) {
+      const offset = new THREE.Vector3().copy(this.camera.position).sub(this.controls.target);
+      const zoomSpeed = 2.0; // zoom speed factor
+      // Zoom factor: if '2' is pressed, zoom in (multiplier < 1), if '3' is pressed, zoom out (multiplier > 1)
+      const factor = this.keysPressed["2"] ? (1 - zoomSpeed * delta) : (1 + zoomSpeed * delta);
+      offset.multiplyScalar(factor);
+      
+      const currentDist = offset.length();
+      const clampedDist = Math.max(this.controls.minDistance, Math.min(this.controls.maxDistance, currentDist));
+      offset.setLength(clampedDist);
+      
+      this.camera.position.copy(this.controls.target).add(offset);
+      this.controls.update();
+    }
+
     // 1. Weather Update
     this.timeOfDay = this.weatherManager.updateTime(
       this.timeOfDay,
@@ -1533,6 +1717,7 @@ export class ThreeCity {
       this.keysPressed,
       delta,
       syncStates,
+      this.fidoQuestOwnerId,
     );
     this.positionSyncTimer = syncStates.positionSyncTimer;
 
@@ -1550,7 +1735,7 @@ export class ThreeCity {
     updateVehicles(this.getSimContext(), this.vehicles, this.grid, delta);
 
     // 4. Animal updates (Wandering Cows, Dogs, Cats, Flying Birds)
-    updateAnimals(this.getSimContext(), this.animals, delta);
+    updateAnimals(this.getSimContext(), this.animals, delta, this.player);
 
     // 4.5. Collectibles updates
     if (this.player && this.collectibleManager) {
@@ -1564,16 +1749,103 @@ export class ThreeCity {
 
     // 4.6. Fido Quest check
     if (this.player && this.animals) {
-      const dog = this.animals.find((a) => a.type === "dog");
+      const dog = this.animals.find((a) => a.type === "dog" && a.isFido);
       if (dog) {
         const dx = this.player.mesh.position.x - dog.mesh.position.x;
         const dz = this.player.mesh.position.z - dog.mesh.position.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < 1.8) {
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(new CustomEvent("shunya-fido-near"));
+        if (dist < 2.5) {
+          if (this.fidoQuestState === "active") {
+            dog.isFollowingPlayer = true;
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(new CustomEvent("shunya-fido-near"));
+            }
           }
         }
+      }
+    }
+
+    // 4.7. Update Name Tag Visibility dynamically
+    this.humans.forEach((h) => {
+      if (h.nameTag) {
+        if (h.isPlayer) {
+          h.nameTag.visible = true;
+        } else if (this.fidoQuestOwnerId && h.id === this.fidoQuestOwnerId) {
+          h.nameTag.visible = (this.fidoQuestState === "active" || this.fidoQuestState === "fido_found");
+        } else {
+          h.nameTag.visible = false;
+        }
+      }
+    });
+
+    this.animals.forEach((a) => {
+      if (a.nameTag) {
+        if (a.type === "dog" && a.isFido) {
+          a.nameTag.visible = (this.fidoQuestState === "active" || this.fidoQuestState === "fido_found");
+        } else {
+          a.nameTag.visible = false;
+        }
+      }
+    });
+
+    // 4.8. Fido Quest Completion Zone (Glowing Circle around Owner)
+    if (this.fidoQuestState === "fido_found" && this.fidoQuestOwnerId) {
+      const owner = this.humans.find(h => h.id === this.fidoQuestOwnerId);
+      if (owner) {
+        if (!this.fidoQuestZone) {
+          this.fidoQuestZone = new THREE.Group();
+          
+          // Semi-transparent blue cylinder
+          const cylGeom = new THREE.CylinderGeometry(1.6, 1.6, 0.4, 32, 1, true);
+          const cylMat = new THREE.MeshBasicMaterial({
+            color: 0x0ea5e9,
+            transparent: true,
+            opacity: 0.2,
+            side: THREE.DoubleSide,
+            depthWrite: false
+          });
+          const cylMesh = new THREE.Mesh(cylGeom, cylMat);
+          cylMesh.position.y = 0.2;
+          this.fidoQuestZone.add(cylMesh);
+          
+          // Outer blue ring outline on ground
+          const ringGeom = new THREE.RingGeometry(1.55, 1.6, 32);
+          const ringMat = new THREE.MeshBasicMaterial({
+            color: 0x38bdf8,
+            side: THREE.DoubleSide,
+            depthWrite: false
+          });
+          const ringMesh = new THREE.Mesh(ringGeom, ringMat);
+          ringMesh.rotation.x = Math.PI / 2;
+          ringMesh.position.y = 0.01;
+          this.fidoQuestZone.add(ringMesh);
+          
+          this.scene.add(this.fidoQuestZone);
+        }
+        
+        // Position it at the owner NPC's position
+        this.fidoQuestZone.position.set(owner.mesh.position.x, 0, owner.mesh.position.z);
+        
+        // Pulse animation effect
+        const scale = 1.0 + Math.sin(this.timer.getElapsed() * 4.0) * 0.08;
+        this.fidoQuestZone.scale.set(scale, 1.0, scale);
+        
+        // Proximity check to auto-complete quest
+        if (this.player) {
+          const dx = this.player.mesh.position.x - owner.mesh.position.x;
+          const dz = this.player.mesh.position.z - owner.mesh.position.z;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist < 1.8) {
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(new CustomEvent("shunya-fido-returned"));
+            }
+          }
+        }
+      }
+    } else {
+      if (this.fidoQuestZone) {
+        this.scene.remove(this.fidoQuestZone);
+        this.fidoQuestZone = null;
       }
     }
 
@@ -1736,7 +2008,7 @@ export class ThreeCity {
     }
   }
 
-  public updateCameraControls() {
+   public updateCameraControls() {
     if (!this.controls) return;
     this.controls.enableRotate = true;
     const canBuild = this.isAdmin || (this.buildMode && this.buildMode !== "delete" && this.unlockedPermits.includes(this.buildMode));
@@ -1745,6 +2017,81 @@ export class ThreeCity {
     } else {
       (this.controls.mouseButtons as any).LEFT = THREE.MOUSE.ROTATE;
     }
+  }
+
+  public updateStoreBoard(x: number, z: number) {
+    const cell = this.grid[x]?.[z];
+    if (!cell || !cell.mesh) return;
+
+    const isStore = ["restaurant", "clothshop", "barbershop", "policestation"].includes(cell.type);
+    if (!isStore) return;
+
+    if (cell.boardSprite) {
+      cell.mesh.remove(cell.boardSprite);
+      cell.boardSprite = null;
+    }
+
+    let storeName = "";
+    if (cell.type === "restaurant") storeName = "MCd";
+    else if (cell.type === "clothshop") storeName = "Cloth Shop";
+    else if (cell.type === "barbershop") storeName = "Barbershop";
+    else if (cell.type === "policestation") storeName = "Police Station";
+
+    const ownerDisplayName = cell.isPurchased && cell.ownerName ? cell.ownerName : "For Sale";
+    const text = `${ownerDisplayName} ${storeName}`;
+
+    const sprite = this.createStoreBoardSprite(text, !!cell.isPurchased);
+    cell.boardSprite = sprite;
+    sprite.position.set(0, 3.2, 0);
+    cell.mesh.add(sprite);
+  }
+
+  private createStoreBoardSprite(text: string, isPurchased: boolean): THREE.Sprite {
+    const canvas = document.createElement("canvas");
+    canvas.width = 300;
+    canvas.height = 70;
+    const c = canvas.getContext("2d");
+    if (c) {
+      c.fillStyle = isPurchased ? "rgba(15, 118, 110, 0.9)" : "rgba(217, 119, 6, 0.9)";
+      c.beginPath();
+      const x = 5;
+      const y = 5;
+      const w = 290;
+      const h = 60;
+      const r = 10;
+      c.moveTo(x + r, y);
+      c.lineTo(x + w - r, y);
+      c.quadraticCurveTo(x + w, y, x + w, y + r);
+      c.lineTo(x + w, y + h - r);
+      c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      c.lineTo(x + r, y + h);
+      c.quadraticCurveTo(x, y + h, x, y + h - r);
+      c.lineTo(x, y + r);
+      c.quadraticCurveTo(x, y, x + r, y);
+      c.closePath();
+      c.fill();
+
+      c.strokeStyle = isPurchased ? "#2dd4bf" : "#f59e0b";
+      c.lineWidth = 4;
+      c.stroke();
+
+      c.font = "bold 20px 'Outfit', sans-serif";
+      c.fillStyle = "#ffffff";
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillText(text, 150, 35);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: true
+    });
+
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(3.6, 0.84, 1);
+    return sprite;
   }
 
   public destroy() {

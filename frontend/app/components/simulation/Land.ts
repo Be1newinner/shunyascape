@@ -23,6 +23,7 @@ export function createLand(ctx: SimContext): {
   // Grid Floor Helper (Buildable area)
   gridHelperMesh = new THREE.GridHelper(ctx.gridSize * ctx.cellSize, ctx.gridSize, '#5a7a50', '#4a6840');
   gridHelperMesh.position.y = 0.01;
+  gridHelperMesh.visible = true; // Make grid lines visible
   ctx.scene.add(gridHelperMesh);
 
   // Water Bay on the left edge (decorative, separate from river)
@@ -65,5 +66,6 @@ export function resizeGridHelper(scene: THREE.Scene, newGridSize: number, cellSi
   }
   gridHelperMesh = new THREE.GridHelper(newGridSize * cellSize, newGridSize, '#5a7a50', '#4a6840');
   gridHelperMesh.position.y = 0.01;
+  gridHelperMesh.visible = true; // Make grid lines visible
   scene.add(gridHelperMesh);
 }

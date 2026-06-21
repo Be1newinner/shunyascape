@@ -142,7 +142,7 @@ export function createConstructionSiteMesh(ctx: SimContext, x: number, z: number
   group.position.set(worldX, 0, worldZ);
 
   // Site base dirt/sand
-  const dirtGeom = ctx.getGeometry('dirt_base', () => new THREE.BoxGeometry(ctx.cellSize - 0.1, 0.05, ctx.cellSize - 0.1));
+  const dirtGeom = ctx.getGeometry('dirt_base', () => new THREE.BoxGeometry(3.0 - 0.1, 0.05, 3.0 - 0.1));
   const dirtMat = ctx.getMaterial('dirt', { color: '#a07855', roughness: 0.95 });
   const dirt = new THREE.Mesh(dirtGeom, dirtMat);
   dirt.position.y = 0.025;

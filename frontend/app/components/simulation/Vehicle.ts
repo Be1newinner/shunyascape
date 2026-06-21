@@ -58,6 +58,7 @@ export function spawnVehicleOnRoad(
   const carColor = [0xd32f2f, 0x1976d2, 0x388e3c, 0xfbc02d, 0x7b1fa2, 0x00796b][Math.floor(Math.random() * 6)];
   const carGroup = createVehicleMesh(ctx, carColor);
   carGroup.position.set(worldX, 0.08, worldZ);
+  carGroup.scale.set(ctx.cellSize / 3.0, ctx.cellSize / 3.0, ctx.cellSize / 3.0);
   ctx.scene.add(carGroup);
 
   const vehicle: VehicleAgent = {
@@ -135,7 +136,7 @@ function unboardPassenger(ctx: SimContext, v: VehicleAgent) {
   v.mesh.remove(p.mesh);
   p.mesh.position.set(v.x, 0, v.z);
   p.mesh.rotation.set(0, 0, 0);
-  p.mesh.scale.set(1.0, 1.0, 1.0); // restore original scale
+  p.mesh.scale.set(ctx.cellSize / 3.0, ctx.cellSize / 3.0, ctx.cellSize / 3.0);
   
   p.x = v.x;
   p.z = v.z;

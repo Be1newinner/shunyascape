@@ -25,6 +25,26 @@ const GridCellSchema = new Schema({
   height: { 
     type: Number, 
     default: 0 
+  },
+  scale: {
+    type: Number,
+    default: 1.0
+  },
+  ownerName: {
+    type: String,
+    default: null
+  },
+  ownerEmail: {
+    type: String,
+    default: null
+  },
+  price: {
+    type: Number,
+    default: 0
+  },
+  isPurchased: {
+    type: Boolean,
+    default: false
   }
 });
 

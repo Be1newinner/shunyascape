@@ -1,41 +1,45 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState } from 'react';
-import { 
-  Users, 
-  ShieldAlert, 
-  MapPin, 
-  Trash2, 
-  ArrowLeft, 
-  Shield, 
-  Locate, 
+import React, { useEffect, useState } from "react";
+import {
+  Users,
+  ShieldAlert,
+  MapPin,
+  Trash2,
+  ArrowLeft,
+  Shield,
+  Locate,
   Search,
   Lock,
   Mail,
   Key,
-  Database
-} from 'lucide-react';
+  Database,
+  RefreshCw,
+} from "lucide-react";
 
 interface UserItem {
   _id: string;
   name: string;
   email: string;
-  role: 'user' | 'admin';
+  role: "user" | "admin";
   x: number;
   z: number;
   lastX: number;
   lastZ: number;
   clothingColor: number;
+  shunyaCoins?: number;
   createdAt: string;
 }
 
 export default function AdminPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [users, setUsers] = useState<UserItem[]>([]);
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
-  const [successMsg, setSuccessMsg] = useState<string>('');
+  const [error, setError] = useState<string>("");
+  const [successMsg, setSuccessMsg] = useState<string>("");
+  const [gridCells, setGridCells] = useState<any[]>([]);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
 
   // Global simulation states
   const [timeOfDay, setTimeOfDay] = useState<number>(8.0);
@@ -47,64 +51,55 @@ export default function AdminPage() {
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
   // Login form for admin page if accessed directly without session
-  const [loginEmail, setLoginEmail] = useState<string>('');
-  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [loginEmail, setLoginEmail] = useState<string>("");
+  const [loginPassword, setLoginPassword] = useState<string>("");
   const [loginLoading, setLoginLoading] = useState<boolean>(false);
-  const [loginError, setLoginError] = useState<string>('');
+  const [loginError, setLoginError] = useState<string>("");
 
   // Teleport dialog state
   const [teleportingUser, setTeleportingUser] = useState<UserItem | null>(null);
-  const [teleportX, setTeleportX] = useState<string>('0');
-  const [teleportZ, setTeleportZ] = useState<string>('0');
+  const [teleportX, setTeleportX] = useState<string>("0");
+  const [teleportZ, setTeleportZ] = useState<string>("0");
 
   // Load user session on mount and poll database
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    let pollInterval: NodeJS.Timeout;
-    
+    if (typeof window === "undefined") return;
+
     const checkSession = async () => {
       setLoading(true);
       try {
-        const res = await fetch('/api/auth/me');
+        const res = await fetch("/api/auth/me");
         if (res.ok) {
           const data = await res.json();
-          if (data.user && data.user.role === 'admin') {
-            localStorage.setItem('shunyascape_user', JSON.stringify(data.user));
+          if (data.user && data.user.role === "admin") {
+            localStorage.setItem("shunyascape_user", JSON.stringify(data.user));
             setCurrentUser(data.user);
             fetchUsers(data.user.email);
-            
-            // Polling loop
-            pollInterval = setInterval(() => {
-              fetchUsers(data.user.email);
-            }, 4000);
             return;
           }
         }
       } catch (e) {
         console.error(e);
       }
-      localStorage.removeItem('shunyascape_user');
+      localStorage.removeItem("shunyascape_user");
       setCurrentUser(null);
       setLoading(false);
     };
     checkSession();
-
-    return () => {
-      if (pollInterval) clearInterval(pollInterval);
-    };
   }, []);
 
   const fetchUsers = async (adminEmail: string) => {
     if (users.length === 0) {
       setLoading(true);
+    } else {
+      setRefreshing(true);
     }
     try {
-      const res = await fetch('/api/users');
+      const res = await fetch("/api/users");
       if (res.status === 401) {
-        localStorage.removeItem('shunyascape_user');
+        localStorage.removeItem("shunyascape_user");
         setCurrentUser(null);
-        setError('Session expired or logged out from another system.');
+        setError("Session expired or logged out from another system.");
         return;
       }
       const data = await res.json();
@@ -120,20 +115,32 @@ export default function AdminPage() {
           setIsPlaying(data.settings.isPlaying);
         }
       } else {
-        setError(data.error || 'Failed to fetch registered avatars');
+        setError(data.error || "Failed to fetch registered avatars");
+      }
+
+      // Fetch Grid Cells as well
+      const gridRes = await fetch("/api/grid");
+      if (gridRes.ok) {
+        const gridData = await gridRes.json();
+        setGridCells(gridData.cells || []);
       }
     } catch (err) {
       console.error(err);
-      setError('Failed to reach server database');
+      setError("Failed to reach server database");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const updateGlobalSettings = async (updates: { timeOfDay?: number; timeSpeed?: number; isPlaying?: boolean }) => {
+  const updateGlobalSettings = async (updates: {
+    timeOfDay?: number;
+    timeSpeed?: number;
+    isPlaying?: boolean;
+  }) => {
     if (!currentUser) return;
     setSettingsLoading(true);
-    
+
     // Optimistic local state update
     if (updates.timeOfDay !== undefined) {
       setTimeOfDay(updates.timeOfDay);
@@ -144,30 +151,30 @@ export default function AdminPage() {
       setLocalTimeSpeed(updates.timeSpeed);
     }
     if (updates.isPlaying !== undefined) setIsPlaying(updates.isPlaying);
- 
+
     try {
-      const res = await fetch('/api/admin/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
       });
       if (res.status === 401) {
-        localStorage.removeItem('shunyascape_user');
+        localStorage.removeItem("shunyascape_user");
         setCurrentUser(null);
-        setError('Session expired or logged out from another system.');
+        setError("Session expired or logged out from another system.");
         return;
       }
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || 'Failed to update global simulation settings');
+        setError(data.error || "Failed to update global simulation settings");
         fetchUsers(currentUser.email);
       } else {
-        setSuccessMsg(data.message || 'Simulation settings synced globally!');
-        setTimeout(() => setSuccessMsg(''), 3000);
+        setSuccessMsg(data.message || "Simulation settings synced globally!");
+        setTimeout(() => setSuccessMsg(""), 3000);
       }
     } catch (err) {
       console.error(err);
-      setError('Communication with settings API failed');
+      setError("Communication with settings API failed");
     } finally {
       setSettingsLoading(false);
     }
@@ -191,117 +198,125 @@ export default function AdminPage() {
   const formatTime = (time: number) => {
     const hours24 = Math.floor(time);
     const minutes = Math.floor((time - hours24) * 60);
-    const ampm = hours24 >= 12 ? 'PM' : 'AM';
+    const ampm = hours24 >= 12 ? "PM" : "AM";
     const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
-    const padMin = minutes.toString().padStart(2, '0');
-    const padHr = hours12.toString().padStart(2, '0');
+    const padMin = minutes.toString().padStart(2, "0");
+    const padHr = hours12.toString().padStart(2, "0");
     return `${padHr}:${padMin} ${ampm}`;
   };
 
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoginError('');
+    setLoginError("");
     setLoginLoading(true);
 
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword })
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
       });
       const data = await res.json();
 
       if (!res.ok) {
-        setLoginError(data.error || 'Login failed');
+        setLoginError(data.error || "Login failed");
         setLoginLoading(false);
         return;
       }
 
       const user = data.user;
-      if (user.role !== 'admin') {
-        setLoginError('Forbidden: Only administrators can access this panel.');
+      if (user.role !== "admin") {
+        setLoginError("Forbidden: Only administrators can access this panel.");
         setLoginLoading(false);
         return;
       }
 
-      localStorage.setItem('dreamcity_user', JSON.stringify(user));
+      localStorage.setItem("dreamcity_user", JSON.stringify(user));
       setCurrentUser(user);
       setLoginLoading(false);
       fetchUsers(user.email);
     } catch (err) {
       console.error(err);
-      setLoginError('Server connection failed');
+      setLoginError("Server connection failed");
       setLoginLoading(false);
     }
   };
 
   // Perform admin actions (teleport, changeRole, delete)
-  const runAdminAction = async (action: 'teleport' | 'changeRole' | 'delete', targetUserId: string, payload: any = {}) => {
+  const runAdminAction = async (
+    action: "teleport" | "changeRole" | "delete" | "modifyCoins",
+    targetUserId: string,
+    payload: any = {},
+  ) => {
     if (!currentUser) return;
-    setError('');
-    setSuccessMsg('');
- 
+    setError("");
+    setSuccessMsg("");
+
     try {
-      const res = await fetch('/api/admin/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
           targetUserId,
-          ...payload
-        })
+          ...payload,
+        }),
       });
       if (res.status === 401) {
-        localStorage.removeItem('shunyascape_user');
+        localStorage.removeItem("shunyascape_user");
         setCurrentUser(null);
-        setError('Session expired or logged out from another system.');
+        setError("Session expired or logged out from another system.");
         return;
       }
       const data = await res.json();
- 
+
       if (!res.ok) {
         setError(data.error || `Failed to perform ${action}`);
         return;
       }
- 
-      setSuccessMsg(data.message || 'Action executed successfully!');
-      
+
+      setSuccessMsg(data.message || "Action executed successfully!");
+
       // Update local state lists
-      if (action === 'delete') {
-        setUsers(users.filter(u => u._id !== targetUserId));
+      if (action === "delete") {
+        setUsers(users.filter((u) => u._id !== targetUserId));
       } else {
-        setUsers(users.map(u => u._id === targetUserId ? { ...u, ...data.user } : u));
+        setUsers(
+          users.map((u) =>
+            u._id === targetUserId ? { ...u, ...data.user } : u,
+          ),
+        );
       }
-      
+
       // Clear popup dialog
       setTeleportingUser(null);
     } catch (err) {
       console.error(err);
-      setError('Communication with server failed');
+      setError("Communication with server failed");
     }
   };
 
   const handleTeleportSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!teleportingUser) return;
-    runAdminAction('teleport', teleportingUser._id, {
+    runAdminAction("teleport", teleportingUser._id, {
       x: Number(teleportX),
-      z: Number(teleportZ)
+      z: Number(teleportZ),
     });
   };
 
-  const filteredUsers = users.filter(u => 
-    u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    u.email.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredUsers = users.filter(
+    (u) =>
+      u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.email.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   // If not logged in as Admin, show the login panel
   if (!currentUser) {
     return (
-      <div className="min-h-screen w-screen flex items-center justify-center bg-slate-950 text-slate-100 font-sans p-4 relative overflow-hidden">
+      <div className="h-screen w-full flex items-center justify-center bg-slate-950 text-slate-100 font-sans p-4 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-tr from-cyan-950/20 via-slate-950 to-indigo-950/20 z-0" />
         <div className="w-full max-w-sm bg-slate-900/80 backdrop-blur-2xl border border-slate-800/80 shadow-2xl rounded-3xl p-6 md:p-8 flex flex-col gap-6 text-center z-10 relative">
-          
           <div className="flex flex-col items-center gap-2">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-500 via-orange-500 to-amber-600 flex items-center justify-center shadow-lg shadow-orange-500/20">
               <Lock className="w-6 h-6 text-white animate-pulse" />
@@ -310,7 +325,8 @@ export default function AdminPage() {
               ShunyaScape Admin Portal
             </h2>
             <p className="text-[11px] text-slate-450 max-w-xs leading-normal">
-              Authentication required. Only registered admin users can access these controls.
+              Authentication required. Only registered admin users can access
+              these controls.
             </p>
           </div>
 
@@ -320,7 +336,10 @@ export default function AdminPage() {
             </div>
           )}
 
-          <form onSubmit={handleAdminLogin} className="flex flex-col gap-4 text-left">
+          <form
+            onSubmit={handleAdminLogin}
+            className="flex flex-col gap-4 text-left"
+          >
             <div className="flex flex-col gap-1">
               <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">
                 Admin Email
@@ -360,11 +379,11 @@ export default function AdminPage() {
               disabled={loginLoading}
               className="w-full mt-2 py-2.5 bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-400 hover:to-orange-500 text-white font-bold rounded-lg text-xs shadow-lg shadow-orange-500/10 hover:shadow-orange-500/20 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
             >
-              {loginLoading ? 'Authenticating...' : 'Enter Admin Panel'}
+              {loginLoading ? "Authenticating..." : "Enter Admin Panel"}
             </button>
           </form>
 
-          <a 
+          <a
             href="/"
             className="flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-450 hover:text-slate-200 transition-all mt-1"
           >
@@ -377,13 +396,12 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen w-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-8 relative overflow-y-auto">
+    <div className="h-screen w-full bg-slate-950 text-slate-100 font-sans p-4 md:p-8 relative overflow-y-auto">
       {/* Background glow */}
       <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-sky-500/5 rounded-full blur-[120px] pointer-events-none z-0" />
       <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-indigo-500/5 rounded-full blur-[120px] pointer-events-none z-0" />
 
       <div className="max-w-6xl mx-auto flex flex-col gap-6 relative z-10">
-        
         {/* Top Header Row */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -398,18 +416,38 @@ export default function AdminPage() {
               <h1 className="text-xl md:text-2xl font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
                 ShunyaScape Dashboard
               </h1>
-              <p className="text-xs text-slate-450">Administrative Control Panel & User Coordination</p>
+              <p className="text-xs text-slate-450">
+                Administrative Control Panel & User Coordination
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="text-right hidden md:block">
-              <div className="text-xs font-bold text-slate-200">{currentUser.name}</div>
-              <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Super Administrator</div>
+              <div className="text-xs font-bold text-slate-200">
+                {currentUser.name}
+              </div>
+              <div className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 justify-end">
+                <span>💰</span>
+                <span>{currentUser.shunyaCoins || 0} SC</span>
+              </div>
+              <div className="text-[9px] text-slate-500 font-semibold uppercase tracking-wider">
+                Super Administrator
+              </div>
             </div>
             <button
+              onClick={() => fetchUsers(currentUser.email)}
+              disabled={refreshing || loading}
+              className="px-3 py-1.5 bg-slate-900/80 border border-slate-800 hover:border-cyan-500/30 hover:text-cyan-400 text-xs font-semibold rounded-lg shadow transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              title="Refresh simulator data manually"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
+            </button>
+
+            <button
               onClick={() => {
-                localStorage.removeItem('shunyascape_user');
+                localStorage.removeItem("shunyascape_user");
                 setCurrentUser(null);
                 setUsers([]);
               }}
@@ -439,8 +477,12 @@ export default function AdminPage() {
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Total Avatars</div>
-              <div className="text-2xl font-black text-slate-100">{users.length}</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                Total Avatars
+              </div>
+              <div className="text-2xl font-black text-slate-100">
+                {users.length}
+              </div>
             </div>
           </div>
 
@@ -449,8 +491,12 @@ export default function AdminPage() {
               <Shield className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Administrators</div>
-              <div className="text-2xl font-black text-slate-100">{users.filter(u => u.role === 'admin').length}</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                Administrators
+              </div>
+              <div className="text-2xl font-black text-slate-100">
+                {users.filter((u) => u.role === "admin").length}
+              </div>
             </div>
           </div>
 
@@ -459,8 +505,12 @@ export default function AdminPage() {
               <Database className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Database State</div>
-              <div className="text-xs font-semibold mt-1 text-emerald-400">Connected</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                Database State
+              </div>
+              <div className="text-xs font-semibold mt-1 text-emerald-400">
+                Connected
+              </div>
             </div>
           </div>
         </div>
@@ -473,17 +523,20 @@ export default function AdminPage() {
                 <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 animate-pulse" />
                 Global Simulation Environment Controls
               </h3>
-              <p className="text-[11px] text-slate-500">Modify time, day cycle progression, and simulation play/pause state for all connected players.</p>
+              <p className="text-[11px] text-slate-500">
+                Modify time, day cycle progression, and simulation play/pause
+                state for all connected players.
+              </p>
             </div>
-            
+
             <button
               type="button"
               onClick={() => updateGlobalSettings({ isPlaying: !isPlaying })}
               disabled={settingsLoading}
               className={`px-4 py-2 text-xs font-bold rounded-xl flex items-center gap-2 border transition-all cursor-pointer ${
                 isPlaying
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
-                  : 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20'
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                  : "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20"
               }`}
             >
               {isPlaying ? (
@@ -504,7 +557,9 @@ export default function AdminPage() {
             {/* Time of Day Slider Card */}
             <div className="bg-slate-950/40 border border-slate-850/60 rounded-2xl p-4 flex flex-col gap-3">
               <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-slate-400">Time of Day</span>
+                <span className="text-xs font-bold text-slate-400">
+                  Time of Day
+                </span>
                 <span className="text-sm font-mono font-black text-cyan-400 bg-cyan-950/30 px-2 py-0.5 rounded-lg border border-cyan-800/20">
                   {formatTime(localTimeOfDay)}
                 </span>
@@ -541,9 +596,11 @@ export default function AdminPage() {
             {/* Day Cycle Speed Slider Card */}
             <div className="bg-slate-950/40 border border-slate-850/60 rounded-2xl p-4 flex flex-col gap-3">
               <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-slate-400">Day Cycle Speed</span>
+                <span className="text-xs font-bold text-slate-400">
+                  Day Cycle Speed
+                </span>
                 <span className="text-sm font-mono font-black text-indigo-400 bg-indigo-950/30 px-2 py-0.5 rounded-lg border border-indigo-800/20">
-                  {isPlaying ? `${localTimeSpeed.toFixed(1)}x` : 'Paused'}
+                  {isPlaying ? `${localTimeSpeed.toFixed(1)}x` : "Paused"}
                 </span>
               </div>
               <input
@@ -577,13 +634,226 @@ export default function AdminPage() {
           </div>
         </div>
 
+        {/* Commercial Outlets & Revenue Control Center */}
+        <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-3xl p-6 flex flex-col gap-6">
+          <div>
+            <h3 className="text-sm md:text-base font-bold text-slate-200 flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              City Commercial Outlets & Treasury Revenue
+            </h3>
+            <p className="text-[11px] text-slate-500">
+              Track built commercial stores, inspect their location coordinates,
+              and collect accumulated tax treasury/revenue.
+            </p>
+          </div>
+
+          {/* Grid list of stores */}
+          {gridCells.filter(
+            (c) =>
+              [
+                "restaurant",
+                "clothshop",
+                "barbershop",
+                "policestation",
+              ].includes(c.type) ||
+              (c.type === "construction" &&
+                [
+                  "restaurant",
+                  "clothshop",
+                  "barbershop",
+                  "policestation",
+                ].includes(c.targetType)),
+          ).length === 0 ? (
+            <div className="py-8 text-center text-xs text-slate-500 font-semibold border border-dashed border-slate-800 rounded-2xl">
+              No commercial stores built in the city yet.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {gridCells
+                .filter(
+                  (c) =>
+                    [
+                      "restaurant",
+                      "clothshop",
+                      "barbershop",
+                      "policestation",
+                    ].includes(c.type) ||
+                    (c.type === "construction" &&
+                      [
+                        "restaurant",
+                        "clothshop",
+                        "barbershop",
+                        "policestation",
+                      ].includes(c.targetType)),
+                )
+                .map((cell, idx) => {
+                  const isUnderConstruction = cell.type === "construction";
+                  const activeType = isUnderConstruction
+                    ? cell.targetType
+                    : cell.type;
+
+                  // Get store-specific details
+                  const storeInfo = (() => {
+                    switch (activeType) {
+                      case "restaurant":
+                        return {
+                          name: "🍔 Fast Food Restaurant (McDonald's)",
+                          desc: "McDonald's style fast food joint",
+                          taxRate: "15 SC per meal",
+                        };
+                      case "clothshop":
+                        return {
+                          name: "👕 Clothing Boutique",
+                          desc: "Outfits & custom clothing shop",
+                          taxRate: "50 SC per outfit",
+                        };
+                      case "barbershop":
+                        return {
+                          name: "✂️ Barber Shop",
+                          desc: "Custom hairstyles salon",
+                          taxRate: "30 SC per haircut",
+                        };
+                      case "policestation":
+                        return {
+                          name: "🚔 Central Police Station",
+                          desc: "Safety patrol headquarters",
+                          taxRate: "N/A (Public Facility)",
+                        };
+                      default:
+                        return {
+                          name: "🏪 Commercial Shop",
+                          desc: "Commercial store outlet",
+                          taxRate: "10 SC",
+                        };
+                    }
+                  })();
+
+                  // Calculate world coordinates for teleporting
+                  const halfGrid = (32 * 2.25) / 2; // gridSize = 32, cellSize = 2.25
+                  const worldX = cell.x * 2.25 - halfGrid + 2.25 / 2;
+                  const worldZ = cell.z * 2.25 - halfGrid + 2.25 / 2;
+
+                  // Accrued simulated uncollected taxes/amount
+                  const isPublicFacility = activeType === "policestation";
+                  const baseAccrued = isPublicFacility
+                    ? 0
+                    : 20 + ((cell.x * cell.z) % 40); // deterministic simulated revenue
+                  const accrued = isUnderConstruction ? 0 : baseAccrued;
+
+                  return (
+                    <div
+                      key={`${cell.x}_${cell.z}_${idx}`}
+                      className="p-4 bg-slate-950/40 border border-slate-850 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-slate-800 transition-all"
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-slate-200">
+                            {storeInfo.name}
+                          </span>
+                          {isUnderConstruction ? (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider">
+                              Construction {cell.constructionProgress}%
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
+                              Active
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          {storeInfo.desc}
+                        </p>
+
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-slate-400 font-medium">
+                          <div>
+                            <span className="text-slate-500 font-bold">
+                              Grid:
+                            </span>{" "}
+                            ({cell.x}, {cell.z})
+                          </div>
+                          <div>
+                            <span className="text-slate-500 font-bold">
+                              World:
+                            </span>{" "}
+                            ({worldX.toFixed(2)}, {worldZ.toFixed(2)})
+                          </div>
+                          {!isPublicFacility && (
+                            <div>
+                              <span className="text-slate-500 font-bold">
+                                Tax Rate:
+                              </span>{" "}
+                              {storeInfo.taxRate}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                        {/* Teleport admin to store */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const adminId = currentUser._id || currentUser.id;
+                            runAdminAction("teleport", adminId, {
+                              x: worldX,
+                              z: worldZ,
+                            });
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-900 border border-slate-800 hover:border-sky-500/30 hover:text-sky-400 text-[10px] font-bold rounded-lg shadow-sm transition-all cursor-pointer flex items-center gap-1"
+                          title="Teleport your avatar to this shop location"
+                        >
+                          <Locate className="w-3.5 h-3.5" />
+                          <span>Teleport</span>
+                        </button>
+
+                        {/* Collect Taxes button */}
+                        {!isPublicFacility && (
+                          <button
+                            type="button"
+                            disabled={accrued === 0 || isUnderConstruction}
+                            onClick={async () => {
+                              const adminId = currentUser._id || currentUser.id;
+                              const newCoins =
+                                (currentUser.shunyaCoins || 0) + accrued;
+                              await runAdminAction("modifyCoins", adminId, {
+                                shunyaCoins: newCoins,
+                              });
+                              // Force update local admin user coins state
+                              setCurrentUser((prev: any) => ({
+                                ...prev,
+                                shunyaCoins: newCoins,
+                              }));
+                              // Show success message
+                              setSuccessMsg(
+                                `💰 Successfully collected ${accrued} SC tax from ${storeInfo.name.split("(")[0].trim()}!`,
+                              );
+                              setTimeout(() => setSuccessMsg(""), 4000);
+                            }}
+                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                              accrued > 0 && !isUnderConstruction
+                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                                : "bg-slate-900 border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
+                            }`}
+                          >
+                            <span>Collect {accrued} SC</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+
         {/* User Table Card */}
         <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-3xl overflow-hidden flex flex-col">
-          
           {/* Table Header Filter Row */}
           <div className="p-4 md:p-6 border-b border-slate-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <h3 className="text-sm md:text-base font-bold text-slate-200">Registered City Residents</h3>
-            
+            <h3 className="text-sm md:text-base font-bold text-slate-200">
+              Registered City Residents
+            </h3>
+
             {/* Search */}
             <div className="relative max-w-xs w-full">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
@@ -615,48 +885,86 @@ export default function AdminPage() {
                     <th className="p-4 font-bold">User Role</th>
                     <th className="p-4 font-bold">Current Position (X, Z)</th>
                     <th className="p-4 font-bold">Last Position (X, Z)</th>
-                    <th className="p-4 font-bold text-right">Moderator Controls</th>
+                    <th className="p-4 font-bold text-right">
+                      Moderator Controls
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-850/40">
                   {filteredUsers.map((user) => (
-                    <tr key={user._id} className="hover:bg-slate-850/20 transition-colors">
+                    <tr
+                      key={user._id}
+                      className="hover:bg-slate-850/20 transition-colors"
+                    >
                       <td className="p-4 flex items-center gap-3">
-                        <div 
+                        <div
                           className="w-8 h-8 rounded-full border border-slate-700/60 flex items-center justify-center font-bold text-slate-100 uppercase"
-                          style={{ backgroundColor: user.clothingColor ? `#${user.clothingColor.toString(16).padStart(6, '0')}` : '#4287f5' }}
+                          style={{
+                            backgroundColor: user.clothingColor
+                              ? `#${user.clothingColor.toString(16).padStart(6, "0")}`
+                              : "#4287f5",
+                          }}
                         >
                           {user.name.charAt(0)}
                         </div>
                         <div>
-                          <div className="font-bold text-slate-200">{user.name}</div>
-                          <div className="text-[10px] text-slate-500">{user.email}</div>
+                          <div className="font-bold text-slate-200">
+                            {user.name}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {user.email}
+                          </div>
                         </div>
                       </td>
                       <td className="p-4">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                          user.role === 'admin' 
-                            ? 'bg-red-500/10 text-red-400 border border-red-500/20' 
-                            : 'bg-slate-800 text-slate-450 border border-slate-700/40'
-                        }`}>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                            user.role === "admin"
+                              ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                              : "bg-slate-800 text-slate-450 border border-slate-700/40"
+                          }`}
+                        >
                           {user.role}
                         </span>
                       </td>
                       <td className="p-4 font-mono text-[10px] text-slate-400">
-                        ({user.x.toFixed(2)}, {user.z.toFixed(2)})
+                        (
+                        {user.x !== undefined && user.x !== null
+                          ? user.x.toFixed(2)
+                          : "0.00"}
+                        ,{" "}
+                        {user.z !== undefined && user.z !== null
+                          ? user.z.toFixed(2)
+                          : "0.00"}
+                        )
                       </td>
                       <td className="p-4 font-mono text-[10px] text-slate-500">
-                        ({user.lastX.toFixed(2)}, {user.lastZ.toFixed(2)})
+                        (
+                        {user.lastX !== undefined && user.lastX !== null
+                          ? user.lastX.toFixed(2)
+                          : "0.00"}
+                        ,{" "}
+                        {user.lastZ !== undefined && user.lastZ !== null
+                          ? user.lastZ.toFixed(2)
+                          : "0.00"}
+                        )
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          
                           {/* Teleport Trigger */}
                           <button
                             onClick={() => {
                               setTeleportingUser(user);
-                              setTeleportX(user.x.toFixed(2));
-                              setTeleportZ(user.z.toFixed(2));
+                              setTeleportX(
+                                user.x !== undefined && user.x !== null
+                                  ? user.x.toFixed(2)
+                                  : "0.00",
+                              );
+                              setTeleportZ(
+                                user.z !== undefined && user.z !== null
+                                  ? user.z.toFixed(2)
+                                  : "0.00",
+                              );
                             }}
                             className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-sky-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
                             title="Teleport Avatar"
@@ -667,13 +975,24 @@ export default function AdminPage() {
                           {/* Role Toggle Trigger */}
                           <button
                             onClick={() => {
-                              const nextRole = user.role === 'admin' ? 'user' : 'admin';
-                              if (confirm(`Are you sure you want to change ${user.name}'s role to ${nextRole}?`)) {
-                                runAdminAction('changeRole', user._id, { role: nextRole });
+                              const nextRole =
+                                user.role === "admin" ? "user" : "admin";
+                              if (
+                                confirm(
+                                  `Are you sure you want to change ${user.name}'s role to ${nextRole}?`,
+                                )
+                              ) {
+                                runAdminAction("changeRole", user._id, {
+                                  role: nextRole,
+                                });
                               }
                             }}
                             className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-amber-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
-                            title={user.role === 'admin' ? 'Demote to User' : 'Promote to Admin'}
+                            title={
+                              user.role === "admin"
+                                ? "Demote to User"
+                                : "Promote to Admin"
+                            }
                           >
                             <ShieldAlert className="w-3.5 h-3.5" />
                           </button>
@@ -681,8 +1000,12 @@ export default function AdminPage() {
                           {/* Delete Trigger */}
                           <button
                             onClick={() => {
-                              if (confirm(`CRITICAL: Are you sure you want to delete ${user.name} and banish them from the simulation?`)) {
-                                runAdminAction('delete', user._id);
+                              if (
+                                confirm(
+                                  `CRITICAL: Are you sure you want to delete ${user.name} and banish them from the simulation?`,
+                                )
+                              ) {
+                                runAdminAction("delete", user._id);
                               }
                             }}
                             className="p-1.5 bg-slate-800 hover:bg-red-950/40 text-slate-350 hover:text-red-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
@@ -690,7 +1013,6 @@ export default function AdminPage() {
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
-
                         </div>
                       </td>
                     </tr>
@@ -705,7 +1027,7 @@ export default function AdminPage() {
       {/* Teleport Coordinate Picker Modal */}
       {teleportingUser && (
         <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <form 
+          <form
             onSubmit={handleTeleportSubmit}
             className="w-full max-w-sm bg-slate-900 border border-slate-800 shadow-2xl rounded-3xl p-6 flex flex-col gap-5 text-center relative pointer-events-auto"
           >
@@ -713,9 +1035,15 @@ export default function AdminPage() {
               <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center">
                 <MapPin className="w-5 h-5" />
               </div>
-              <h3 className="text-base font-bold text-slate-200">Teleport Resident</h3>
+              <h3 className="text-base font-bold text-slate-200">
+                Teleport Resident
+              </h3>
               <p className="text-xs text-slate-500">
-                Instantly relocate <span className="text-slate-350 font-bold">{teleportingUser.name}</span> in the 3D simulation.
+                Instantly relocate{" "}
+                <span className="text-slate-350 font-bold">
+                  {teleportingUser.name}
+                </span>{" "}
+                in the 3D simulation.
               </p>
             </div>
 
@@ -727,21 +1055,30 @@ export default function AdminPage() {
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => { setTeleportX('0'); setTeleportZ('0'); }}
+                  onClick={() => {
+                    setTeleportX("0");
+                    setTeleportZ("0");
+                  }}
                   className="py-1 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-[10px] font-semibold text-slate-300"
                 >
                   Map Center (0,0)
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setTeleportX('1.5'); setTeleportZ('1.5'); }}
+                  onClick={() => {
+                    setTeleportX("1.5");
+                    setTeleportZ("1.5");
+                  }}
                   className="py-1 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-[10px] font-semibold text-slate-300"
                 >
                   Junction (1.5,1.5)
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setTeleportX('-25.0'); setTeleportZ('2.0'); }}
+                  onClick={() => {
+                    setTeleportX("-25.0");
+                    setTeleportZ("2.0");
+                  }}
                   className="py-1 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-[10px] font-semibold text-slate-300"
                 >
                   Water Bay (-25,2)
@@ -798,7 +1135,6 @@ export default function AdminPage() {
                 Teleport Resident
               </button>
             </div>
-
           </form>
         </div>
       )}

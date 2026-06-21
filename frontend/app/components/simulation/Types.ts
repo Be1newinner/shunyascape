@@ -39,6 +39,12 @@ export interface GridCell {
   targetType: 'road' | 'tree' | 'house' | 'skyscraper' | 'empty' | 'park' | 'restaurant' | 'clothshop' | 'barbershop' | 'policestation';
   height: number;
   id: string;
+  scale?: number;
+  ownerName?: string | null;
+  ownerEmail?: string | null;
+  price?: number;
+  isPurchased?: boolean;
+  boardSprite?: THREE.Sprite | null;
 }
 
 export interface HumanAgent {
@@ -72,6 +78,7 @@ export interface HumanAgent {
   actionTimer?: number;
   jumpVelocity?: number;
   seatedInVehicleId?: string; // tracks if seated in a car
+  nameTag?: THREE.Sprite;
 }
 
 export interface VehicleAgent {
@@ -106,6 +113,9 @@ export interface AnimalAgent {
   tailPivot?: THREE.Group;
   leftWingPivot?: THREE.Group;
   rightWingPivot?: THREE.Group;
+  isFollowingPlayer?: boolean;
+  isFido?: boolean;
+  nameTag?: THREE.Sprite;
 }
 
 export interface Particle {

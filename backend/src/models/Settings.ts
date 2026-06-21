@@ -13,7 +13,7 @@ const SettingsSchema = new Schema({
   },
   timeSpeed: { 
     type: Number, 
-    default: 0.5 
+    default: 0.00833 // 1 in-game day = 8 real hours: 24 / (8*3600*0.1)
   },
   isPlaying: { 
     type: Boolean, 

@@ -20,7 +20,7 @@ export function createRestaurantMesh(ctx: SimContext, x: number, z: number): THR
   const [wx, wz] = cellWorld(ctx, x, z);
   group.position.set(wx, 0, wz);
 
-  const cs = ctx.cellSize;
+  const cs = 3.0;
   const redMat   = new THREE.MeshStandardMaterial({ color: '#cc1a1a', roughness: 0.7 });
   const yellowMat = new THREE.MeshStandardMaterial({ color: '#ffcc00', roughness: 0.6 });
   const whiteMat = new THREE.MeshStandardMaterial({ color: '#f5f5f5', roughness: 0.8 });
@@ -107,7 +107,7 @@ export function createClothShopMesh(ctx: SimContext, x: number, z: number): THRE
   const [wx, wz] = cellWorld(ctx, x, z);
   group.position.set(wx, 0, wz);
 
-  const cs = ctx.cellSize;
+  const cs = 3.0;
   const blueMat   = new THREE.MeshStandardMaterial({ color: '#1565c0', roughness: 0.8 });
   const whiteMat  = new THREE.MeshStandardMaterial({ color: '#f0f0f0', roughness: 0.85 });
   const stripeMat = new THREE.MeshStandardMaterial({ color: '#2196f3', roughness: 0.8 });
@@ -179,7 +179,7 @@ export function createBarbershopMesh(ctx: SimContext, x: number, z: number): THR
   const [wx, wz] = cellWorld(ctx, x, z);
   group.position.set(wx, 0, wz);
 
-  const cs = ctx.cellSize;
+  const cs = 3.0;
   const whiteMat = new THREE.MeshStandardMaterial({ color: '#f8f8f8', roughness: 0.85 });
   const redMat   = new THREE.MeshStandardMaterial({ color: '#d32f2f', roughness: 0.7 });
   const blueMat  = new THREE.MeshStandardMaterial({ color: '#1565c0', roughness: 0.7 });
@@ -275,7 +275,7 @@ export function createPoliceStationMesh(ctx: SimContext, x: number, z: number): 
   const [wx, wz] = cellWorld(ctx, x, z);
   group.position.set(wx, 0, wz);
 
-  const cs = ctx.cellSize;
+  const cs = 3.0;
   const navyMat  = new THREE.MeshStandardMaterial({ color: '#1a237e', roughness: 0.75 });
   const midMat   = new THREE.MeshStandardMaterial({ color: '#283593', roughness: 0.8 });
   const whiteMat = new THREE.MeshStandardMaterial({ color: '#eceff1', roughness: 0.85 });

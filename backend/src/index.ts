@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from "ws";
 
 import { connectDB } from "./config/db";
 import User from "./models/User";
+import Group from "./models/Group";
 import GridCell from "./models/GridCell";
 import Npc from "./models/Npc";
 import Settings from "./models/Settings";
@@ -68,6 +69,7 @@ interface CachedUser {
   wood: number;
   unlockedPermits: string[];
   completedAchievements: string[];
+  groupId: string | null;
 }
 
 const userCache = new Map<string, CachedUser>();
@@ -117,6 +119,7 @@ async function initCache() {
         wood: u.wood !== undefined ? u.wood : 0,
         unlockedPermits: u.unlockedPermits || [],
         completedAchievements: u.completedAchievements || [],
+        groupId: u.groupId ? u.groupId.toString() : null,
         dirty: false,
       });
     });
@@ -217,6 +220,11 @@ setInterval(async () => {
             timeOfDay: settingsCache.timeOfDay,
             timeSpeed: settingsCache.timeSpeed,
             isPlaying: settingsCache.isPlaying,
+            hungerDecayRate: settingsCache.hungerDecayRate,
+            housingRentRate: settingsCache.housingRentRate,
+            utilityBillRate: settingsCache.utilityBillRate,
+            energyDrainRate: settingsCache.energyDrainRate,
+            transactionTaxRate: settingsCache.transactionTaxRate,
             lastUpdated: settingsCache.lastUpdated,
           },
         },
@@ -355,6 +363,7 @@ app.post(
         wood: user.wood !== undefined ? user.wood : 0,
         unlockedPermits: user.unlockedPermits || [],
         completedAchievements: user.completedAchievements || [],
+        groupId: user.groupId ? user.groupId.toString() : null,
         dirty: false,
       });
 
@@ -476,6 +485,7 @@ app.post(
         wood: 0,
         unlockedPermits: [],
         completedAchievements: [],
+        groupId: null,
         dirty: false,
       });
 
@@ -995,15 +1005,20 @@ app.post(
   requireAdmin as express.RequestHandler,
   async (req: AuthenticatedRequest, res: express.Response) => {
     try {
-      const { timeOfDay, timeSpeed, isPlaying } = req.body;
+      const { timeOfDay, timeSpeed, isPlaying, hungerDecayRate, housingRentRate, utilityBillRate, energyDrainRate, transactionTaxRate } = req.body;
 
       if (!settingsCache) {
-        settingsCache = { key: "global", timeOfDay: 8.0, timeSpeed: 0.00833, isPlaying: true };
+        settingsCache = { key: "global", timeOfDay: 8.0, timeSpeed: 0.00833, isPlaying: true, hungerDecayRate: 1.0, housingRentRate: 10, utilityBillRate: 5, energyDrainRate: 1.5, transactionTaxRate: 10 };
       }
 
       if (timeOfDay !== undefined) settingsCache.timeOfDay = Number(timeOfDay);
       if (timeSpeed !== undefined) settingsCache.timeSpeed = Number(timeSpeed);
       if (isPlaying !== undefined) settingsCache.isPlaying = Boolean(isPlaying);
+      if (hungerDecayRate !== undefined) settingsCache.hungerDecayRate = Number(hungerDecayRate);
+      if (housingRentRate !== undefined) settingsCache.housingRentRate = Number(housingRentRate);
+      if (utilityBillRate !== undefined) settingsCache.utilityBillRate = Number(utilityBillRate);
+      if (energyDrainRate !== undefined) settingsCache.energyDrainRate = Number(energyDrainRate);
+      if (transactionTaxRate !== undefined) settingsCache.transactionTaxRate = Number(transactionTaxRate);
 
       settingsCache.lastUpdated = new Date();
       settingsCacheDirty = true;
@@ -1302,6 +1317,7 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
           wood: dbUser.wood !== undefined ? dbUser.wood : 0,
           unlockedPermits: dbUser.unlockedPermits || [],
           completedAchievements: dbUser.completedAchievements || [],
+          groupId: dbUser.groupId ? dbUser.groupId.toString() : null,
           dirty: false,
         });
       }
@@ -1323,6 +1339,7 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
           wood: cached ? cached.wood : (dbUser.wood !== undefined ? dbUser.wood : 0),
           unlockedPermits: cached ? cached.unlockedPermits : (dbUser.unlockedPermits || []),
           completedAchievements: cached ? cached.completedAchievements : (dbUser.completedAchievements || []),
+          groupId: cached ? cached.groupId : (dbUser.groupId ? dbUser.groupId.toString() : null),
         }
       });
     } else {
@@ -1352,6 +1369,7 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
             wood: u.wood,
             unlockedPermits: u.unlockedPermits,
             completedAchievements: u.completedAchievements,
+            groupId: u.groupId,
           }))
       })
     );
@@ -1431,14 +1449,19 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
             if (userId) {
               const cached = userCache.get(userId);
               if (cached && cached.role === "admin") {
-                const { timeOfDay, timeSpeed, isPlaying } = msg;
+                const { timeOfDay, timeSpeed, isPlaying, hungerDecayRate, housingRentRate, utilityBillRate, energyDrainRate, transactionTaxRate } = msg;
                 if (!settingsCache) {
-                  settingsCache = { key: "global", timeOfDay: 8.0, timeSpeed: 0.00833, isPlaying: true };
+                  settingsCache = { key: "global", timeOfDay: 8.0, timeSpeed: 0.00833, isPlaying: true, hungerDecayRate: 1.0, housingRentRate: 10, utilityBillRate: 5, energyDrainRate: 1.5, transactionTaxRate: 10 };
                 }
 
                 if (timeOfDay !== undefined) settingsCache.timeOfDay = Number(timeOfDay);
                 if (timeSpeed !== undefined) settingsCache.timeSpeed = Number(timeSpeed);
                 if (isPlaying !== undefined) settingsCache.isPlaying = Boolean(isPlaying);
+                if (hungerDecayRate !== undefined) settingsCache.hungerDecayRate = Number(hungerDecayRate);
+                if (housingRentRate !== undefined) settingsCache.housingRentRate = Number(housingRentRate);
+                if (utilityBillRate !== undefined) settingsCache.utilityBillRate = Number(utilityBillRate);
+                if (energyDrainRate !== undefined) settingsCache.energyDrainRate = Number(energyDrainRate);
+                if (transactionTaxRate !== undefined) settingsCache.transactionTaxRate = Number(transactionTaxRate);
 
                 settingsCache.lastUpdated = new Date();
                 settingsCacheDirty = true;
@@ -1519,7 +1542,140 @@ wss.on("connection", async (ws: WebSocket, request: http.IncomingMessage) => {
             }
             break;
 
-          default:
+          case "party-create":
+            if (userId) {
+              await connectDB();
+              const newGroup = new Group({ name: msg.name || "New Party", leaderId: userId, members: [userId] });
+              await newGroup.save();
+              const cached = userCache.get(userId);
+              if (cached) {
+                cached.groupId = newGroup._id.toString();
+                cached.dirty = true;
+              }
+              await User.updateOne({ _id: userId }, { groupId: newGroup._id });
+              
+              const wsClient = activeClients.get(userId);
+              if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+                wsClient.send(JSON.stringify({ type: "party-updated", group: newGroup }));
+              }
+              broadcast({ type: "player-party-changed", userId, groupId: newGroup._id.toString() });
+            }
+            break;
+
+          case "party-invite":
+            if (userId) {
+              const { targetUserId } = msg;
+              const targetWs = activeClients.get(targetUserId);
+              const cached = userCache.get(userId);
+              if (targetWs && targetWs.readyState === WebSocket.OPEN && cached && cached.groupId) {
+                targetWs.send(JSON.stringify({
+                  type: "party-invite-received",
+                  fromUserId: userId,
+                  fromUserName: cached.name,
+                  groupId: cached.groupId
+                }));
+              }
+            }
+            break;
+
+          case "party-accept":
+            if (userId) {
+              const { groupId } = msg;
+              await connectDB();
+              const group = await Group.findById(groupId);
+              if (group && group.members.length < 8 && !group.members.includes(userId)) {
+                group.members.push(userId);
+                await group.save();
+                
+                const cached = userCache.get(userId);
+                if (cached) {
+                  cached.groupId = group._id.toString();
+                  cached.dirty = true;
+                }
+                await User.updateOne({ _id: userId }, { groupId: group._id });
+                
+                for (const memberId of group.members) {
+                  const mWs = activeClients.get(memberId.toString());
+                  if (mWs && mWs.readyState === WebSocket.OPEN) {
+                    mWs.send(JSON.stringify({ type: "party-updated", group }));
+                  }
+                }
+                broadcast({ type: "player-party-changed", userId, groupId: group._id.toString() });
+              }
+            }
+            break;
+
+          case "party-leave":
+            if (userId) {
+              const cached = userCache.get(userId);
+              if (cached && cached.groupId) {
+                await connectDB();
+                const group = await Group.findById(cached.groupId);
+                if (group) {
+                  group.members = group.members.filter((m: any) => m.toString() !== userId);
+                  if (group.members.length === 0) {
+                    await Group.deleteOne({ _id: group._id });
+                  } else {
+                    if (group.leaderId.toString() === userId) {
+                      group.leaderId = group.members[0];
+                    }
+                    await group.save();
+                    for (const memberId of group.members) {
+                      const mWs = activeClients.get(memberId.toString());
+                      if (mWs && mWs.readyState === WebSocket.OPEN) {
+                        mWs.send(JSON.stringify({ type: "party-updated", group }));
+                      }
+                    }
+                  }
+                }
+                
+                cached.groupId = null;
+                cached.dirty = true;
+                await User.updateOne({ _id: userId }, { $unset: { groupId: "" } });
+                
+                const wsClient = activeClients.get(userId);
+                if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+                  wsClient.send(JSON.stringify({ type: "party-updated", group: null }));
+                }
+                broadcast({ type: "player-party-changed", userId, groupId: null });
+              }
+            }
+            break;
+
+          case "party-kick":
+            if (userId) {
+              const { targetUserId } = msg;
+              const cached = userCache.get(userId);
+              if (cached && cached.groupId) {
+                await connectDB();
+                const group = await Group.findById(cached.groupId);
+                if (group && group.leaderId.toString() === userId) {
+                  group.members = group.members.filter((m: any) => m.toString() !== targetUserId);
+                  await group.save();
+                  
+                  const targetCached = userCache.get(targetUserId);
+                  if (targetCached) {
+                    targetCached.groupId = null;
+                    targetCached.dirty = true;
+                  }
+                  await User.updateOne({ _id: targetUserId }, { $unset: { groupId: "" } });
+                  
+                  const targetWs = activeClients.get(targetUserId);
+                  if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+                    targetWs.send(JSON.stringify({ type: "party-updated", group: null, kicked: true }));
+                  }
+                  
+                  for (const memberId of group.members) {
+                    const mWs = activeClients.get(memberId.toString());
+                    if (mWs && mWs.readyState === WebSocket.OPEN) {
+                      mWs.send(JSON.stringify({ type: "party-updated", group }));
+                    }
+                  }
+                  broadcast({ type: "player-party-changed", userId: targetUserId, groupId: null });
+                }
+              }
+            }
+            break;
             console.warn(`Received unknown WS event type: ${msg.type}`);
         }
       } catch (err) {

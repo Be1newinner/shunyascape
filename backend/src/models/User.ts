@@ -82,6 +82,11 @@ const UserSchema = new Schema({
     type: String,
     default: null
   },
+  groupId: {
+    type: Schema.Types.ObjectId,
+    ref: 'Group',
+    default: null
+  },
   createdAt: { 
     type: Date, 
     default: Date.now 

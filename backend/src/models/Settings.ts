@@ -19,6 +19,27 @@ const SettingsSchema = new Schema({
     type: Boolean, 
     default: true 
   },
+  // Game Economics - Coin Drain Rates
+  hungerDecayRate: {
+    type: Number,
+    default: 1.0 // percentage points per in-game hour
+  },
+  housingRentRate: {
+    type: Number,
+    default: 10 // SC deducted per in-game midnight
+  },
+  utilityBillRate: {
+    type: Number,
+    default: 5 // SC deducted per in-game noon
+  },
+  energyDrainRate: {
+    type: Number,
+    default: 1.5 // speed multiplier for energy reduction during sprint
+  },
+  transactionTaxRate: {
+    type: Number,
+    default: 10 // percentage tax on commercial transactions
+  },
   lastUpdated: {
     type: Date,
     default: Date.now

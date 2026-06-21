@@ -215,6 +215,8 @@ export default function CitySimulator() {
 
   // Multiplayer Telemetry
   const [otherPlayers, setOtherPlayers] = useState<any[]>([]);
+  const [party, setParty] = useState<any>(null);
+  const [partyInvites, setPartyInvites] = useState<any[]>([]);
 
   // UI Dialog overlays & popups
   const [toasts, setToasts] = useState<
@@ -1407,6 +1409,12 @@ export default function CitySimulator() {
               const isAdmin = currentUser?.role === "admin";
               cityRef.current.syncNpcs(data.npcs, isAdmin);
 
+              // Extract party info
+              const myDbUser = data.users.find((u: any) => u.email === playerEmail);
+              if (myDbUser && myDbUser.groupId) {
+                // To fetch party data, we request it via WS or REST. We'll do WS later.
+              }
+
               // Load settings
               if (data.settings) {
                 const {
@@ -1513,6 +1521,26 @@ export default function CitySimulator() {
                   "success",
                 );
               }
+              break;
+
+            case "party-updated":
+              setParty(data.group);
+              if (data.kicked) {
+                showToast("You were kicked from the party.", "warning");
+              }
+              break;
+
+            case "party-invite-received":
+              setPartyInvites((prev) => [...prev, { fromUserId: data.fromUserId, fromUserName: data.fromUserName, groupId: data.groupId }]);
+              showToast(`Party invite from ${data.fromUserName}!`, "info");
+              break;
+
+            case "player-party-changed":
+              setOtherPlayers((prev) =>
+                prev.map((p) =>
+                  p._id === data.userId ? { ...p, groupId: data.groupId } : p
+                )
+              );
               break;
 
             default:
@@ -4403,6 +4431,137 @@ export default function CitySimulator() {
               </span>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── MULTIPLAYER PARTY HUD ────────────────────────────────────────────────── */}
+      {hasSpawned && (
+        <div className="absolute top-20 right-4 z-40 flex flex-col gap-2 pointer-events-auto w-64">
+          {partyInvites.map((invite, idx) => (
+            <div key={idx} className="bg-slate-900/90 backdrop-blur-md border border-fuchsia-500/50 p-3 rounded-xl shadow-lg shadow-fuchsia-500/20 animate-fade-in flex flex-col gap-2">
+              <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-fuchsia-400" />
+                Party Invite
+              </div>
+              <p className="text-[10px] text-slate-300">
+                <span className="font-bold text-fuchsia-300">{invite.fromUserName}</span> invited you to join their party!
+              </p>
+              <div className="flex gap-2 mt-1">
+                <button
+                  onClick={() => {
+                    cityRef.current?.ws?.send(JSON.stringify({ type: "party-accept", groupId: invite.groupId }));
+                    setPartyInvites(prev => prev.filter(i => i.groupId !== invite.groupId));
+                  }}
+                  className="flex-1 bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-[10px] font-bold py-1.5 rounded-lg transition-colors"
+                >
+                  Accept
+                </button>
+                <button
+                  onClick={() => setPartyInvites(prev => prev.filter(i => i.groupId !== invite.groupId))}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-bold py-1.5 rounded-lg transition-colors"
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {party && (
+            <div className="bg-slate-900/80 backdrop-blur-xl border border-fuchsia-500/30 p-3 rounded-xl shadow-lg flex flex-col gap-2">
+              <div className="flex justify-between items-center mb-1">
+                <div className="text-xs font-bold text-fuchsia-400 flex items-center gap-1.5 uppercase tracking-wider">
+                  <Users className="w-4 h-4" />
+                  {party.name}
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm("Are you sure you want to leave the party?")) {
+                      cityRef.current?.ws?.send(JSON.stringify({ type: "party-leave" }));
+                    }
+                  }}
+                  className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-0.5 bg-red-500/10 rounded"
+                >
+                  Leave
+                </button>
+              </div>
+              
+              <div className="flex flex-col gap-1.5">
+                {party.members.map((memberId: string, idx: number) => {
+                  const isLeader = party.leaderId === memberId;
+                  const isMe = memberId === currentUser?._id;
+                  let mName = "Unknown";
+                  if (isMe) mName = currentUser.name + " (You)";
+                  else {
+                    const p = otherPlayers.find(op => op._id === memberId);
+                    if (p) mName = p.name;
+                  }
+                  
+                  return (
+                    <div key={idx} className="flex justify-between items-center bg-slate-950/50 px-2 py-1.5 rounded border border-slate-800">
+                      <div className="flex items-center gap-1.5">
+                        <div className={`w-2 h-2 rounded-full ${isLeader ? 'bg-amber-400' : 'bg-fuchsia-400'}`} />
+                        <span className="text-[10px] font-medium text-slate-200 truncate max-w-[120px]">
+                          {mName}
+                        </span>
+                      </div>
+                      {party.leaderId === currentUser?._id && !isMe && (
+                        <button
+                          onClick={() => cityRef.current?.ws?.send(JSON.stringify({ type: "party-kick", targetUserId: memberId }))}
+                          className="text-[9px] text-slate-500 hover:text-red-400"
+                        >
+                          Kick
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {!party && (
+            <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-3 rounded-xl shadow-lg flex flex-col gap-2 opacity-50 hover:opacity-100 transition-opacity">
+              <div className="text-[10px] font-bold text-slate-400 flex items-center justify-between">
+                <span>Not in a party</span>
+                <button
+                  onClick={() => {
+                    const name = prompt("Enter a name for your new party:", "My Party");
+                    if (name) cityRef.current?.ws?.send(JSON.stringify({ type: "party-create", name }));
+                  }}
+                  className="bg-fuchsia-500/20 hover:bg-fuchsia-500/40 text-fuchsia-400 px-2 py-1 rounded cursor-pointer"
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Party Invite Nearby Section */}
+          {party && party.leaderId === currentUser?._id && party.members.length < 8 && (
+            <div className="mt-1">
+              <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 px-1">Nearby Players</div>
+              <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
+                {otherPlayers.filter(p => !party.members.includes(p._id)).length === 0 ? (
+                  <div className="text-[9px] text-slate-600 px-1">No other players online</div>
+                ) : (
+                  otherPlayers.filter(p => !party.members.includes(p._id)).map(p => (
+                    <div key={p._id} className="flex justify-between items-center bg-slate-900/80 px-2 py-1.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-300 truncate max-w-[100px]">{p.name}</span>
+                      <button
+                        onClick={() => {
+                          cityRef.current?.ws?.send(JSON.stringify({ type: "party-invite", targetUserId: p._id }));
+                          showToast(`Invite sent to ${p.name}`, "info");
+                        }}
+                        className="text-[9px] font-bold bg-fuchsia-500 hover:bg-fuchsia-400 text-white px-2 py-0.5 rounded cursor-pointer"
+                      >
+                        Invite
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

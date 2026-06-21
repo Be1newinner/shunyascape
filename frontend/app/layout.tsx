@@ -12,7 +12,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full w-full antialiased overflow-hidden">
+    <html lang="en" className="h-full w-full antialiased overflow-hidden" suppressHydrationWarning>
       <body className="h-full w-full overflow-hidden bg-slate-950">{children}</body>
     </html>
   );

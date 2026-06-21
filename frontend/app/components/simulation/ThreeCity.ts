@@ -94,6 +94,7 @@ export class ThreeCity {
   private npcSyncTimer = 1.0;
   private lastVisibleGx = -1;
   private lastVisibleGz = -1;
+  private lastReportedZoomScale = 1.0;
   public collectibleManager!: CollectibleManager;
 
   // Agents & Animations
@@ -243,10 +244,19 @@ export class ThreeCity {
           }
         }
       }
+      this.humans.forEach((h) => {
+        if (h.mesh) h.mesh.visible = true;
+      });
+      this.vehicles.forEach((v) => {
+        if (v.mesh) v.mesh.visible = true;
+      });
+      this.animals.forEach((a) => {
+        if (a.mesh) a.mesh.visible = true;
+      });
       return;
     }
 
-    const range = 30;
+    const range = 15;
     const minX = Math.max(0, playerGx - range);
     const maxX = Math.min(this.gridSize - 1, playerGx + range);
     const minZ = Math.max(0, playerGz - range);
@@ -260,6 +270,55 @@ export class ThreeCity {
           const isVisible = (x >= minX && x <= maxX && z >= minZ && z <= maxZ);
           cell.mesh.visible = isVisible;
         }
+      }
+    }
+
+    this.updateDynamicEntitiesVisibility(minX, maxX, minZ, maxZ);
+  }
+
+  private updateDynamicEntitiesVisibility(minX: number, maxX: number, minZ: number, maxZ: number) {
+    const halfGrid = (this.gridSize * this.cellSize) / 2;
+
+    this.humans.forEach((h) => {
+      if (!h.mesh) return;
+      if (h.isPlayer) {
+        h.mesh.visible = true;
+        return;
+      }
+      const gx = Math.floor((h.mesh.position.x + halfGrid) / this.cellSize);
+      const gz = Math.floor((h.mesh.position.z + halfGrid) / this.cellSize);
+      h.mesh.visible = gx >= minX && gx <= maxX && gz >= minZ && gz <= maxZ;
+    });
+
+    this.vehicles.forEach((v) => {
+      if (!v.mesh) return;
+      const gx = Math.floor((v.mesh.position.x + halfGrid) / this.cellSize);
+      const gz = Math.floor((v.mesh.position.z + halfGrid) / this.cellSize);
+      v.mesh.visible = gx >= minX && gx <= maxX && gz >= minZ && gz <= maxZ;
+    });
+
+    this.animals.forEach((a) => {
+      if (!a.mesh) return;
+      const gx = Math.floor((a.mesh.position.x + halfGrid) / this.cellSize);
+      const gz = Math.floor((a.mesh.position.z + halfGrid) / this.cellSize);
+      a.mesh.visible = gx >= minX && gx <= maxX && gz >= minZ && gz <= maxZ;
+    });
+  }
+
+  private updateZoomScale() {
+    if (!this.camera || !this.controls) return;
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const baseDistance = 40.62;
+    let zoomScale = baseDistance / distance;
+    zoomScale = Math.round(zoomScale * 100) / 100;
+    if (zoomScale !== this.lastReportedZoomScale) {
+      this.lastReportedZoomScale = zoomScale;
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("shunya-zoom-change", {
+            detail: { zoomScale },
+          }),
+        );
       }
     }
   }
@@ -339,6 +398,10 @@ export class ThreeCity {
     this.cameraManager = new CameraManager(this.container, this.renderer);
     this.camera = this.cameraManager.camera;
     this.controls = this.cameraManager.controls;
+
+    this.controls.addEventListener("change", () => {
+      this.updateZoomScale();
+    });
 
     window.addEventListener("resize", this.onWindowResize);
   }
@@ -1395,8 +1458,8 @@ export class ThreeCity {
     this.humans.push(playerAgent);
     this.player = playerAgent;
 
-    // Position camera at a beautiful diagonal perspective relative to player
-    this.camera.position.set(worldX + 25, 20, worldZ + 25);
+    // Position camera close-up at 5.5× zoom (offset scaled to distance ≈ 7.39 from target)
+    this.camera.position.set(worldX + 4.55, 3.64, worldZ + 4.55);
     this.controls.target.set(worldX, 0, worldZ);
     this.controls.update();
 
@@ -2136,6 +2199,17 @@ export class ThreeCity {
 
     // 4. Animal updates (Wandering Cows, Dogs, Cats, Flying Birds)
     updateAnimals(this.getSimContext(), this.animals, delta, this.player);
+
+    // 4.2. Update dynamic entity visibility on every frame (to keep up with NPC movement)
+    if (this.player && this.lastVisibleGx !== -1) {
+      const range = 15;
+      this.updateDynamicEntitiesVisibility(
+        this.lastVisibleGx - range,
+        this.lastVisibleGx + range,
+        this.lastVisibleGz - range,
+        this.lastVisibleGz + range
+      );
+    }
 
     // 4.5. Collectibles updates
     if (this.player && this.collectibleManager) {

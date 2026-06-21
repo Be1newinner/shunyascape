@@ -238,6 +238,7 @@ export default function CitySimulator() {
   const [availablePlots, setAvailablePlots] = useState<LandPlot[]>([]);
   const [cityGridSize, setCityGridSize] = useState<number>(32);
   const [showBuildMenu, setShowBuildMenu] = useState<boolean>(false);
+  const [zoomScale, setZoomScale] = useState<number>(1.0);
 
   // ── Hunger & survival system ────────────────────────────────────────────────
   const [hungerLevel, setHungerLevel] = useState<number>(100); // 0–100
@@ -1111,6 +1112,11 @@ export default function CitySimulator() {
       showToast(message, type);
     };
 
+    const handleZoomChange = (e: Event) => {
+      const { zoomScale } = (e as CustomEvent).detail;
+      setZoomScale(zoomScale);
+    };
+
     window.addEventListener("shunya-collect", handleCollect);
     window.addEventListener("shunya-harvest", handleHarvest);
     window.addEventListener("shunya-build-completed", handleBuildCompleted);
@@ -1122,6 +1128,7 @@ export default function CitySimulator() {
     window.addEventListener("shunya-fido-returned", handleFidoReturned);
     window.addEventListener("shunya-coins-spent", handleCoinsSpent);
     window.addEventListener("shunya-toast", handleToast);
+    window.addEventListener("shunya-zoom-change", handleZoomChange);
 
     return () => {
       window.removeEventListener("shunya-collect", handleCollect);
@@ -1138,6 +1145,7 @@ export default function CitySimulator() {
       window.removeEventListener("shunya-fido-returned", handleFidoReturned);
       window.removeEventListener("shunya-coins-spent", handleCoinsSpent);
       window.removeEventListener("shunya-toast", handleToast);
+      window.removeEventListener("shunya-zoom-change", handleZoomChange);
     };
   }, [
     hasSpawned,
@@ -2927,17 +2935,26 @@ export default function CitySimulator() {
             </div>
           </div>
 
-          {/* Trigger Info "i" Button */}
-          <button
-            type="button"
-            onClick={() => setShowControls(!showControls)}
-            className={`w-10 h-10 rounded-full bg-slate-900/90 hover:bg-slate-850 backdrop-blur-xl border border-slate-750/80 shadow-2xl flex items-center justify-center text-sky-400 hover:text-sky-300 transition-all duration-300 transform active:scale-95 ${
-              !showControls ? "opacity-100 scale-100" : "opacity-80 scale-90"
-            }`}
-            title="Show Controls Info"
-          >
-            <span className="font-serif text-lg font-black italic">i</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Zoom Scale Badge */}
+            <div className="h-10 px-3 bg-slate-900/90 backdrop-blur-xl border border-slate-750/80 shadow-2xl rounded-2xl flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-300 hover:border-sky-500/30 transition-all duration-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Zoom:</span>
+              <span className="text-sky-400 font-bold font-mono">{zoomScale.toFixed(2)}x</span>
+            </div>
+
+            {/* Trigger Info "i" Button */}
+            <button
+              type="button"
+              onClick={() => setShowControls(!showControls)}
+              className={`w-10 h-10 rounded-full bg-slate-900/90 hover:bg-slate-850 backdrop-blur-xl border border-slate-750/80 shadow-2xl flex items-center justify-center text-sky-400 hover:text-sky-300 transition-all duration-300 transform active:scale-95 ${
+                !showControls ? "opacity-100 scale-100" : "opacity-80 scale-90"
+              }`}
+              title="Show Controls Info"
+            >
+              <span className="font-serif text-lg font-black italic">i</span>
+            </button>
+          </div>
         </div>
       )}
 

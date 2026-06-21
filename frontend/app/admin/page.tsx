@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Users,
   ShieldAlert,
@@ -15,6 +16,9 @@ import {
   Key,
   Database,
   RefreshCw,
+  LayoutDashboard,
+  Sliders,
+  Store,
 } from "lucide-react";
 
 interface UserItem {
@@ -32,14 +36,17 @@ interface UserItem {
 }
 
 export default function AdminPage() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [users, setUsers] = useState<UserItem[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [successMsg, setSuccessMsg] = useState<string>("");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [gridCells, setGridCells] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<string>("overview");
 
   // Global simulation states
   const [timeOfDay, setTimeOfDay] = useState<number>(8.0);
@@ -61,34 +68,7 @@ export default function AdminPage() {
   const [teleportX, setTeleportX] = useState<string>("0");
   const [teleportZ, setTeleportZ] = useState<string>("0");
 
-  // Load user session on mount and poll database
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const checkSession = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch("/api/auth/me");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.user && data.user.role === "admin") {
-            localStorage.setItem("shunyascape_user", JSON.stringify(data.user));
-            setCurrentUser(data.user);
-            fetchUsers(data.user.email);
-            return;
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-      localStorage.removeItem("shunyascape_user");
-      setCurrentUser(null);
-      setLoading(false);
-    };
-    checkSession();
-  }, []);
-
-  const fetchUsers = async (adminEmail: string) => {
+  const fetchUsers = async () => {
     if (users.length === 0) {
       setLoading(true);
     } else {
@@ -132,6 +112,34 @@ export default function AdminPage() {
       setRefreshing(false);
     }
   };
+
+  // Load user session on mount and poll database
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const checkSession = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/auth/me");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.user && data.user.role === "admin") {
+            localStorage.setItem("shunyascape_user", JSON.stringify(data.user));
+            setCurrentUser(data.user);
+            fetchUsers();
+            return;
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+      localStorage.removeItem("shunyascape_user");
+      setCurrentUser(null);
+      setLoading(false);
+    };
+    checkSession();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const updateGlobalSettings = async (updates: {
     timeOfDay?: number;
@@ -246,6 +254,7 @@ export default function AdminPage() {
   const runAdminAction = async (
     action: "teleport" | "changeRole" | "delete" | "modifyCoins",
     targetUserId: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     payload: any = {},
   ) => {
     if (!currentUser) return;
@@ -383,66 +392,64 @@ export default function AdminPage() {
             </button>
           </form>
 
-          <a
+          <Link
             href="/"
             className="flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-450 hover:text-slate-200 transition-all mt-1"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Back to Simulation</span>
-          </a>
+          </Link>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen w-full bg-slate-950 text-slate-100 font-sans p-4 md:p-8 relative overflow-y-auto">
+    <div className="h-screen w-full bg-slate-950 text-slate-100 font-sans flex flex-col overflow-hidden relative">
       {/* Background glow */}
       <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-sky-500/5 rounded-full blur-[120px] pointer-events-none z-0" />
       <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-indigo-500/5 rounded-full blur-[120px] pointer-events-none z-0" />
 
-      <div className="max-w-6xl mx-auto flex flex-col gap-6 relative z-10">
-        {/* Top Header Row */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <a
-              href="/"
-              className="p-2 bg-slate-900 border border-slate-800 hover:bg-slate-850 rounded-xl transition-all shadow"
-              title="Return to City Builder"
-            >
-              <ArrowLeft className="w-4 h-4 text-slate-300" />
-            </a>
-            <div>
-              <h1 className="text-xl md:text-2xl font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
-                ShunyaScape Dashboard
-              </h1>
-              <p className="text-xs text-slate-450">
-                Administrative Control Panel & User Coordination
-              </p>
+      {/* Fixed Header */}
+      <header className="h-16 border-b border-slate-900 bg-slate-950/80 backdrop-blur-xl flex items-center justify-between px-6 z-20 shrink-0">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="p-2 bg-slate-900 border border-slate-800 hover:bg-slate-850 rounded-xl transition-all shadow"
+            title="Return to City Builder"
+          >
+            <ArrowLeft className="w-4 h-4 text-slate-300" />
+          </Link>
+          <div>
+            <h1 className="text-lg font-black tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent animate-pulse">
+              ShunyaScape Dashboard
+            </h1>
+            <p className="text-[10px] text-slate-450">
+              Administrative Control Panel
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="text-right hidden sm:block">
+            <div className="text-xs font-bold text-slate-200">
+              {currentUser.name}
+            </div>
+            <div className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 justify-end">
+              <span>💰</span>
+              <span>{currentUser.shunyaCoins || 0} SC</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="text-right hidden md:block">
-              <div className="text-xs font-bold text-slate-200">
-                {currentUser.name}
-              </div>
-              <div className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 justify-end">
-                <span>💰</span>
-                <span>{currentUser.shunyaCoins || 0} SC</span>
-              </div>
-              <div className="text-[9px] text-slate-500 font-semibold uppercase tracking-wider">
-                Super Administrator
-              </div>
-            </div>
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => fetchUsers(currentUser.email)}
+              onClick={() => fetchUsers()}
               disabled={refreshing || loading}
               className="px-3 py-1.5 bg-slate-900/80 border border-slate-800 hover:border-cyan-500/30 hover:text-cyan-400 text-xs font-semibold rounded-lg shadow transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
               title="Refresh simulator data manually"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-              <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
+              <span className="hidden md:inline">{refreshing ? "Refreshing..." : "Refresh"}</span>
             </button>
 
             <button
@@ -457,220 +464,331 @@ export default function AdminPage() {
             </button>
           </div>
         </div>
+      </header>
 
-        {/* Info Alerts */}
-        {error && (
-          <div className="p-4 bg-red-950/40 border border-red-800/40 text-red-400 text-sm font-semibold rounded-2xl">
-            {error}
-          </div>
-        )}
-        {successMsg && (
-          <div className="p-4 bg-emerald-950/40 border border-emerald-800/40 text-emerald-400 text-sm font-semibold rounded-2xl animate-pulse">
-            {successMsg}
-          </div>
-        )}
-
-        {/* Stats Summary Panel */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-850 p-4 rounded-2xl flex items-center gap-4">
-            <div className="w-12 h-12 bg-sky-500/10 border border-sky-500/20 text-sky-400 rounded-xl flex items-center justify-center">
-              <Users className="w-5 h-5" />
+      {/* Main Layout (Sidebar + Content) */}
+      <div className="flex flex-1 overflow-hidden relative z-10">
+        {/* Fixed Sidebar */}
+        <aside className="w-64 border-r border-slate-900 bg-slate-950/40 backdrop-blur-xl flex flex-col justify-between shrink-0">
+          <div className="p-4 flex flex-col gap-1.5">
+            <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-3 mb-2">
+              Navigation
             </div>
-            <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                Total Avatars
-              </div>
-              <div className="text-2xl font-black text-slate-100">
-                {users.length}
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-850 p-4 rounded-2xl flex items-center gap-4">
-            <div className="w-12 h-12 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-center justify-center">
-              <Shield className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                Administrators
-              </div>
-              <div className="text-2xl font-black text-slate-100">
-                {users.filter((u) => u.role === "admin").length}
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-850 p-4 rounded-2xl flex items-center gap-4">
-            <div className="w-12 h-12 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center">
-              <Database className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                Database State
-              </div>
-              <div className="text-xs font-semibold mt-1 text-emerald-400">
-                Connected
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Global Environment Controls Card */}
-        <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-3xl p-6 flex flex-col gap-6">
-          <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
-            <div>
-              <h3 className="text-sm md:text-base font-bold text-slate-200 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 animate-pulse" />
-                Global Simulation Environment Controls
-              </h3>
-              <p className="text-[11px] text-slate-500">
-                Modify time, day cycle progression, and simulation play/pause
-                state for all connected players.
-              </p>
-            </div>
-
+            
             <button
-              type="button"
-              onClick={() => updateGlobalSettings({ isPlaying: !isPlaying })}
-              disabled={settingsLoading}
-              className={`px-4 py-2 text-xs font-bold rounded-xl flex items-center gap-2 border transition-all cursor-pointer ${
-                isPlaying
-                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-                  : "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20"
+              onClick={() => setActiveTab("overview")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
+                activeTab === "overview"
+                  ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
+                  : "border border-transparent text-slate-450 hover:bg-slate-900/50 hover:text-slate-200"
               }`}
             >
-              {isPlaying ? (
-                <>
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Simulation Playing
-                </>
-              ) : (
-                <>
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
-                  Simulation Paused
-                </>
-              )}
+              <LayoutDashboard className="w-4 h-4" />
+              <span>Overview</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("simulation")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
+                activeTab === "simulation"
+                  ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
+                  : "border border-transparent text-slate-450 hover:bg-slate-900/50 hover:text-slate-200"
+              }`}
+            >
+              <Sliders className="w-4 h-4" />
+              <span>Simulation Controls</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("outlets")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
+                activeTab === "outlets"
+                  ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
+                  : "border border-transparent text-slate-450 hover:bg-slate-900/50 hover:text-slate-200"
+              }`}
+            >
+              <Store className="w-4 h-4" />
+              <span>Commercial Outlets</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("residents")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
+                activeTab === "residents"
+                  ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
+                  : "border border-transparent text-slate-450 hover:bg-slate-900/50 hover:text-slate-200"
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>Residents Directory</span>
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Time of Day Slider Card */}
-            <div className="bg-slate-950/40 border border-slate-850/60 rounded-2xl p-4 flex flex-col gap-3">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-slate-400">
-                  Time of Day
-                </span>
-                <span className="text-sm font-mono font-black text-cyan-400 bg-cyan-950/30 px-2 py-0.5 rounded-lg border border-cyan-800/20">
-                  {formatTime(localTimeOfDay)}
-                </span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="23.9"
-                step="0.1"
-                value={localTimeOfDay}
-                onChange={(e) => setLocalTimeOfDay(parseFloat(e.target.value))}
-                onMouseDown={() => setIsDragging(true)}
-                onMouseUp={(e) => {
-                  setIsDragging(false);
-                  const val = parseFloat((e.target as HTMLInputElement).value);
-                  updateGlobalSettings({ timeOfDay: val });
-                }}
-                onTouchStart={() => setIsDragging(true)}
-                onTouchEnd={(e) => {
-                  setIsDragging(false);
-                  const val = parseFloat((e.target as HTMLInputElement).value);
-                  updateGlobalSettings({ timeOfDay: val });
-                }}
-                disabled={settingsLoading}
-                className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-cyan-400 disabled:opacity-50"
-              />
-              <div className="flex justify-between text-[10px] text-slate-550 font-bold">
-                <span>00:00 (Midnight)</span>
-                <span>12:00 (Noon)</span>
-                <span>23:00 (Night)</span>
-              </div>
+          {/* Sidebar Status Footer */}
+          <div className="p-4 border-t border-slate-900/60 bg-slate-950/20 flex flex-col gap-1">
+            <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+              System Status
             </div>
-
-            {/* Day Cycle Speed Slider Card */}
-            <div className="bg-slate-950/40 border border-slate-850/60 rounded-2xl p-4 flex flex-col gap-3">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-slate-400">
-                  Day Cycle Speed
-                </span>
-                <span className="text-sm font-mono font-black text-indigo-400 bg-indigo-950/30 px-2 py-0.5 rounded-lg border border-indigo-800/20">
-                  {isPlaying ? `${localTimeSpeed.toFixed(1)}x` : "Paused"}
-                </span>
-              </div>
-              <input
-                type="range"
-                min="0.1"
-                max="3.0"
-                step="0.1"
-                value={localTimeSpeed}
-                onChange={(e) => setLocalTimeSpeed(parseFloat(e.target.value))}
-                onMouseDown={() => setIsDragging(true)}
-                onMouseUp={(e) => {
-                  setIsDragging(false);
-                  const val = parseFloat((e.target as HTMLInputElement).value);
-                  updateGlobalSettings({ timeSpeed: val });
-                }}
-                onTouchStart={() => setIsDragging(true)}
-                onTouchEnd={(e) => {
-                  setIsDragging(false);
-                  const val = parseFloat((e.target as HTMLInputElement).value);
-                  updateGlobalSettings({ timeSpeed: val });
-                }}
-                disabled={settingsLoading || !isPlaying}
-                className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-indigo-400 disabled:opacity-50"
-              />
-              <div className="flex justify-between text-[10px] text-slate-550 font-bold">
-                <span>0.1x (Slowest)</span>
-                <span>1.0x (Normal)</span>
-                <span>3.0x (Fastest)</span>
-              </div>
+            <div className="flex items-center gap-2 text-[10px] text-emerald-400 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Database Connected</span>
+            </div>
+            <div className="text-[9px] text-slate-600 mt-1">
+              v1.2.0 • ShunyaScape Admin
             </div>
           </div>
-        </div>
+        </aside>
 
-        {/* Commercial Outlets & Revenue Control Center */}
-        <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-3xl p-6 flex flex-col gap-6">
-          <div>
-            <h3 className="text-sm md:text-base font-bold text-slate-200 flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              City Commercial Outlets & Treasury Revenue
-            </h3>
-            <p className="text-[11px] text-slate-500">
-              Track built commercial stores, inspect their location coordinates,
-              and collect accumulated tax treasury/revenue.
-            </p>
-          </div>
+        {/* Scrollable Content Area */}
+        <main className="flex-1 overflow-y-auto p-6 md:p-8">
+          <div className="max-w-5xl mx-auto flex flex-col gap-6">
+            {/* Info Alerts */}
+            {error && (
+              <div className="p-4 bg-red-950/40 border border-red-800/40 text-red-400 text-sm font-semibold rounded-2xl">
+                {error}
+              </div>
+            )}
+            {successMsg && (
+              <div className="p-4 bg-emerald-950/40 border border-emerald-800/40 text-emerald-400 text-sm font-semibold rounded-2xl animate-pulse">
+                {successMsg}
+              </div>
+            )}
 
-          {/* Grid list of stores */}
-          {gridCells.filter(
-            (c) =>
-              [
-                "restaurant",
-                "clothshop",
-                "barbershop",
-                "policestation",
-              ].includes(c.type) ||
-              (c.type === "construction" &&
-                [
-                  "restaurant",
-                  "clothshop",
-                  "barbershop",
-                  "policestation",
-                ].includes(c.targetType)),
-          ).length === 0 ? (
-            <div className="py-8 text-center text-xs text-slate-500 font-semibold border border-dashed border-slate-800 rounded-2xl">
-              No commercial stores built in the city yet.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {gridCells
-                .filter(
+            {/* TAB: OVERVIEW */}
+            {activeTab === "overview" && (
+              <>
+                {/* Stats Summary Panel */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-850 p-4 rounded-2xl flex items-center gap-4 animate-fade-in">
+                    <div className="w-12 h-12 bg-sky-500/10 border border-sky-500/20 text-sky-400 rounded-xl flex items-center justify-center">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                        Total Avatars
+                      </div>
+                      <div className="text-2xl font-black text-slate-100">
+                        {users.length}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-850 p-4 rounded-2xl flex items-center gap-4">
+                    <div className="w-12 h-12 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-center justify-center">
+                      <Shield className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                        Administrators
+                      </div>
+                      <div className="text-2xl font-black text-slate-100">
+                        {users.filter((u) => u.role === "admin").length}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-850 p-4 rounded-2xl flex items-center gap-4">
+                    <div className="w-12 h-12 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center">
+                      <Database className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                        Database State
+                      </div>
+                      <div className="text-xs font-semibold mt-1 text-emerald-400">
+                        Connected
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Overview Details */}
+                <div className="bg-slate-900/70 border border-slate-800/80 shadow-2xl rounded-3xl p-6 flex flex-col gap-4">
+                  <h3 className="text-sm md:text-base font-bold text-slate-200">
+                    Welcome to the Admin Command Center
+                  </h3>
+                  <p className="text-xs text-slate-405 leading-relaxed">
+                    Use the navigation sidebar to manage different aspects of ShunyaScape.
+                    You can control global environments, view commercial outlet tax/revenue status,
+                    and moderate/teleport active residents in real time.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                    <div className="p-4 bg-slate-950/40 border border-slate-850 rounded-2xl flex flex-col gap-1.5">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Quick Environment Info</span>
+                      <div className="text-xs font-semibold text-slate-350">
+                        Current Simulation Time: <span className="text-cyan-400 font-mono">{formatTime(localTimeOfDay)}</span>
+                      </div>
+                      <div className="text-xs font-semibold text-slate-350">
+                        Status: <span className={isPlaying ? "text-emerald-400" : "text-red-400"}>{isPlaying ? "Active (Playing)" : "Paused"}</span>
+                      </div>
+                    </div>
+                    <div className="p-4 bg-slate-950/40 border border-slate-850 rounded-2xl flex flex-col gap-1.5">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Quick Commerce Info</span>
+                      <div className="text-xs font-semibold text-slate-350">
+                        Built Stores: <span className="text-indigo-400 font-bold">
+                          {gridCells.filter(
+                            (c) =>
+                              [
+                                "restaurant",
+                                "clothshop",
+                                "barbershop",
+                                "policestation",
+                              ].includes(c.type) ||
+                              (c.type === "construction" &&
+                                [
+                                  "restaurant",
+                                  "clothshop",
+                                  "barbershop",
+                                  "policestation",
+                                ].includes(c.targetType)),
+                          ).length}
+                        </span>
+                      </div>
+                      <div className="text-xs font-semibold text-slate-350">
+                        Active Residents: <span className="text-sky-400 font-bold">{users.length}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* TAB: SIMULATION */}
+            {activeTab === "simulation" && (
+              <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-3xl p-6 flex flex-col gap-6">
+                <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
+                  <div>
+                    <h3 className="text-sm md:text-base font-bold text-slate-200 flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 animate-pulse" />
+                      Global Simulation Environment Controls
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Modify time, day cycle progression, and simulation play/pause
+                      state for all connected players.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => updateGlobalSettings({ isPlaying: !isPlaying })}
+                    disabled={settingsLoading}
+                    className={`px-4 py-2 text-xs font-bold rounded-xl flex items-center gap-2 border transition-all cursor-pointer ${
+                      isPlaying
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                        : "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20"
+                    }`}
+                  >
+                    {isPlaying ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Simulation Playing
+                      </>
+                    ) : (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                        Simulation Paused
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Time of Day Slider Card */}
+                  <div className="bg-slate-950/40 border border-slate-850/60 rounded-2xl p-4 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-slate-400">
+                        Time of Day
+                      </span>
+                      <span className="text-sm font-mono font-black text-cyan-400 bg-cyan-950/30 px-2 py-0.5 rounded-lg border border-cyan-800/20">
+                        {formatTime(localTimeOfDay)}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="23.9"
+                      step="0.1"
+                      value={localTimeOfDay}
+                      onChange={(e) => setLocalTimeOfDay(parseFloat(e.target.value))}
+                      onMouseDown={() => setIsDragging(true)}
+                      onMouseUp={(e) => {
+                        setIsDragging(false);
+                        const val = parseFloat((e.target as HTMLInputElement).value);
+                        updateGlobalSettings({ timeOfDay: val });
+                      }}
+                      onTouchStart={() => setIsDragging(true)}
+                      onTouchEnd={(e) => {
+                        setIsDragging(false);
+                        const val = parseFloat((e.target as HTMLInputElement).value);
+                        updateGlobalSettings({ timeOfDay: val });
+                      }}
+                      disabled={settingsLoading}
+                      className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-cyan-400 disabled:opacity-50"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-550 font-bold">
+                      <span>00:00 (Midnight)</span>
+                      <span>12:00 (Noon)</span>
+                      <span>23:00 (Night)</span>
+                    </div>
+                  </div>
+
+                  {/* Day Cycle Speed Slider Card */}
+                  <div className="bg-slate-950/40 border border-slate-850/60 rounded-2xl p-4 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-slate-400">
+                        Day Cycle Speed
+                      </span>
+                      <span className="text-sm font-mono font-black text-indigo-400 bg-indigo-950/30 px-2 py-0.5 rounded-lg border border-indigo-800/20">
+                        {isPlaying ? `${localTimeSpeed.toFixed(1)}x` : "Paused"}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="3.0"
+                      step="0.1"
+                      value={localTimeSpeed}
+                      onChange={(e) => setLocalTimeSpeed(parseFloat(e.target.value))}
+                      onMouseDown={() => setIsDragging(true)}
+                      onMouseUp={(e) => {
+                        setIsDragging(false);
+                        const val = parseFloat((e.target as HTMLInputElement).value);
+                        updateGlobalSettings({ timeSpeed: val });
+                      }}
+                      onTouchStart={() => setIsDragging(true)}
+                      onTouchEnd={(e) => {
+                        setIsDragging(false);
+                        const val = parseFloat((e.target as HTMLInputElement).value);
+                        updateGlobalSettings({ timeSpeed: val });
+                      }}
+                      disabled={settingsLoading || !isPlaying}
+                      className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-indigo-400 disabled:opacity-50"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-550 font-bold">
+                      <span>0.1x (Slowest)</span>
+                      <span>1.0x (Normal)</span>
+                      <span>3.0x (Fastest)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: COMMERCIAL OUTLETS */}
+            {activeTab === "outlets" && (
+              <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-3xl p-6 flex flex-col gap-6">
+                <div>
+                  <h3 className="text-sm md:text-base font-bold text-slate-200 flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                    City Commercial Outlets & Treasury Revenue
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Track built commercial stores, inspect their location coordinates,
+                    and collect accumulated tax treasury/revenue.
+                  </p>
+                </div>
+
+                {gridCells.filter(
                   (c) =>
                     [
                       "restaurant",
@@ -685,343 +803,361 @@ export default function AdminPage() {
                         "barbershop",
                         "policestation",
                       ].includes(c.targetType)),
-                )
-                .map((cell, idx) => {
-                  const isUnderConstruction = cell.type === "construction";
-                  const activeType = isUnderConstruction
-                    ? cell.targetType
-                    : cell.type;
+                ).length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-500 font-semibold border border-dashed border-slate-800 rounded-2xl">
+                    No commercial stores built in the city yet.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {gridCells
+                      .filter(
+                        (c) =>
+                          [
+                            "restaurant",
+                            "clothshop",
+                            "barbershop",
+                            "policestation",
+                          ].includes(c.type) ||
+                          (c.type === "construction" &&
+                            [
+                              "restaurant",
+                              "clothshop",
+                              "barbershop",
+                              "policestation",
+                            ].includes(c.targetType)),
+                      )
+                      .map((cell, idx) => {
+                        const isUnderConstruction = cell.type === "construction";
+                        const activeType = isUnderConstruction
+                          ? cell.targetType
+                          : cell.type;
 
-                  // Get store-specific details
-                  const storeInfo = (() => {
-                    switch (activeType) {
-                      case "restaurant":
-                        return {
-                          name: "🍔 Fast Food Restaurant (McDonald's)",
-                          desc: "McDonald's style fast food joint",
-                          taxRate: "15 SC per meal",
-                        };
-                      case "clothshop":
-                        return {
-                          name: "👕 Clothing Boutique",
-                          desc: "Outfits & custom clothing shop",
-                          taxRate: "50 SC per outfit",
-                        };
-                      case "barbershop":
-                        return {
-                          name: "✂️ Barber Shop",
-                          desc: "Custom hairstyles salon",
-                          taxRate: "30 SC per haircut",
-                        };
-                      case "policestation":
-                        return {
-                          name: "🚔 Central Police Station",
-                          desc: "Safety patrol headquarters",
-                          taxRate: "N/A (Public Facility)",
-                        };
-                      default:
-                        return {
-                          name: "🏪 Commercial Shop",
-                          desc: "Commercial store outlet",
-                          taxRate: "10 SC",
-                        };
-                    }
-                  })();
+                        const storeInfo = (() => {
+                          switch (activeType) {
+                            case "restaurant":
+                              return {
+                                name: "🍔 Fast Food Restaurant (McDonald's)",
+                                desc: "McDonald's style fast food joint",
+                                taxRate: "15 SC per meal",
+                              };
+                            case "clothshop":
+                              return {
+                                name: "👕 Clothing Boutique",
+                                desc: "Outfits & custom clothing shop",
+                                taxRate: "50 SC per outfit",
+                              };
+                            case "barbershop":
+                              return {
+                                name: "✂️ Barber Shop",
+                                desc: "Custom hairstyles salon",
+                                taxRate: "30 SC per haircut",
+                              };
+                            case "policestation":
+                              return {
+                                name: "🚔 Central Police Station",
+                                desc: "Safety patrol headquarters",
+                                taxRate: "N/A (Public Facility)",
+                              };
+                            default:
+                              return {
+                                name: "🏪 Commercial Shop",
+                                desc: "Commercial store outlet",
+                                taxRate: "10 SC",
+                              };
+                          }
+                        })();
 
-                  // Calculate world coordinates for teleporting
-                  const halfGrid = (32 * 2.25) / 2; // gridSize = 32, cellSize = 2.25
-                  const worldX = cell.x * 2.25 - halfGrid + 2.25 / 2;
-                  const worldZ = cell.z * 2.25 - halfGrid + 2.25 / 2;
+                        const halfGrid = (32 * 2.25) / 2;
+                        const worldX = cell.x * 2.25 - halfGrid + 2.25 / 2;
+                        const worldZ = cell.z * 2.25 - halfGrid + 2.25 / 2;
 
-                  // Accrued simulated uncollected taxes/amount
-                  const isPublicFacility = activeType === "policestation";
-                  const baseAccrued = isPublicFacility
-                    ? 0
-                    : 20 + ((cell.x * cell.z) % 40); // deterministic simulated revenue
-                  const accrued = isUnderConstruction ? 0 : baseAccrued;
+                        const isPublicFacility = activeType === "policestation";
+                        const baseAccrued = isPublicFacility
+                          ? 0
+                          : 20 + ((cell.x * cell.z) % 40);
+                        const accrued = isUnderConstruction ? 0 : baseAccrued;
 
-                  return (
-                    <div
-                      key={`${cell.x}_${cell.z}_${idx}`}
-                      className="p-4 bg-slate-950/40 border border-slate-850 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-slate-800 transition-all"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-200">
-                            {storeInfo.name}
-                          </span>
-                          {isUnderConstruction ? (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider">
-                              Construction {cell.constructionProgress}%
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
-                              Active
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-slate-500 mt-0.5">
-                          {storeInfo.desc}
-                        </p>
+                        return (
+                          <div
+                            key={`${cell.x}_${cell.z}_${idx}`}
+                            className="p-4 bg-slate-950/40 border border-slate-850 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-slate-800 transition-all animate-fade-in"
+                          >
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-200">
+                                  {storeInfo.name}
+                                </span>
+                                {isUnderConstruction ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider">
+                                    Construction {cell.constructionProgress}%
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
+                                    Active
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-500 mt-0.5">
+                                {storeInfo.desc}
+                              </p>
 
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-slate-400 font-medium">
-                          <div>
-                            <span className="text-slate-500 font-bold">
-                              Grid:
-                            </span>{" "}
-                            ({cell.x}, {cell.z})
-                          </div>
-                          <div>
-                            <span className="text-slate-500 font-bold">
-                              World:
-                            </span>{" "}
-                            ({worldX.toFixed(2)}, {worldZ.toFixed(2)})
-                          </div>
-                          {!isPublicFacility && (
-                            <div>
-                              <span className="text-slate-500 font-bold">
-                                Tax Rate:
-                              </span>{" "}
-                              {storeInfo.taxRate}
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-slate-400 font-medium">
+                                <div>
+                                  <span className="text-slate-550 font-bold">
+                                    Grid:
+                                  </span>{" "}
+                                  ({cell.x}, {cell.z})
+                                </div>
+                                <div>
+                                  <span className="text-slate-550 font-bold">
+                                    World:
+                                  </span>{" "}
+                                  ({worldX.toFixed(2)}, {worldZ.toFixed(2)})
+                                </div>
+                                {!isPublicFacility && (
+                                  <div>
+                                    <span className="text-slate-550 font-bold">
+                                      Tax Rate:
+                                    </span>{" "}
+                                    {storeInfo.taxRate}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      </div>
 
-                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                        {/* Teleport admin to store */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const adminId = currentUser._id || currentUser.id;
-                            runAdminAction("teleport", adminId, {
-                              x: worldX,
-                              z: worldZ,
-                            });
-                          }}
-                          className="px-2.5 py-1.5 bg-slate-900 border border-slate-800 hover:border-sky-500/30 hover:text-sky-400 text-[10px] font-bold rounded-lg shadow-sm transition-all cursor-pointer flex items-center gap-1"
-                          title="Teleport your avatar to this shop location"
-                        >
-                          <Locate className="w-3.5 h-3.5" />
-                          <span>Teleport</span>
-                        </button>
+                            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const adminId = currentUser._id || currentUser.id;
+                                  runAdminAction("teleport", adminId, {
+                                    x: worldX,
+                                    z: worldZ,
+                                  });
+                                }}
+                                className="px-2.5 py-1.5 bg-slate-900 border border-slate-800 hover:border-sky-500/30 hover:text-sky-400 text-[10px] font-bold rounded-lg shadow-sm transition-all cursor-pointer flex items-center gap-1"
+                                title="Teleport your avatar to this shop location"
+                              >
+                                <Locate className="w-3.5 h-3.5" />
+                                <span>Teleport</span>
+                              </button>
 
-                        {/* Collect Taxes button */}
-                        {!isPublicFacility && (
-                          <button
-                            type="button"
-                            disabled={accrued === 0 || isUnderConstruction}
-                            onClick={async () => {
-                              const adminId = currentUser._id || currentUser.id;
-                              const newCoins =
-                                (currentUser.shunyaCoins || 0) + accrued;
-                              await runAdminAction("modifyCoins", adminId, {
-                                shunyaCoins: newCoins,
-                              });
-                              // Force update local admin user coins state
-                              setCurrentUser((prev: any) => ({
-                                ...prev,
-                                shunyaCoins: newCoins,
-                              }));
-                              // Show success message
-                              setSuccessMsg(
-                                `💰 Successfully collected ${accrued} SC tax from ${storeInfo.name.split("(")[0].trim()}!`,
-                              );
-                              setTimeout(() => setSuccessMsg(""), 4000);
-                            }}
-                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
-                              accrued > 0 && !isUnderConstruction
-                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-                                : "bg-slate-900 border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
-                            }`}
+                              {!isPublicFacility && (
+                                <button
+                                  type="button"
+                                  disabled={accrued === 0 || isUnderConstruction}
+                                  onClick={async () => {
+                                    const adminId = currentUser._id || currentUser.id;
+                                    const newCoins =
+                                      (currentUser.shunyaCoins || 0) + accrued;
+                                    await runAdminAction("modifyCoins", adminId, {
+                                      shunyaCoins: newCoins,
+                                    });
+                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                    setCurrentUser((prev: any) => ({
+                                      ...prev,
+                                      shunyaCoins: newCoins,
+                                    }));
+                                    setSuccessMsg(
+                                      `💰 Successfully collected ${accrued} SC tax from ${storeInfo.name.split("(")[0].trim()}!`,
+                                    );
+                                    setTimeout(() => setSuccessMsg(""), 4000);
+                                  }}
+                                  className={`px-3 py-1.5 text-[10px] font-bold rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                                    accrued > 0 && !isUnderConstruction
+                                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                                      : "bg-slate-900 border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
+                                  }`}
+                                >
+                                  <span>Collect {accrued} SC</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB: RESIDENTS DIRECTORY */}
+            {activeTab === "residents" && (
+              <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-3xl overflow-hidden flex flex-col">
+                <div className="p-4 md:p-6 border-b border-slate-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm md:text-base font-bold text-slate-200">
+                      Registered City Residents
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Moderate, teleport, and view roles and spatial coordinates of active users.
+                    </p>
+                  </div>
+
+                  <div className="relative max-w-xs w-full">
+                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-550" />
+                    <input
+                      type="text"
+                      placeholder="Search by name or email..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-950/60 border border-slate-800 rounded-xl text-xs font-semibold text-slate-100 placeholder-slate-650 focus:outline-none focus:border-cyan-500/40"
+                    />
+                  </div>
+                </div>
+
+                {loading ? (
+                  <div className="py-20 text-center text-xs text-slate-500 font-semibold">
+                    Loading resident database...
+                  </div>
+                ) : filteredUsers.length === 0 ? (
+                  <div className="py-20 text-center text-xs text-slate-500 font-semibold">
+                    No registered avatars found.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto w-full">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-950/45 text-slate-400 border-b border-slate-850/60">
+                          <th className="p-4 font-bold">Resident Profile</th>
+                          <th className="p-4 font-bold">User Role</th>
+                          <th className="p-4 font-bold">Current Position (X, Z)</th>
+                          <th className="p-4 font-bold">Last Position (X, Z)</th>
+                          <th className="p-4 font-bold text-right">Moderator Controls</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-850/40">
+                        {filteredUsers.map((user) => (
+                          <tr
+                            key={user._id}
+                            className="hover:bg-slate-850/20 transition-colors"
                           >
-                            <span>Collect {accrued} SC</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-          )}
-        </div>
+                            <td className="p-4 flex items-center gap-3">
+                              <div
+                                  className="w-8 h-8 rounded-full border border-slate-700/60 flex items-center justify-center font-bold text-slate-100 uppercase"
+                                style={{
+                                  backgroundColor: user.clothingColor
+                                    ? `#${user.clothingColor.toString(16).padStart(6, "0")}`
+                                    : "#4287f5",
+                                }}
+                              >
+                                {user.name.charAt(0)}
+                              </div>
+                              <div>
+                                <div className="font-bold text-slate-200">
+                                  {user.name}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  {user.email}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                                  user.role === "admin"
+                                    ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                                    : "bg-slate-800 text-slate-450 border border-slate-700/40"
+                                }`}
+                              >
+                                {user.role}
+                              </span>
+                            </td>
+                            <td className="p-4 font-mono text-[10px] text-slate-400">
+                              (
+                              {user.x !== undefined && user.x !== null
+                                ? user.x.toFixed(2)
+                                : "0.00"}
+                              ,{" "}
+                              {user.z !== undefined && user.z !== null
+                                ? user.z.toFixed(2)
+                                : "0.00"}
+                              )
+                            </td>
+                            <td className="p-4 font-mono text-[10px] text-slate-500">
+                              (
+                              {user.lastX !== undefined && user.lastX !== null
+                                ? user.lastX.toFixed(2)
+                                : "0.00"}
+                              ,{" "}
+                              {user.lastZ !== undefined && user.lastZ !== null
+                                ? user.lastZ.toFixed(2)
+                                : "0.00"}
+                              )
+                            </td>
+                            <td className="p-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => {
+                                    setTeleportingUser(user);
+                                    setTeleportX(
+                                      user.x !== undefined && user.x !== null
+                                        ? user.x.toFixed(2)
+                                        : "0.00",
+                                    );
+                                    setTeleportZ(
+                                      user.z !== undefined && user.z !== null
+                                        ? user.z.toFixed(2)
+                                        : "0.00",
+                                    );
+                                  }}
+                                  className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-sky-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
+                                  title="Teleport Avatar"
+                                >
+                                  <Locate className="w-3.5 h-3.5" />
+                                </button>
 
-        {/* User Table Card */}
-        <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800/80 shadow-2xl rounded-3xl overflow-hidden flex flex-col">
-          {/* Table Header Filter Row */}
-          <div className="p-4 md:p-6 border-b border-slate-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <h3 className="text-sm md:text-base font-bold text-slate-200">
-              Registered City Residents
-            </h3>
+                                <button
+                                  onClick={() => {
+                                    const nextRole =
+                                      user.role === "admin" ? "user" : "admin";
+                                    if (
+                                      confirm(
+                                        `Are you sure you want to change ${user.name}'s role to ${nextRole}?`,
+                                      )
+                                    ) {
+                                      runAdminAction("changeRole", user._id, {
+                                        role: nextRole,
+                                      });
+                                    }
+                                  }}
+                                  className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-amber-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
+                                  title={
+                                    user.role === "admin"
+                                      ? "Demote to User"
+                                      : "Promote to Admin"
+                                  }
+                                >
+                                  <ShieldAlert className="w-3.5 h-3.5" />
+                                </button>
 
-            {/* Search */}
-            <div className="relative max-w-xs w-full">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
-              <input
-                type="text"
-                placeholder="Search by name or email..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-slate-950/60 border border-slate-800 rounded-xl text-xs font-semibold text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/40"
-              />
-            </div>
+                                <button
+                                  onClick={() => {
+                                    if (
+                                      confirm(
+                                        `CRITICAL: Are you sure you want to delete ${user.name} and banish them from the simulation?`,
+                                      )
+                                    ) {
+                                      runAdminAction("delete", user._id);
+                                    }
+                                  }}
+                                  className="p-1.5 bg-slate-800 hover:bg-red-950/40 text-slate-350 hover:text-red-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
+                                  title="Delete Resident"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-
-          {/* Table Body */}
-          {loading ? (
-            <div className="py-20 text-center text-xs text-slate-500 font-semibold">
-              Loading resident database...
-            </div>
-          ) : filteredUsers.length === 0 ? (
-            <div className="py-20 text-center text-xs text-slate-500 font-semibold">
-              No registered avatars found.
-            </div>
-          ) : (
-            <div className="overflow-x-auto w-full">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-950/45 text-slate-400 border-b border-slate-850/60">
-                    <th className="p-4 font-bold">Resident Profile</th>
-                    <th className="p-4 font-bold">User Role</th>
-                    <th className="p-4 font-bold">Current Position (X, Z)</th>
-                    <th className="p-4 font-bold">Last Position (X, Z)</th>
-                    <th className="p-4 font-bold text-right">
-                      Moderator Controls
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-850/40">
-                  {filteredUsers.map((user) => (
-                    <tr
-                      key={user._id}
-                      className="hover:bg-slate-850/20 transition-colors"
-                    >
-                      <td className="p-4 flex items-center gap-3">
-                        <div
-                          className="w-8 h-8 rounded-full border border-slate-700/60 flex items-center justify-center font-bold text-slate-100 uppercase"
-                          style={{
-                            backgroundColor: user.clothingColor
-                              ? `#${user.clothingColor.toString(16).padStart(6, "0")}`
-                              : "#4287f5",
-                          }}
-                        >
-                          {user.name.charAt(0)}
-                        </div>
-                        <div>
-                          <div className="font-bold text-slate-200">
-                            {user.name}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            {user.email}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                            user.role === "admin"
-                              ? "bg-red-500/10 text-red-400 border border-red-500/20"
-                              : "bg-slate-800 text-slate-450 border border-slate-700/40"
-                          }`}
-                        >
-                          {user.role}
-                        </span>
-                      </td>
-                      <td className="p-4 font-mono text-[10px] text-slate-400">
-                        (
-                        {user.x !== undefined && user.x !== null
-                          ? user.x.toFixed(2)
-                          : "0.00"}
-                        ,{" "}
-                        {user.z !== undefined && user.z !== null
-                          ? user.z.toFixed(2)
-                          : "0.00"}
-                        )
-                      </td>
-                      <td className="p-4 font-mono text-[10px] text-slate-500">
-                        (
-                        {user.lastX !== undefined && user.lastX !== null
-                          ? user.lastX.toFixed(2)
-                          : "0.00"}
-                        ,{" "}
-                        {user.lastZ !== undefined && user.lastZ !== null
-                          ? user.lastZ.toFixed(2)
-                          : "0.00"}
-                        )
-                      </td>
-                      <td className="p-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {/* Teleport Trigger */}
-                          <button
-                            onClick={() => {
-                              setTeleportingUser(user);
-                              setTeleportX(
-                                user.x !== undefined && user.x !== null
-                                  ? user.x.toFixed(2)
-                                  : "0.00",
-                              );
-                              setTeleportZ(
-                                user.z !== undefined && user.z !== null
-                                  ? user.z.toFixed(2)
-                                  : "0.00",
-                              );
-                            }}
-                            className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-sky-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
-                            title="Teleport Avatar"
-                          >
-                            <Locate className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Role Toggle Trigger */}
-                          <button
-                            onClick={() => {
-                              const nextRole =
-                                user.role === "admin" ? "user" : "admin";
-                              if (
-                                confirm(
-                                  `Are you sure you want to change ${user.name}'s role to ${nextRole}?`,
-                                )
-                              ) {
-                                runAdminAction("changeRole", user._id, {
-                                  role: nextRole,
-                                });
-                              }
-                            }}
-                            className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-amber-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
-                            title={
-                              user.role === "admin"
-                                ? "Demote to User"
-                                : "Promote to Admin"
-                            }
-                          >
-                            <ShieldAlert className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Delete Trigger */}
-                          <button
-                            onClick={() => {
-                              if (
-                                confirm(
-                                  `CRITICAL: Are you sure you want to delete ${user.name} and banish them from the simulation?`,
-                                )
-                              ) {
-                                runAdminAction("delete", user._id);
-                              }
-                            }}
-                            className="p-1.5 bg-slate-800 hover:bg-red-950/40 text-slate-350 hover:text-red-400 border border-slate-700/60 rounded-lg shadow-sm transition-all cursor-pointer"
-                            title="Delete Resident"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        </main>
       </div>
 
       {/* Teleport Coordinate Picker Modal */}
@@ -1047,7 +1183,6 @@ export default function AdminPage() {
               </p>
             </div>
 
-            {/* Presets */}
             <div className="flex flex-col gap-1.5">
               <span className="text-left text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">
                 Preset Coordinate Sectors
@@ -1086,7 +1221,6 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* Custom Coordinates Inputs */}
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1 text-left">
                 <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">

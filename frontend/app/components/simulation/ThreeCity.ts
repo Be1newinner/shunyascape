@@ -96,7 +96,7 @@ export class ThreeCity {
   private animals: AnimalAgent[] = []; // Voxel Cows, Dogs, Cats, Birds
   private particles: Particle[] = [];
   private animationFrameId: number | null = null;
-  private clock = new THREE.Clock();
+  private timer = new THREE.Timer();
 
   // Player Controls
   public player: HumanAgent | null = null;
@@ -211,7 +211,10 @@ export class ThreeCity {
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    if (typeof document !== "undefined") {
+      this.timer.connect(document);
+    }
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.container.appendChild(this.renderer.domElement);
@@ -1497,7 +1500,8 @@ export class ThreeCity {
     if (this.isDestroyed) return;
     this.animationFrameId = requestAnimationFrame(this.animate);
 
-    const delta = Math.min(this.clock.getDelta(), 0.1);
+    this.timer.update();
+    const delta = Math.min(this.timer.getDelta(), 0.1);
 
     // Keyboard Camera Rotation (for touchpad/laptop usability)
     if (this.keysPressed["q"] || this.keysPressed["e"]) {
@@ -1554,7 +1558,7 @@ export class ThreeCity {
         delta,
         this.player.mesh.position.x,
         this.player.mesh.position.z,
-        this.clock.getElapsedTime()
+        this.timer.getElapsed()
       );
     }
 
@@ -1593,16 +1597,16 @@ export class ThreeCity {
     // 6. Water wave animation
     if (this.waterPlane) {
       this.waterPlane.position.y =
-        -0.02 + Math.sin(this.clock.getElapsedTime() * 1.2) * 0.025;
+        -0.02 + Math.sin(this.timer.getElapsed() * 1.2) * 0.025;
     }
 
     // 7. River system animation
     if (this.riverSystem) {
-      this.riverSystem.update(delta, this.clock.getElapsedTime());
+      this.riverSystem.update(delta, this.timer.getElapsed());
     }
 
     // 8. Barber pole rotation
-    const elapsed = this.clock.getElapsedTime();
+    const elapsed = this.timer.getElapsed();
     for (const pole of getBarberPoles()) {
       pole.rotation.y += delta * 1.8;
     }
@@ -1772,6 +1776,7 @@ export class ThreeCity {
       this.scene.remove(obj);
     }
 
+    this.timer.dispose();
     this.renderer.dispose();
     this.container.innerHTML = "";
   }

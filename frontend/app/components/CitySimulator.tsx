@@ -914,7 +914,7 @@ export default function CitySimulator() {
       };
 
       socket.onerror = (err) => {
-        console.error('WebSocket error:', err);
+        console.error(`WebSocket error connecting to ${wsUrl} (BACKEND_API_URL: "${process.env.BACKEND_API_URL || ''}"):`, err);
         socket?.close();
       };
     };

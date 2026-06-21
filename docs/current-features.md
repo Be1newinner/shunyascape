@@ -35,3 +35,8 @@
   * **NPC Humans**: Admin coordinates and pushes updates to the server cache; non-admin clients interpolate coordinates smoothly to ensure accurate positioning without direct DB polling.
   * **NPC Animals**: Cows, Dogs, Cats, and Birds are simulated locally on each client's browser as ambient animations. This entirely removes the need to sync animals over the network.
   * **Clouds & Weather**: Clouds are generated and simulated client-side. The network only synchronizes Time of Day and Play Speed settings parameters.
+
+## 7. Secure Email OTP Authentication
+* Migrated from instant JWT issuing to a mandatory email-based One-Time Password (OTP) verification system using `nodemailer`.
+* Blocks unverified logins and intercepts them to redirect users seamlessly to an OTP verification modal.
+* Provides full flows for Account Registration (with email verification), Password Recovery (Forgot Password), and Reset Password.

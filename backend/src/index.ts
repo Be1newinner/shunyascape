@@ -14,6 +14,7 @@ import Npc from "./models/Npc";
 import Settings from "./models/Settings";
 import { hashPassword, verifyPassword, signToken, verifyToken } from "./utils/auth";
 import { authMiddleware, requireAuth, requireAdmin, AuthenticatedRequest } from "./middlewares/auth";
+import { sendOtpEmail } from "./utils/mailer";
 
 const app = express();
 const PORT = process.env.PORT || 8005;
@@ -334,6 +335,18 @@ app.post(
         return;
       }
 
+      if (!user.isVerified) {
+        // If they try to login but aren't verified, generate a new OTP and email them
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        user.otp = otp;
+        user.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+        await user.save();
+        await sendOtpEmail(user.email, otp, "verify");
+        
+        res.status(403).json({ error: "Email not verified", requiresVerification: true });
+        return;
+      }
+
       const sessionId = crypto.randomUUID();
       const accessToken = signToken(
         { userId: user._id, email: user.email, role: user.role, sessionId },
@@ -434,7 +447,7 @@ app.post(
       const role = totalUsers === 0 ? "admin" : "user";
 
       const hashedPassword = hashPassword(password);
-      const sessionId = crypto.randomUUID();
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
       const newUser = new User({
         name: name.trim(),
@@ -445,82 +458,17 @@ app.post(
         z: 0,
         lastX: 0,
         lastZ: 0,
-        currentSessionId: sessionId,
+        isVerified: false,
+        otp,
+        otpExpires: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
       });
 
-      const accessToken = signToken(
-        {
-          userId: newUser._id,
-          email: newUser.email,
-          role: newUser.role,
-          sessionId,
-        },
-        "1d",
-      );
-      const refreshToken = signToken(
-        {
-          userId: newUser._id,
-          email: newUser.email,
-          role: newUser.role,
-          sessionId,
-        },
-        "30d",
-      );
-
-      newUser.currentRefreshToken = refreshToken;
       await newUser.save();
-
-      // Put new registered user in cache
-      userCache.set(newUser._id.toString(), {
-        id: newUser._id.toString(),
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
-        x: newUser.x,
-        z: newUser.z,
-        clothingColor: newUser.clothingColor,
-        shunyaCoins: 100,
-        level: 1,
-        xp: 0,
-        wood: 0,
-        unlockedPermits: [],
-        completedAchievements: [],
-        groupId: null,
-        dirty: false,
-      });
-
-      res.cookie("accessToken", accessToken, {
-        maxAge: 24 * 60 * 60 * 1000,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-      });
-      res.cookie("refreshToken", refreshToken, {
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-      });
+      await sendOtpEmail(emailLower, otp, "verify");
 
       res.status(201).json({
-        message: "User registered successfully",
-        user: {
-          id: newUser._id,
-          name: newUser.name,
-          email: newUser.email,
-          role: newUser.role,
-          x: newUser.x,
-          z: newUser.z,
-          clothingColor: newUser.clothingColor,
-          shunyaCoins: 100,
-          level: 1,
-          xp: 0,
-          wood: 0,
-          unlockedPermits: [],
-          completedAchievements: [],
-        },
+        message: "User registered. OTP sent to email.",
+        requiresVerification: true,
       });
     } catch (error: any) {
       console.error("Registration API Error:", error);
@@ -556,51 +504,148 @@ app.post(
   },
 );
 
-// POST /api/auth/reset
+// POST /api/auth/verify-otp
 app.post(
-  "/api/auth/reset",
+  "/api/auth/verify-otp",
   async (req: express.Request, res: express.Response) => {
     try {
       await connectDB();
-      const { email, password } = req.body;
+      const { email, otp } = req.body;
 
-      if (!email || !password) {
-        res.status(400).json({ error: "Email and new password are required" });
+      if (!email || !otp) {
+        res.status(400).json({ error: "Email and OTP are required" });
         return;
       }
 
       const emailLower = email.toLowerCase().trim();
-
       const user = await User.findOne({ email: emailLower });
+
       if (!user) {
-        res.status(404).json({ error: "User with this email does not exist" });
+        res.status(404).json({ error: "User not found" });
         return;
       }
 
-      const hashedPassword = hashPassword(password);
+      if (user.otp !== otp || !user.otpExpires || new Date() > user.otpExpires) {
+        res.status(400).json({ error: "Invalid or expired OTP" });
+        return;
+      }
+
+      user.isVerified = true;
+      user.otp = null;
+      user.otpExpires = null;
+      
       const sessionId = crypto.randomUUID();
-
-      user.password = hashedPassword;
       user.currentSessionId = sessionId;
-      user.currentRefreshToken = undefined;
 
+      const accessToken = signToken({ userId: user._id, email: user.email, role: user.role, sessionId }, "1d");
+      const refreshToken = signToken({ userId: user._id, email: user.email, role: user.role, sessionId }, "30d");
+
+      user.currentRefreshToken = refreshToken;
       await user.save();
 
-      // Update password in user cache
-      const cached = userCache.get(user._id.toString());
-      if (cached) {
-        // Just invalidate session or delete from cache so it forces re-fetch/re-login
-        userCache.delete(user._id.toString());
+      userCache.set(user._id.toString(), {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        x: user.x,
+        z: user.z,
+        clothingColor: user.clothingColor,
+        shunyaCoins: user.shunyaCoins !== undefined ? user.shunyaCoins : 100,
+        level: user.level !== undefined ? user.level : 1,
+        xp: user.xp !== undefined ? user.xp : 0,
+        wood: user.wood !== undefined ? user.wood : 0,
+        unlockedPermits: user.unlockedPermits || [],
+        completedAchievements: user.completedAchievements || [],
+        groupId: user.groupId ? user.groupId.toString() : null,
+        dirty: false,
+      });
+
+      res.cookie("accessToken", accessToken, { maxAge: 24 * 60 * 60 * 1000, httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
+      res.cookie("refreshToken", refreshToken, { maxAge: 30 * 24 * 60 * 60 * 1000, httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
+
+      res.status(200).json({ message: "Verification successful" });
+    } catch (error: any) {
+      console.error("OTP Verification Error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+// POST /api/auth/forgot-password
+app.post(
+  "/api/auth/forgot-password",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      await connectDB();
+      const { email } = req.body || {};
+      if (!email) {
+        res.status(400).json({ error: "Email is required" });
+        return;
       }
+      
+      const emailLower = email.toLowerCase().trim();
+      const user = await User.findOne({ email: emailLower });
+      if (!user) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      user.otp = otp;
+      user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+      await user.save();
+      await sendOtpEmail(emailLower, otp, "reset");
+
+      res.status(200).json({ message: "Password reset OTP sent to email" });
+    } catch (error: any) {
+      console.error("Forgot Password Error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+// POST /api/auth/reset-password
+app.post(
+  "/api/auth/reset-password",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      await connectDB();
+      const { email, otp, newPassword } = req.body || {};
+
+      if (!email || !otp || !newPassword) {
+        res.status(400).json({ error: "Email, OTP, and new password are required" });
+        return;
+      }
+
+      const emailLower = email.toLowerCase().trim();
+      const user = await User.findOne({ email: emailLower });
+
+      if (!user) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      if (user.otp !== otp || !user.otpExpires || new Date() > user.otpExpires) {
+        res.status(400).json({ error: "Invalid or expired OTP" });
+        return;
+      }
+
+      user.password = hashPassword(newPassword);
+      user.otp = null;
+      user.otpExpires = null;
+      user.currentSessionId = null;
+      user.currentRefreshToken = undefined;
+      await user.save();
+
+      userCache.delete(user._id.toString());
 
       res.status(200).json({ message: "Password reset successfully" });
     } catch (error: any) {
-      console.error("Password Reset API Error:", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error during password reset" });
+      console.error("Reset Password Error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-  },
+  }
 );
 
 // PATCH /api/auth/profile — update name, gender, dob

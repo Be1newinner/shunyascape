@@ -35,18 +35,19 @@ export class WeatherManager {
     this.dirLight = new THREE.DirectionalLight('#ffffff', 1.2);
     this.dirLight.position.set(30, 40, 20);
     this.dirLight.castShadow = true;
-    this.dirLight.shadow.mapSize.width = 2048;
-    this.dirLight.shadow.mapSize.height = 2048;
+    this.dirLight.shadow.mapSize.width = 1024;
+    this.dirLight.shadow.mapSize.height = 1024;
     this.dirLight.shadow.camera.near = 0.5;
     this.dirLight.shadow.camera.far = 150;
 
-    const d = 40;
+    const d = 25;
     this.dirLight.shadow.camera.left = -d;
     this.dirLight.shadow.camera.right = d;
     this.dirLight.shadow.camera.top = d;
     this.dirLight.shadow.camera.bottom = -d;
     this.dirLight.shadow.bias = -0.0005;
     this.ctx.scene.add(this.dirLight);
+    this.ctx.scene.add(this.dirLight.target);
   }
 
   private generateClouds() {
@@ -102,9 +103,16 @@ export class WeatherManager {
     const nextTime = (timeOfDay + delta * timeSpeed * 0.1) % 24;
 
     const angle = ((nextTime - 6) / 24) * Math.PI * 2;
-    this.dirLight.position.x = Math.cos(angle) * 60;
-    this.dirLight.position.y = Math.sin(angle) * 60;
-    this.dirLight.position.z = 20;
+    // Make directional light follow the camera target (player)
+    const targetPos = new THREE.Vector3(0, 0, 0);
+    if (this.ctx.controls && this.ctx.controls.target) {
+      targetPos.copy(this.ctx.controls.target);
+    }
+    this.dirLight.position.x = targetPos.x + Math.cos(angle) * 60;
+    this.dirLight.position.y = targetPos.y + Math.sin(angle) * 60;
+    this.dirLight.position.z = targetPos.z + 20;
+    this.dirLight.target.position.copy(targetPos);
+    this.dirLight.target.updateMatrixWorld();
 
     let skyCol = this.skyColorDay;
     let fogCol = this.fogColorDay;
@@ -149,7 +157,7 @@ export class WeatherManager {
 
   private updateBuildingWindows(isNight: boolean) {
     const emissiveColor = isNight ? new THREE.Color('#ffcc44') : new THREE.Color('#000000');
-    const mat = this.ctx.getMaterial('lit_window', null) as THREE.MeshStandardMaterial;
+    const mat = this.ctx.getMaterial('lit_window', null) as THREE.MeshLambertMaterial;
     if (mat) {
       mat.emissive.copy(emissiveColor);
     }

@@ -593,6 +593,44 @@ app.post(
   },
 );
 
+// PATCH /api/auth/profile — update name, gender, dob
+app.patch(
+  "/api/auth/profile",
+  requireAuth as express.RequestHandler,
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      await connectDB();
+      const user = req.user;
+      if (!user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { name, gender, dob } = req.body;
+      const updates: Record<string, string> = {};
+      if (name && typeof name === "string") updates.name = name.trim();
+      if (gender && ["male", "female", "other", "skip"].includes(gender)) updates.gender = gender;
+      if (dob !== undefined) updates.dob = dob;
+
+      if (Object.keys(updates).length === 0) {
+        res.status(400).json({ error: "No valid fields provided" });
+        return;
+      }
+
+      await User.updateOne({ _id: user._id }, { $set: updates });
+
+      // Update in-memory cache too
+      const cached = userCache.get(user._id.toString());
+      if (cached && updates.name) cached.name = updates.name;
+
+      res.status(200).json({ message: "Profile updated", updates });
+    } catch (error: any) {
+      console.error("Profile update error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
 // GET /api/users
 // Serve users directly from the in-memory cache!
 app.get(

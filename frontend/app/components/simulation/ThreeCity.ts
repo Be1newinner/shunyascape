@@ -1,4 +1,5 @@
 import * as THREE from "three";
+
 import {
   BuildType,
   CityStats,
@@ -20,7 +21,7 @@ import {
 } from "./Home";
 import { WeatherManager } from "./Weather";
 import { CameraManager } from "./Camera";
-import { spawnAnimals, updateAnimals } from "./NPCAnimals";
+import { spawnAnimals, updateAnimals, createAnimalMesh } from "./NPCAnimals";
 import {
   spawnVehicleOnRoad,
   cleanStrandedVehicles,
@@ -29,7 +30,6 @@ import {
 import {
   createRefinedHumanMesh,
   createNameTag,
-  wanderHuman,
   dispatchWorkerTo,
   loadAllDatabaseUsers,
   addDatabaseUser,
@@ -40,7 +40,7 @@ import { CollectibleManager } from "./Collectibles";
 import { createCentralPark, getParkCells } from "./CentralPark";
 import { createAllMountains } from "./Mountains";
 import { createRiver, RiverSystem } from "./River";
-import { LandExpansionManager, LandPlot, PLOT_SIZE } from "./LandExpansion";
+import { LandExpansionManager } from "./LandExpansion";
 import { resizeGridHelper } from "./Land";
 import {
   createRestaurantMesh,
@@ -61,7 +61,7 @@ export class ThreeCity {
   public controls!: any; // OrbitControls
 
   // Simulation Grid Configuration
-  public gridSize = 32;
+  public gridSize = 200;
   private cellSize = 2.25; // Size of each cell in world units (shrunk from 3.0)
   public grid: GridCell[][] = [];
   public selectedBuildScale = 1.0;
@@ -69,7 +69,7 @@ export class ThreeCity {
   private parkCells: Set<string> = new Set();
 
   // Land Expansion
-  public landExpansionManager: LandExpansionManager = new LandExpansionManager(32);
+  public landExpansionManager: LandExpansionManager = new LandExpansionManager(200);
 
   // Environment
   private riverSystem: RiverSystem | null = null;
@@ -87,9 +87,13 @@ export class ThreeCity {
   public audio = new CityAudio();
   private onStatsChange: (stats: CityStats) => void;
   private isDestroyed = false;
+  private isInitializing = false;
   public isAdmin = false;
   public unlockedPermits: string[] = [];
+  public gridVersion = 0;
   private npcSyncTimer = 1.0;
+  private lastVisibleGx = -1;
+  private lastVisibleGz = -1;
   public collectibleManager!: CollectibleManager;
 
   // Agents & Animations
@@ -115,6 +119,11 @@ export class ThreeCity {
   private treeHits = new Map<string, number>();
   public currentCellType = "empty";
 
+  // Graphics & Performance settings
+  public fpsCap = 60;
+  public graphicsPreset: "low" | "medium" | "high" = "low";
+  private lastFrameTime = 0;
+
   // Materials & Geometries caching
   private materialsCache: { [key: string]: THREE.Material } = {};
   private geometriesCache: { [key: string]: THREE.BufferGeometry } = {};
@@ -134,12 +143,7 @@ export class ThreeCity {
 
     this.initThree();
     this.initEnvironment();
-    this.initGrid();
-    this.initRaycasting();
-    this.collectibleManager = new CollectibleManager(this.getSimContext());
-    this.animate();
-
-    this.updateStats();
+    this.setGraphicsPreset(this.graphicsPreset);
 
     // Occasional bird chirp
     setInterval(() => {
@@ -152,6 +156,112 @@ export class ThreeCity {
         this.audio.playChirp();
       }
     }, 12000);
+  }
+
+  public async loadCity(onProgress?: (progress: number, text: string) => void) {
+    await this.initGrid(onProgress);
+    this.initRaycasting();
+    this.collectibleManager = new CollectibleManager(this.getSimContext());
+    this.animate();
+    this.updateStats();
+    
+    // Freeze all static meshes for maximum 60fps performance
+    this.optimizeStaticMeshes();
+  }
+
+  private getDynamicObjectsSet(): Set<THREE.Object3D> {
+    const dynamicObjects = new Set<THREE.Object3D>();
+    if (this.player && this.player.mesh) {
+      this.player.mesh.traverse((obj) => dynamicObjects.add(obj));
+    }
+    this.vehicles.forEach((v) => {
+      if (v.mesh) v.mesh.traverse((obj) => dynamicObjects.add(obj));
+    });
+    this.animals.forEach((a) => {
+      if (a.mesh) a.mesh.traverse((obj) => dynamicObjects.add(obj));
+    });
+    this.humans.forEach((h) => {
+      if (h.mesh) h.mesh.traverse((obj) => dynamicObjects.add(obj));
+    });
+    try {
+      getBarberPoles().forEach((pole) => {
+        if (pole) {
+          pole.traverse((obj) => dynamicObjects.add(obj));
+        }
+      });
+    } catch (e) {
+      console.warn("Error getting barber poles:", e);
+    }
+    try {
+      getPoliceRefs().forEach((ref) => {
+        if (ref) {
+          if (ref.blinkMesh) ref.blinkMesh.traverse((obj) => dynamicObjects.add(obj));
+          if (ref.blinkLight) ref.blinkLight.traverse((obj) => dynamicObjects.add(obj));
+        }
+      });
+    } catch (e) {
+      console.warn("Error getting police refs:", e);
+    }
+    return dynamicObjects;
+  }
+
+  private makeStatic(obj: THREE.Object3D, dynamicSet?: Set<THREE.Object3D>) {
+    const set = dynamicSet || this.getDynamicObjectsSet();
+    if (set.has(obj)) return;
+
+    obj.matrixAutoUpdate = false;
+    obj.updateMatrix();
+    obj.updateMatrixWorld(true);
+    obj.children.forEach((child) => this.makeStatic(child, set));
+  }
+
+  public optimizeStaticMeshes() {
+    const dynamicSet = this.getDynamicObjectsSet();
+    this.scene.traverse((obj) => {
+      if (dynamicSet.has(obj)) return;
+      if (
+        obj instanceof THREE.Mesh ||
+        obj instanceof THREE.Group ||
+        obj instanceof THREE.Line ||
+        obj instanceof THREE.Points
+      ) {
+        obj.matrixAutoUpdate = false;
+        obj.updateMatrix();
+        obj.updateMatrixWorld(true);
+      }
+    });
+  }
+
+  public updateCellVisibility(playerGx: number, playerGz: number) {
+    if (playerGx === -1 || playerGz === -1) {
+      for (let x = 0; x < this.gridSize; x++) {
+        if (!this.grid[x]) continue;
+        for (let z = 0; z < this.gridSize; z++) {
+          const cell = this.grid[x][z];
+          if (cell && cell.mesh) {
+            cell.mesh.visible = true;
+          }
+        }
+      }
+      return;
+    }
+
+    const range = 30;
+    const minX = Math.max(0, playerGx - range);
+    const maxX = Math.min(this.gridSize - 1, playerGx + range);
+    const minZ = Math.max(0, playerGz - range);
+    const maxZ = Math.min(this.gridSize - 1, playerGz + range);
+
+    for (let x = 0; x < this.gridSize; x++) {
+      if (!this.grid[x]) continue;
+      for (let z = 0; z < this.gridSize; z++) {
+        const cell = this.grid[x][z];
+        if (cell && cell.mesh) {
+          const isVisible = (x >= minX && x <= maxX && z >= minZ && z <= maxZ);
+          cell.mesh.visible = isVisible;
+        }
+      }
+    }
   }
 
   // Caching Methods
@@ -167,7 +277,7 @@ export class ThreeCity {
 
   public getMaterial = (name: string, params: any): THREE.Material => {
     if (!this.materialsCache[name]) {
-      const mat = new THREE.MeshStandardMaterial(params);
+      const mat = new THREE.MeshLambertMaterial(params);
       mat.name = name; // store key as name for traversal lookup
       this.materialsCache[name] = mat;
     }
@@ -211,12 +321,12 @@ export class ThreeCity {
     this.scene = new THREE.Scene();
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: false,
       alpha: false,
       powerPreference: "high-performance",
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(1.0);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     if (typeof document !== "undefined") {
@@ -263,10 +373,55 @@ export class ThreeCity {
 
   public resetCamera() {
     if (this.camera && this.controls) {
-      this.camera.position.set(35, 30, 45);
+      this.camera.position.set(150, 130, 180);
       this.controls.target.set(0, 0, 0);
       this.controls.update();
     }
+  }
+
+  public setGraphicsPreset(preset: "low" | "medium" | "high") {
+    this.graphicsPreset = preset;
+    if (!this.renderer) return;
+
+    if (preset === "low") {
+      this.renderer.shadowMap.enabled = false;
+      if (this.weatherManager && this.weatherManager.dirLight) {
+        this.weatherManager.dirLight.castShadow = false;
+      }
+      this.scene.fog = null;
+    } else {
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      if (this.weatherManager && this.weatherManager.dirLight) {
+        this.weatherManager.dirLight.castShadow = true;
+        const size = preset === "medium" ? 512 : 2048;
+        this.weatherManager.dirLight.shadow.mapSize.width = size;
+        this.weatherManager.dirLight.shadow.mapSize.height = size;
+        
+        if (this.weatherManager.dirLight.shadow.map) {
+          this.weatherManager.dirLight.shadow.map.dispose();
+          this.weatherManager.dirLight.shadow.map = null as any;
+        }
+      }
+      if (!this.scene.fog) {
+        const fogColor = new THREE.Color("#e0f0ff");
+        this.scene.fog = new THREE.FogExp2(fogColor, 0.015);
+      }
+    }
+
+    // Force materials shader recompilation to apply shadow map changes
+    this.scene.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh) {
+        const mesh = node as THREE.Mesh;
+        if (Array.isArray(mesh.material)) {
+          mesh.material.forEach((mat) => {
+            mat.needsUpdate = true;
+          });
+        } else if (mesh.material) {
+          mesh.material.needsUpdate = true;
+        }
+      }
+    });
   }
 
   private initEnvironment() {
@@ -283,14 +438,22 @@ export class ThreeCity {
     this.riverSystem = createRiver(this.scene, halfGridWorld);
   }
 
-  private initGrid() {
+  private async initGrid(onProgress?: (progress: number, text: string) => void) {
+    const report = async (progress: number, text: string) => {
+      if (onProgress) {
+        onProgress(progress, text);
+        // Yield to browser main thread to allow UI rendering
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+    };
+
+    await report(10, "Initializing grid space...");
     // Initialize 2D grid matrix
     for (let x = 0; x < this.gridSize; x++) {
       this.grid[x] = [];
       for (let z = 0; z < this.gridSize; z++) {
         this.grid[x][z] = {
-          x,
-          z,
+          x, z,
           type: "empty",
           mesh: null,
           constructionProgress: 0,
@@ -302,10 +465,12 @@ export class ThreeCity {
       }
     }
 
-    const center = Math.floor(this.gridSize / 2);
-    const parkRadius = 3;
+    const gs  = this.gridSize;       // 200
+    const ctr = Math.floor(gs / 2);  // 100
+    const pr  = 9;                   // park half-radius (matches CentralPark.ts)
 
-    // Mark park cells (center 6×6 are protected park)
+    await report(20, "Cultivating Central Park...");
+    // Park
     this.parkCells = getParkCells(this.gridSize);
     this.parkCells.forEach(key => {
       const [px, pz] = key.split('_').map(Number);
@@ -314,65 +479,227 @@ export class ThreeCity {
         this.grid[px][pz].targetType = 'park';
       }
     });
-
-    // Build the central park 3D geometry
     createCentralPark(this.getSimContext());
 
-    // Initial trees (skip park zone and a safe border around it)
-    for (let i = 0; i < 35; i++) {
-      const tx = Math.floor(Math.random() * this.gridSize);
-      const tz = Math.floor(Math.random() * this.gridSize);
-      // Keep away from center park area
-      const awayFromCenter = Math.abs(tx - center) > parkRadius + 1 && Math.abs(tz - center) > parkRadius + 1;
-      if (awayFromCenter) {
-        this.spawnInstantItem(tx, tz, "tree");
+    // Helper: place only on empty non-park cells
+    const isAvail = (x: number, z: number) =>
+      x >= 2 && z >= 2 && x < gs - 2 && z < gs - 2 &&
+      !this.parkCells.has(`${x}_${z}`) &&
+      this.grid[x]?.[z]?.type === 'empty';
+
+    const place = (x: number, z: number, type: "road"|"house"|"skyscraper"|"restaurant"|"clothshop"|"barbershop"|"policestation"|"tree") => {
+      if (isAvail(x, z)) this.spawnInstantItem(x, z, type);
+    };
+
+    this.isInitializing = true;
+
+    await report(30, "Laying down avenue grid and road network...");
+    // ROAD NETWORK: Avenue grid every 20 cells
+    const AVE = 20;
+    for (let r = AVE; r < gs - 2; r += AVE) {
+      for (let i = 2; i < gs - 2; i++) {
+        place(r, i, "road");
+        place(i, r, "road");
+      }
+    }
+    // Main cross spine
+    for (let i = 2; i < gs - 2; i++) {
+      place(ctr, i, "road");
+      place(i, ctr, "road");
+    }
+    // Park ring road
+    for (let x = ctr - pr - 1; x <= ctr + pr; x++) {
+      place(x, ctr - pr - 1, "road");
+      place(x, ctr + pr,     "road");
+    }
+    for (let z = ctr - pr - 1; z <= ctr + pr; z++) {
+      place(ctr - pr - 1, z, "road");
+      place(ctr + pr,     z, "road");
+    }
+    // Perimeter border road
+    for (let i = 3; i < gs - 3; i++) {
+      place(3,      i,      "road");
+      place(gs - 4, i,      "road");
+      place(i,      3,      "road");
+      place(i,      gs - 4, "road");
+    }
+
+    // Fill helper: fill a block region with building type at given density
+    const fillBlock = (
+      x1: number, z1: number, x2: number, z2: number,
+      type: "house"|"skyscraper"|"restaurant"|"clothshop"|"barbershop"|"policestation"|"tree",
+      density = 0.6
+    ) => {
+      for (let x = x1; x <= x2; x++) {
+        for (let z = z1; z <= z2; z++) {
+          if (Math.random() < density) place(x, z, type);
+        }
+      }
+    };
+
+    await report(45, "Constructing Downtown Skyscrapers...");
+    // DOWNTOWN: Skyscrapers ring the central park
+    fillBlock(ctr - pr - 8, ctr - pr - 8, ctr - pr - 2, ctr - pr - 2, "skyscraper", 0.7);
+    fillBlock(ctr + pr + 2, ctr - pr - 8, ctr + pr + 8, ctr - pr - 2, "skyscraper", 0.7);
+    fillBlock(ctr - pr - 8, ctr + pr + 2, ctr - pr - 2, ctr + pr + 8, "skyscraper", 0.7);
+    fillBlock(ctr + pr + 2, ctr + pr + 2, ctr + pr + 8, ctr + pr + 8, "skyscraper", 0.7);
+
+    await report(60, "Configuring default shops and stores...");
+    // COMMERCIAL STRIP: shops lining both sides of the main central avenues
+    const shopTypes: Array<"restaurant"|"clothshop"|"barbershop"|"policestation"> =
+      ["restaurant", "clothshop", "barbershop", "policestation"];
+    let si = 0;
+    for (let x = AVE + 2; x < gs - AVE - 2; x += 5) {
+      if (Math.abs(x - ctr) <= pr + 12) continue;
+      place(x, ctr - 2, shopTypes[si % 4]);
+      place(x, ctr + 2, shopTypes[(si + 2) % 4]);
+      si++;
+    }
+    si = 0;
+    for (let z = AVE + 2; z < gs - AVE - 2; z += 5) {
+      if (Math.abs(z - ctr) <= pr + 12) continue;
+      place(ctr - 2, z, shopTypes[(si + 1) % 4]);
+      place(ctr + 2, z, shopTypes[(si + 3) % 4]);
+      si++;
+    }
+
+    // SW MIXED (houses + occasional shops)
+    await report(75, "Developing residential neighborhoods...");
+    // NW RESIDENTIAL: dense housing on block perimeters, trees in interiors
+    for (let bx = 4; bx < ctr - pr - 12; bx += AVE) {
+      for (let bz = 4; bz < ctr - pr - 12; bz += AVE) {
+        fillBlock(bx + 1, bz + 1, bx + AVE - 2, bz + 3,             "house", 0.85);
+        fillBlock(bx + 1, bz + AVE - 4, bx + AVE - 2, bz + AVE - 2, "house", 0.85);
+        fillBlock(bx + 1, bz + 4, bx + 3, bz + AVE - 5,             "house", 0.85);
+        fillBlock(bx + AVE - 4, bz + 4, bx + AVE - 2, bz + AVE - 5, "house", 0.85);
+        fillBlock(bx + 4, bz + 4, bx + AVE - 5, bz + AVE - 5,       "tree",  0.35);
       }
     }
 
-    // Initial connecting road (cross) — skip over park zone
-    for (let z = 4; z <= this.gridSize - 5; z++) {
-      if (z < center - parkRadius || z >= center + parkRadius) {
-        this.spawnInstantItem(center, z, "road");
+    // NE RESIDENTIAL
+    for (let bx = ctr + pr + 12; bx < gs - 6; bx += AVE) {
+      for (let bz = 4; bz < ctr - pr - 12; bz += AVE) {
+        fillBlock(bx + 1, bz + 1, bx + AVE - 2, bz + 3,             "house", 0.85);
+        fillBlock(bx + 1, bz + AVE - 4, bx + AVE - 2, bz + AVE - 2, "house", 0.85);
+        fillBlock(bx + 1, bz + 4, bx + 3, bz + AVE - 5,             "house", 0.85);
+        fillBlock(bx + AVE - 4, bz + 4, bx + AVE - 2, bz + AVE - 5, "house", 0.85);
+        fillBlock(bx + 4, bz + 4, bx + AVE - 5, bz + AVE - 5,       "tree",  0.35);
       }
     }
-    for (let x = 4; x <= this.gridSize - 5; x++) {
-      if (x < center - parkRadius || x >= center + parkRadius) {
-        this.spawnInstantItem(x, center, "road");
+
+    // SW MIXED (houses + occasional shops)
+    for (let bx = 4; bx < ctr - pr - 12; bx += AVE) {
+      for (let bz = ctr + pr + 12; bz < gs - 6; bz += AVE) {
+        fillBlock(bx + 1, bz + 1, bx + AVE - 2, bz + 3,             "house", 0.8);
+        fillBlock(bx + 1, bz + AVE - 4, bx + AVE - 2, bz + AVE - 2, "house", 0.8);
+        fillBlock(bx + 1, bz + 4, bx + 3, bz + AVE - 5,             "house", 0.8);
+        fillBlock(bx + AVE - 4, bz + 4, bx + AVE - 2, bz + AVE - 5, "house", 0.8);
+        if (Math.random() < 0.4) place(bx + 1, bz + 1, "barbershop");
+        if (Math.random() < 0.3) place(bx + AVE - 3, bz + 1, "restaurant");
+        fillBlock(bx + 4, bz + 4, bx + AVE - 5, bz + AVE - 5,       "tree",  0.3);
       }
     }
 
-    // A ring road around the park
-    const pr = parkRadius;
-    for (let x = center - pr - 1; x <= center + pr; x++) {
-      this.spawnInstantItem(x, center - pr - 1, "road");
-      this.spawnInstantItem(x, center + pr, "road");
+    // SE COMMERCIAL (skyscrapers + shops)
+    for (let bx = ctr + pr + 12; bx < gs - 6; bx += AVE) {
+      for (let bz = ctr + pr + 12; bz < gs - 6; bz += AVE) {
+        fillBlock(bx + 1, bz + 1, bx + AVE - 2, bz + AVE - 2, "skyscraper", 0.45);
+        if (Math.random() < 0.5) place(bx + 1, bz + 1, "clothshop");
+        if (Math.random() < 0.5) place(bx + AVE - 3, bz + AVE - 3, "policestation");
+        fillBlock(bx + 5, bz + 5, bx + AVE - 6, bz + AVE - 6, "tree", 0.2);
+      }
     }
-    for (let z = center - pr - 1; z <= center + pr; z++) {
-      this.spawnInstantItem(center - pr - 1, z, "road");
-      this.spawnInstantItem(center + pr, z, "road");
+
+    // GUARANTEED SHOP CORNERS at 8 positions across the map
+    const shopCorners = [
+      [AVE + 2, AVE + 2],         [gs - AVE - 5, AVE + 2],
+      [AVE + 2, gs - AVE - 5],    [gs - AVE - 5, gs - AVE - 5],
+      [ctr - 30, AVE + 2],        [ctr + 28, AVE + 2],
+      [ctr - 30, gs - AVE - 5],   [ctr + 28, gs - AVE - 5],
+    ];
+    const dedShops: Array<"restaurant"|"clothshop"|"barbershop"|"policestation"> =
+      ["restaurant", "clothshop", "barbershop", "policestation",
+       "restaurant", "clothshop", "barbershop", "policestation"];
+    shopCorners.forEach(([sx, sz], i) => {
+      place(sx,     sz,     dedShops[i]);
+      place(sx + 2, sz,     dedShops[(i + 1) % 4]);
+      place(sx,     sz + 2, dedShops[(i + 2) % 4]);
+    });
+
+    await report(85, "Planting trees and green boulevards...");
+    // TREE BOULEVARDS alongside each avenue
+    for (let r = AVE; r < gs - 2; r += AVE) {
+      for (let i = 4; i < gs - 4; i += 3) {
+        place(r - 1, i, "tree");
+        place(r + 1, i, "tree");
+        place(i, r - 1, "tree");
+        place(i, r + 1, "tree");
+      }
     }
 
-    // Initial houses (outside park ring)
-    this.spawnInstantItem(center - pr - 2, 8, "house");
-    this.spawnInstantItem(center + pr + 2, 22, "house");
-    this.spawnInstantItem(8, center - pr - 2, "house");
-    this.spawnInstantItem(22, center + pr + 2, "house");
+    // SCATTER extra trees in remaining empty patches
+    for (let i = 0; i < 200; i++) {
+      const tx = 4 + Math.floor(Math.random() * (gs - 8));
+      const tz = 4 + Math.floor(Math.random() * (gs - 8));
+      place(tx, tz, "tree");
+    }
 
-    // Initial shops & skyscraper (one of each type)
-    this.spawnInstantItem(6, 6, "restaurant");
-    this.spawnInstantItem(25, 6, "clothshop");
-    this.spawnInstantItem(6, 25, "barbershop");
-    this.spawnInstantItem(25, 25, "policestation");
-    this.spawnInstantItem(22, 19, "skyscraper");
-
-    // Spawn starting humans
-    for (let i = 0; i < 12; i++) {
+    await report(95, "Spawning city population & wildlife...");
+    // 70 NPCs
+    for (let i = 0; i < 70; i++) {
       this.spawnHumanAtRandomHouse();
     }
 
-    // Spawn voxel Cow, Dog, Cat, Bird
+    // Animals: 10 dogs + 10 cows + 15 cats + colorful parrots
+    this._spawnSpecificAnimals('dog', 10);
+    this._spawnSpecificAnimals('cow', 10);
+    this._spawnSpecificAnimals('cat', 15);
     spawnAnimals(this.getSimContext(), this.animals);
+    spawnAnimals(this.getSimContext(), this.animals);
+
+    this.isInitializing = false;
+    this.recalculateRoadConnections();
+    this.gridVersion++;
+
+    await report(100, "City Loaded!");
   }
+
+  /** Spawn a specific type of animal N times */
+  private _spawnSpecificAnimals(type: 'cow' | 'dog' | 'cat' | 'bird', count: number) {
+    const ctx = this.getSimContext();
+    for (let i = 0; i < count; i++) {
+      const spawnX = (Math.random() - 0.5) * (this.gridSize * this.cellSize - 8);
+      const spawnZ = (Math.random() - 0.5) * (this.gridSize * this.cellSize - 8);
+
+      const isFido = type === 'dog' && i === 0 && !this.animals.some(a => a.isFido);
+
+      const group = new THREE.Group();
+      group.position.set(spawnX, 0, spawnZ);
+
+      const agent: Partial<AnimalAgent> = { isFido };
+      const mesh = createAnimalMesh(ctx, type, agent);
+      mesh.scale.set(this.cellSize / 3.0, this.cellSize / 3.0, this.cellSize / 3.0);
+      group.add(mesh);
+
+      ctx.scene.add(group);
+      this.animals.push({
+        id: isFido ? 'fido' : `animal_${type}_${Math.random().toString(36).substr(2, 9)}`,
+        type,
+        mesh: group,
+        x: spawnX, z: spawnZ,
+        targetX: spawnX, targetZ: spawnZ,
+        state: 'idle',
+        speed: 0.8 + Math.random() * 0.6,
+        bounceTimer: Math.random() * 5,
+        idleTimer: Math.random() * 4,
+        legSwingPivot1: agent.legSwingPivot1,
+        legSwingPivot2: agent.legSwingPivot2,
+        tailPivot: agent.tailPivot,
+        isFido,
+      });
+    }
+  }
+
 
   private initRaycasting() {
     const planeGeom = new THREE.PlaneGeometry(
@@ -493,15 +820,27 @@ export class ThreeCity {
     cell.mesh = mesh;
     this.scene.add(mesh);
 
-    mesh.scale.set(0.01, 0.01, 0.01);
-    const cellScale = cell.scale || 1.0;
-    const finalScale = (this.cellSize / 3.0) * cellScale;
-    this.animateGrow(mesh, finalScale, 400);
-
-    if (type === "road") {
-      this.recalculateRoadConnections();
+    if (this.isInitializing) {
+      const cellScale = cell.scale || 1.0;
+      const finalScale = (this.cellSize / 3.0) * cellScale;
+      mesh.scale.set(finalScale, finalScale, finalScale);
+      if (type !== "road") {
+        this.updateStoreBoard(x, z);
+      }
+      this.makeStatic(mesh);
     } else {
-      this.updateStoreBoard(x, z);
+      mesh.scale.set(0.01, 0.01, 0.01);
+      const cellScale = cell.scale || 1.0;
+      const finalScale = (this.cellSize / 3.0) * cellScale;
+      this.animateGrow(mesh, finalScale, 400);
+
+      if (type === "road") {
+        this.recalculateRoadConnections();
+      } else {
+        this.updateStoreBoard(x, z);
+      }
+      this.gridVersion++;
+      this.updateCellVisibility(this.lastVisibleGx, this.lastVisibleGz);
     }
   }
 
@@ -569,6 +908,9 @@ export class ThreeCity {
     constructionMesh.scale.set(finalScale, finalScale, finalScale);
     cell.mesh = constructionMesh;
     this.scene.add(constructionMesh);
+    this.makeStatic(constructionMesh);
+    this.gridVersion++;
+    this.updateCellVisibility(this.lastVisibleGx, this.lastVisibleGz);
 
     this.audio.playPop();
     this.spawnParticle(x, z, "#eebb33", 8);
@@ -639,6 +981,7 @@ export class ThreeCity {
     cell.targetType = "empty";
     cell.mesh = null;
     cell.constructionProgress = 0;
+    this.gridVersion++;
 
     this.audio.playDestroy();
     this.spawnParticle(x, z, "#555555", 15);
@@ -699,6 +1042,7 @@ export class ThreeCity {
           .catch((err) => console.error("Failed to save grid demolition:", err));
       }
     }
+    this.updateCellVisibility(this.lastVisibleGx, this.lastVisibleGz);
   }
 
   public recalculateRoadConnections() {
@@ -771,6 +1115,8 @@ export class ThreeCity {
 
       if (progress < 1.0) {
         requestAnimationFrame(update);
+      } else {
+        this.makeStatic(mesh);
       }
     };
     requestAnimationFrame(update);
@@ -788,6 +1134,7 @@ export class ThreeCity {
 
     cell.type = type;
     cell.constructionProgress = 100;
+    this.gridVersion++;
 
     const mesh = this.createMeshForType(type, x, z);
     cell.mesh = mesh;
@@ -877,6 +1224,7 @@ export class ThreeCity {
           .catch((err) => console.error("Failed to save grid completion:", err));
       }
     }
+    this.updateCellVisibility(this.lastVisibleGx, this.lastVisibleGz);
   }
 
   private spawnHumanAtRandomHouse() {
@@ -958,8 +1306,8 @@ export class ThreeCity {
 
   public spawnPlayer(
     name: string,
-    x: number = 0,
-    z: number = 0,
+    _x: number = 0,
+    _z: number = 0,
     email?: string,
     clothingColor?: number,
     dbUserId?: string,
@@ -1024,7 +1372,7 @@ export class ThreeCity {
       targetCellZ: cellZ,
       path: [],
       pathIndex: 0,
-      speed: 4.5,
+      speed: 8.5,
       bounceTimer: 0,
       workTimer: 0,
       jobCellX: null,
@@ -1077,6 +1425,10 @@ export class ThreeCity {
 
     this.initKeyboardListeners();
     this.updateStats();
+
+    this.lastVisibleGx = pCellX;
+    this.lastVisibleGz = pCellZ;
+    this.updateCellVisibility(pCellX, pCellZ);
   }
 
   public updatePlayerLevel(newLvl: number) {
@@ -1139,7 +1491,7 @@ export class ThreeCity {
     const colorVal = new THREE.Color(hexColor);
     this.player.mesh.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
-      const mat = obj.material as THREE.MeshStandardMaterial;
+      const mat = obj.material as THREE.MeshLambertMaterial;
       // Hair meshes use a material name prefixed with 'hair_'
       if (mat.name?.startsWith('hair_') || (mat.color && (
         mat.color.getHexString() === '1a1a1a' ||
@@ -1148,7 +1500,7 @@ export class ThreeCity {
         mat.color.getHexString() === 'b83b1d'
       ))) {
         // Clone material to avoid affecting NPCs sharing the cached material
-        const cloned = (mat as THREE.MeshStandardMaterial).clone();
+        const cloned = (mat as THREE.MeshLambertMaterial).clone();
         cloned.color = colorVal;
         obj.material = cloned;
       }
@@ -1166,7 +1518,7 @@ export class ThreeCity {
 
     this.player.mesh.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
-      const mat = obj.material as THREE.MeshStandardMaterial;
+      const mat = obj.material as THREE.MeshLambertMaterial;
       const matName = mat.name ?? '';
 
       let matches = false;
@@ -1175,7 +1527,7 @@ export class ThreeCity {
       if (slot === 'shoe' && (matName === 'shoes_black' || matName.startsWith('shoes_'))) matches = true;
 
       if (matches) {
-        const cloned = (mat as THREE.MeshStandardMaterial).clone();
+        const cloned = (mat as THREE.MeshLambertMaterial).clone();
         cloned.color = colorVal;
         obj.material = cloned;
       }
@@ -1352,6 +1704,7 @@ export class ThreeCity {
   public syncGrid(cells: any[]) {
     if (this.isDestroyed) return;
 
+    let hasGridChanges = false;
     cells.forEach((c) => {
       if (c.x < 0 || c.x >= this.gridSize || c.z < 0 || c.z >= this.gridSize)
         return;
@@ -1368,6 +1721,7 @@ export class ThreeCity {
         localCell.isPurchased !== c.isPurchased;
 
       if (needsUpdate) {
+        hasGridChanges = true;
         const typeOrScaleChanged = localCell.type !== c.type || localCell.scale !== c.scale;
 
         localCell.type = c.type;
@@ -1398,6 +1752,7 @@ export class ThreeCity {
             localCell.mesh = this.createMeshForType(c.type, c.x, c.z);
           }
           this.scene.add(localCell.mesh);
+          this.makeStatic(localCell.mesh);
         }
 
         if (c.type === "road" || localCell.type === "road") {
@@ -1408,7 +1763,11 @@ export class ThreeCity {
         this.updateStoreBoard(c.x, c.z);
       }
     });
+    if (hasGridChanges) {
+      this.gridVersion++;
+    }
     this.updateStats();
+    this.updateCellVisibility(this.lastVisibleGx, this.lastVisibleGz);
   }
 
   public syncNpcs(npcs: any[], isAdmin: boolean) {
@@ -1668,25 +2027,66 @@ export class ThreeCity {
     if (this.isDestroyed) return;
     this.animationFrameId = requestAnimationFrame(this.animate);
 
+    const now = performance.now();
+    const minFrameInterval = 1000 / this.fpsCap;
+    if (now - this.lastFrameTime < minFrameInterval - 1) { // 1ms tolerance to avoid dropping frames close to target
+      return;
+    }
+    this.lastFrameTime = now;
+
     this.timer.update();
     const delta = Math.min(this.timer.getDelta(), 0.1);
 
-    // Keyboard Camera Rotation (for touchpad/laptop usability)
-    if (this.keysPressed["q"] || this.keysPressed["e"]) {
+    // Keyboard Camera Rotation (WASD keys for horizontal and vertical orbit)
+    if (
+      this.keysPressed["w"] ||
+      this.keysPressed["s"] ||
+      this.keysPressed["a"] ||
+      this.keysPressed["d"]
+    ) {
       const offset = new THREE.Vector3().copy(this.camera.position).sub(this.controls.target);
-      const rotationSpeed = 1.5 * delta;
-      const angle = this.keysPressed["q"] ? rotationSpeed : -rotationSpeed;
-      offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+      
+      // Horizontal rotation (A and D keys)
+      if (this.keysPressed["a"] || this.keysPressed["d"]) {
+        const rotationSpeed = 1.5 * delta;
+        const angle = this.keysPressed["a"] ? rotationSpeed : -rotationSpeed;
+        offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+      }
+
+      // Vertical rotation (W and S keys)
+      if (this.keysPressed["w"] || this.keysPressed["s"]) {
+        const rotationSpeed = 1.5 * delta;
+        // w moves camera UP (decreases polar angle), s moves camera DOWN (increases polar angle)
+        const angle = this.keysPressed["w"] ? -rotationSpeed : rotationSpeed;
+        
+        // Calculate the local camera right axis in the horizontal plane
+        const right = new THREE.Vector3().crossVectors(offset, new THREE.Vector3(0, 1, 0)).normalize();
+        
+        // Test rotate the offset around the right axis
+        const testOffset = offset.clone().applyAxisAngle(right, angle);
+        
+        // Check polar angle limits to prevent flipping/clipping
+        const up = new THREE.Vector3(0, 1, 0);
+        const polarAngle = testOffset.angleTo(up);
+        
+        const minPolar = 0.01;
+        const maxPolar = this.controls.maxPolarAngle || (Math.PI / 2 - 0.05);
+        
+        if (polarAngle >= minPolar && polarAngle <= maxPolar) {
+          offset.copy(testOffset);
+        }
+      }
+
       this.camera.position.copy(this.controls.target).add(offset);
       this.controls.update();
     }
 
-    // Keyboard Camera Zooming (2 to zoom in, 3 to zoom out)
-    if (this.keysPressed["2"] || this.keysPressed["3"]) {
+    // Keyboard Camera Zooming (q to zoom in, e to zoom out)
+    if (this.keysPressed["q"] || this.keysPressed["e"]) {
       const offset = new THREE.Vector3().copy(this.camera.position).sub(this.controls.target);
       const zoomSpeed = 2.0; // zoom speed factor
-      // Zoom factor: if '2' is pressed, zoom in (multiplier < 1), if '3' is pressed, zoom out (multiplier > 1)
-      const factor = this.keysPressed["2"] ? (1 - zoomSpeed * delta) : (1 + zoomSpeed * delta);
+      // Zoom factor: if 'q' is pressed, zoom in (multiplier < 1), if 'e' is pressed, zoom out (multiplier > 1)
+      const factor = this.keysPressed["q"] ? (1 - zoomSpeed * delta) : (1 + zoomSpeed * delta);
       offset.multiplyScalar(factor);
       
       const currentDist = offset.length();
@@ -1887,7 +2287,7 @@ export class ThreeCity {
     const blinkOn = Math.sin(elapsed * 8) > 0;
     for (const ref of getPoliceRefs()) {
       ref.blinkLight.intensity = blinkOn ? 3.0 : 0;
-      (ref.blinkMesh.material as THREE.MeshStandardMaterial).emissiveIntensity = blinkOn ? 2.5 : 0.2;
+      (ref.blinkMesh.material as THREE.MeshLambertMaterial).emissiveIntensity = blinkOn ? 2.5 : 0.2;
     }
 
     // standing cell check
@@ -1896,6 +2296,12 @@ export class ThreeCity {
       const gx = Math.floor((this.player.mesh.position.x + halfGrid) / this.cellSize);
       const gz = Math.floor((this.player.mesh.position.z + halfGrid) / this.cellSize);
       if (gx >= 0 && gx < this.gridSize && gz >= 0 && gz < this.gridSize) {
+        if (this.lastVisibleGx !== gx || this.lastVisibleGz !== gz) {
+          this.lastVisibleGx = gx;
+          this.lastVisibleGz = gz;
+          this.updateCellVisibility(gx, gz);
+        }
+
         const cell = this.grid[gx][gz];
         if (this.currentCellType !== cell.type) {
           this.currentCellType = cell.type;

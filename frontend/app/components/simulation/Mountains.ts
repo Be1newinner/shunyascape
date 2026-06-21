@@ -39,14 +39,12 @@ function _createMountainPeak(
   group.position.set(x, 0, z);
 
   // Rock material — slightly random-ish flat shading
-  const rockMat = new THREE.MeshStandardMaterial({
+  const rockMat = new THREE.MeshLambertMaterial({
     color: '#7a8a9a',
-    roughness: 0.95,
     flatShading: true,
   });
-  const snowMat = new THREE.MeshStandardMaterial({
+  const snowMat = new THREE.MeshLambertMaterial({
     color: '#e8eef5',
-    roughness: 0.6,
     flatShading: true,
   });
 

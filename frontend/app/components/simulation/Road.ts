@@ -13,7 +13,7 @@ export function createRoadMesh(ctx: SimContext, x: number, z: number): THREE.Gro
   const roadMat = ctx.getMaterial('road_base', { color: '#2b2b2b', roughness: 0.8 });
   const roadMesh = new THREE.Mesh(roadGeom, roadMat);
   roadMesh.position.y = 0.04;
-  roadMesh.receiveShadow = true;
+  roadMesh.receiveShadow = false;
   group.add(roadMesh);
 
   return group;

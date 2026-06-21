@@ -13,8 +13,8 @@ export class CameraManager {
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    this.camera.position.set(35, 30, 45);
+    this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 4000);
+    this.camera.position.set(150, 130, 180);
 
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
@@ -22,7 +22,7 @@ export class CameraManager {
     this.controls.screenSpacePanning = false;
     this.controls.maxPolarAngle = Math.PI / 2 - 0.05;
     this.controls.minDistance = 5;
-    this.controls.maxDistance = 150;
+    this.controls.maxDistance = 1200;
     this.controls.target.set(0, 0, 0);
     
     this.controls.mouseButtons = {

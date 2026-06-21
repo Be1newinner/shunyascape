@@ -21,11 +21,11 @@ export function createRestaurantMesh(ctx: SimContext, x: number, z: number): THR
   group.position.set(wx, 0, wz);
 
   const cs = 3.0;
-  const redMat   = new THREE.MeshStandardMaterial({ color: '#cc1a1a', roughness: 0.7 });
-  const yellowMat = new THREE.MeshStandardMaterial({ color: '#ffcc00', roughness: 0.6 });
-  const whiteMat = new THREE.MeshStandardMaterial({ color: '#f5f5f5', roughness: 0.8 });
-  const glassMat = new THREE.MeshStandardMaterial({ color: '#90caf9', roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.6 });
-  const darkMat  = new THREE.MeshStandardMaterial({ color: '#1a1a1a', roughness: 0.9 });
+  const redMat   = new THREE.MeshLambertMaterial({ color: '#cc1a1a' });
+  const yellowMat = new THREE.MeshLambertMaterial({ color: '#ffcc00' });
+  const whiteMat = new THREE.MeshLambertMaterial({ color: '#f5f5f5' });
+  const glassMat = new THREE.MeshLambertMaterial({ color: '#90caf9', transparent: true, opacity: 0.6 });
+  const darkMat  = new THREE.MeshLambertMaterial({ color: '#1a1a1a' });
 
   // Main building body
   const body = new THREE.Mesh(new THREE.BoxGeometry(cs * 0.88, cs * 0.7, cs * 0.88), redMat);
@@ -108,11 +108,10 @@ export function createClothShopMesh(ctx: SimContext, x: number, z: number): THRE
   group.position.set(wx, 0, wz);
 
   const cs = 3.0;
-  const blueMat   = new THREE.MeshStandardMaterial({ color: '#1565c0', roughness: 0.8 });
-  const whiteMat  = new THREE.MeshStandardMaterial({ color: '#f0f0f0', roughness: 0.85 });
-  const stripeMat = new THREE.MeshStandardMaterial({ color: '#2196f3', roughness: 0.8 });
-  const glassMat  = new THREE.MeshStandardMaterial({ color: '#b3e5fc', roughness: 0.1, transparent: true, opacity: 0.55 });
-  const skinMat   = new THREE.MeshStandardMaterial({ color: '#f1c27d', roughness: 0.85 });
+  const blueMat   = new THREE.MeshLambertMaterial({ color: '#1565c0' });
+  const whiteMat  = new THREE.MeshLambertMaterial({ color: '#f0f0f0' });
+  const glassMat  = new THREE.MeshLambertMaterial({ color: '#b3e5fc', transparent: true, opacity: 0.55 });
+  const skinMat   = new THREE.MeshLambertMaterial({ color: '#f1c27d' });
 
   // Main body
   const body = new THREE.Mesh(new THREE.BoxGeometry(cs * 0.88, cs * 0.65, cs * 0.88), whiteMat);
@@ -158,8 +157,8 @@ export function createClothShopMesh(ctx: SimContext, x: number, z: number): THRE
   group.add(signBack);
 
   // Cloth hangers (small hooks on sides)
-  for (let side of [-1, 1]) {
-    const hanger = new THREE.Mesh(new THREE.BoxGeometry(0.04, cs * 0.12, 0.04), new THREE.MeshStandardMaterial({ color: '#888', roughness: 0.5 }));
+  for (const side of [-1, 1]) {
+    const hanger = new THREE.Mesh(new THREE.BoxGeometry(0.04, cs * 0.12, 0.04), new THREE.MeshLambertMaterial({ color: '#888' }));
     hanger.position.set(side * cs * 0.35, cs * 0.48, cs * 0.44);
     group.add(hanger);
   }
@@ -170,7 +169,7 @@ export function createClothShopMesh(ctx: SimContext, x: number, z: number): THRE
 // ─────────────────────────────────────────────────────────────────────────────
 // ✂️ BARBER SHOP  (with animated barber pole — pole mesh returned for animation)
 // ─────────────────────────────────────────────────────────────────────────────
-let _barberPoles: THREE.Mesh[] = [];
+const _barberPoles: THREE.Mesh[] = [];
 
 export function getBarberPoles(): THREE.Mesh[] { return _barberPoles; }
 
@@ -180,11 +179,11 @@ export function createBarbershopMesh(ctx: SimContext, x: number, z: number): THR
   group.position.set(wx, 0, wz);
 
   const cs = 3.0;
-  const whiteMat = new THREE.MeshStandardMaterial({ color: '#f8f8f8', roughness: 0.85 });
-  const redMat   = new THREE.MeshStandardMaterial({ color: '#d32f2f', roughness: 0.7 });
-  const blueMat  = new THREE.MeshStandardMaterial({ color: '#1565c0', roughness: 0.7 });
-  const darkMat  = new THREE.MeshStandardMaterial({ color: '#2a2a2a', roughness: 0.9 });
-  const glassMat = new THREE.MeshStandardMaterial({ color: '#b3e5fc', roughness: 0.1, transparent: true, opacity: 0.5 });
+  const whiteMat = new THREE.MeshLambertMaterial({ color: '#f8f8f8' });
+  const redMat   = new THREE.MeshLambertMaterial({ color: '#d32f2f' });
+  const blueMat  = new THREE.MeshLambertMaterial({ color: '#1565c0' });
+  const darkMat  = new THREE.MeshLambertMaterial({ color: '#2a2a2a' });
+  const glassMat = new THREE.MeshLambertMaterial({ color: '#b3e5fc', transparent: true, opacity: 0.5 });
 
   // Main body
   const body = new THREE.Mesh(new THREE.BoxGeometry(cs * 0.88, cs * 0.65, cs * 0.88), whiteMat);
@@ -234,8 +233,8 @@ export function createBarbershopMesh(ctx: SimContext, x: number, z: number): THR
   poleGroup.add(poleCylinder);
 
   // Red spiral stripe (approximated with tilted thin discs)
-  const spiralRedMat = new THREE.MeshStandardMaterial({ color: '#d32f2f', roughness: 0.6 });
-  const spiralBlueMat = new THREE.MeshStandardMaterial({ color: '#1a69c4', roughness: 0.6 });
+  const spiralRedMat = new THREE.MeshLambertMaterial({ color: '#d32f2f' });
+  const spiralBlueMat = new THREE.MeshLambertMaterial({ color: '#1a69c4' });
 
   const stripeGeom = new THREE.TorusGeometry(0.055, 0.018, 8, 20, Math.PI * 0.6);
   for (let i = 0; i < 5; i++) {
@@ -276,11 +275,11 @@ export function createPoliceStationMesh(ctx: SimContext, x: number, z: number): 
   group.position.set(wx, 0, wz);
 
   const cs = 3.0;
-  const navyMat  = new THREE.MeshStandardMaterial({ color: '#1a237e', roughness: 0.75 });
-  const midMat   = new THREE.MeshStandardMaterial({ color: '#283593', roughness: 0.8 });
-  const whiteMat = new THREE.MeshStandardMaterial({ color: '#eceff1', roughness: 0.85 });
-  const darkMat  = new THREE.MeshStandardMaterial({ color: '#0d1117', roughness: 0.95 });
-  const glassMat = new THREE.MeshStandardMaterial({ color: '#90caf9', roughness: 0.1, transparent: true, opacity: 0.5 });
+  const navyMat  = new THREE.MeshLambertMaterial({ color: '#1a237e' });
+  const midMat   = new THREE.MeshLambertMaterial({ color: '#283593' });
+  const whiteMat = new THREE.MeshLambertMaterial({ color: '#eceff1' });
+  const darkMat  = new THREE.MeshLambertMaterial({ color: '#0d1117' });
+  const glassMat = new THREE.MeshLambertMaterial({ color: '#90caf9', transparent: true, opacity: 0.5 });
 
   // Main building
   const body = new THREE.Mesh(new THREE.BoxGeometry(cs * 0.88, cs * 0.8, cs * 0.88), midMat);
@@ -326,7 +325,7 @@ export function createPoliceStationMesh(ctx: SimContext, x: number, z: number): 
   group.add(signPlate);
 
   // Badge emblem (star shape — simplified as concentric cylinders)
-  const badgeMat = new THREE.MeshStandardMaterial({ color: '#ffd54f', metalness: 0.7, roughness: 0.2 });
+  const badgeMat = new THREE.MeshLambertMaterial({ color: '#ffd54f' });
   const badge = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.04, 6), badgeMat);
   badge.position.set(0, cs * 0.57, cs * 0.445);
   badge.rotation.y = Math.PI / 6;
@@ -337,7 +336,7 @@ export function createPoliceStationMesh(ctx: SimContext, x: number, z: number): 
   lightBase.position.set(0, cs * 0.88, 0);
   group.add(lightBase);
 
-  const blinkMeshMat = new THREE.MeshStandardMaterial({
+  const blinkMeshMat = new THREE.MeshLambertMaterial({
     color: '#2196f3',
     emissive: '#2196f3',
     emissiveIntensity: 2.0,

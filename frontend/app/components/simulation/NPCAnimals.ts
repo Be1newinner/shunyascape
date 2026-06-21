@@ -492,9 +492,11 @@ export function createAnimalMesh(
       break;
     }
     case 'bird': {
-      // Body (Red Cardinal Voxel)
+      // Body — random vivid parrot color
+      const parrotColors = ['#22cc44', '#1188ff', '#ffcc00', '#ff6600', '#cc22ff', '#ff2222'];
+      const parrotColor = parrotColors[Math.floor(Math.random() * parrotColors.length)];
       const bodyGeom = ctx.getGeometry('bird_body', () => new THREE.BoxGeometry(0.12, 0.1, 0.18));
-      const bodyMat = ctx.getMaterial('bird_red', { color: '#ff2222', roughness: 0.5 });
+      const bodyMat = ctx.getMaterial('bird_' + parrotColor, { color: parrotColor, roughness: 0.5 });
       const body = new THREE.Mesh(bodyGeom, bodyMat);
       body.position.y = 0.5;
       body.castShadow = true;
@@ -586,13 +588,14 @@ export function createAnimalMesh(
 }
 
 export function spawnAnimals(ctx: SimContext, animalsList: AnimalAgent[]) {
-  const types: ('cow' | 'dog' | 'cat' | 'bird')[] = ['cow', 'dog', 'cat', 'bird'];
+  // More birds in the mix to simulate parrots
+  const types: ('cow' | 'dog' | 'cat' | 'bird')[] = ['cow', 'dog', 'cat', 'bird', 'bird', 'cat', 'dog', 'bird'];
   
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const type = types[i % types.length];
     const spawnX = (Math.random() - 0.5) * (ctx.gridSize * ctx.cellSize - 4);
     const spawnZ = (Math.random() - 0.5) * (ctx.gridSize * ctx.cellSize - 4);
-    const yVal = type === 'bird' ? 6.0 + Math.random() * 4.0 : 0;
+    const yVal = type === 'bird' ? 5.0 + Math.random() * 8.0 : 0;
 
     let isFido = false;
     if (type === 'dog' && !animalsList.some(a => a.isFido)) {
@@ -627,7 +630,7 @@ export function spawnAnimals(ctx: SimContext, animalsList: AnimalAgent[]) {
       targetX: spawnX,
       targetZ: spawnZ,
       state: type === 'bird' ? 'flying' : 'idle',
-      speed: type === 'bird' ? 3.0 : 0.8 + Math.random() * 0.6,
+      speed: type === 'bird' ? 3.0 + Math.random() * 2.0 : 0.8 + Math.random() * 0.6,
       bounceTimer: Math.random() * 5,
       idleTimer: Math.random() * 4,
       legSwingPivot1: agent.legSwingPivot1,

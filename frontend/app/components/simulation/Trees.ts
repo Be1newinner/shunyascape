@@ -13,8 +13,8 @@ export function createTreeMesh(ctx: SimContext, x: number, z: number): THREE.Gro
   const trunkMat = ctx.getMaterial('trunk', { color: '#5c4033', roughness: 0.95 });
   const trunk = new THREE.Mesh(trunkGeom, trunkMat);
   trunk.position.y = 0.6;
-  trunk.castShadow = true;
-  trunk.receiveShadow = true;
+  trunk.castShadow = false;
+  trunk.receiveShadow = false;
   group.add(trunk);
 
   // Fluffy green leaves (stacked cones for low-poly feel)
@@ -26,7 +26,7 @@ export function createTreeMesh(ctx: SimContext, x: number, z: number): THREE.Gro
     const leafGeom = new THREE.ConeGeometry(leafSizes[idx], 0.8, 5);
     const leaves = new THREE.Mesh(leafGeom, foliageMat);
     leaves.position.y = h;
-    leaves.castShadow = true;
+    leaves.castShadow = false;
     group.add(leaves);
   });
 

@@ -11,7 +11,7 @@ export interface RiverSystem {
  */
 export function createRiver(scene: THREE.Scene, halfGridWorld: number): RiverSystem {
   const riverMeshes: THREE.Mesh[] = [];
-  const riverMaterials: THREE.MeshStandardMaterial[] = [];
+  const riverMaterials: THREE.MeshLambertMaterial[] = [];
 
   // ── River path: sinusoidal curve from NW to SE edge ───────────────────────
   // Control points form a gentle S-curve flowing from top-left to bottom-right
@@ -29,10 +29,8 @@ export function createRiver(scene: THREE.Scene, halfGridWorld: number): RiverSys
 
   // ── Water tube ─────────────────────────────────────────────────────────────
   const tubeGeom = new THREE.TubeGeometry(curve, 60, 2.8, 8, false);
-  const waterMat = new THREE.MeshStandardMaterial({
+  const waterMat = new THREE.MeshLambertMaterial({
     color: '#2277aa',
-    roughness: 0.05,
-    metalness: 0.5,
     transparent: true,
     opacity: 0.82,
     // We'll animate UV offset to simulate river flow
@@ -47,10 +45,8 @@ export function createRiver(scene: THREE.Scene, halfGridWorld: number): RiverSys
 
   // ── Secondary gloss highlight surface (slightly narrower) ──────────────────
   const glossTubeGeom = new THREE.TubeGeometry(curve, 40, 1.8, 6, false);
-  const glossMat = new THREE.MeshStandardMaterial({
+  const glossMat = new THREE.MeshLambertMaterial({
     color: '#44aadd',
-    roughness: 0.0,
-    metalness: 0.9,
     transparent: true,
     opacity: 0.45,
     emissive: '#1155aa',
@@ -97,8 +93,8 @@ function _createRiverBanks(
   curve: THREE.CatmullRomCurve3,
   _halfGridWorld: number
 ): void {
-  const bankMat = new THREE.MeshStandardMaterial({ color: '#3d5e2e', roughness: 0.9 });
-  const sandMat = new THREE.MeshStandardMaterial({ color: '#c8b87e', roughness: 0.95 });
+  const bankMat = new THREE.MeshLambertMaterial({ color: '#3d5e2e' });
+  const sandMat = new THREE.MeshLambertMaterial({ color: '#c8b87e' });
 
   // Sample points along curve and create bank segments
   const numSamples = 30;
@@ -133,13 +129,12 @@ function _createRiverBanks(
 }
 
 function _createBankDecorations(scene: THREE.Scene, curve: THREE.CatmullRomCurve3): void {
-  const trunkMat = new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.95 });
-  const foliageMat = new THREE.MeshStandardMaterial({
+  const trunkMat = new THREE.MeshLambertMaterial({ color: '#5c4033' });
+  const foliageMat = new THREE.MeshLambertMaterial({
     color: '#2a5e15',
-    roughness: 0.8,
     flatShading: true,
   });
-  const rockMat = new THREE.MeshStandardMaterial({ color: '#888', roughness: 0.9 });
+  const rockMat = new THREE.MeshLambertMaterial({ color: '#888' });
 
   const numTrees = 18;
   for (let i = 0; i < numTrees; i++) {

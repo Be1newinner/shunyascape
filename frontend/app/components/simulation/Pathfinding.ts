@@ -8,47 +8,97 @@ export function findPath(
   endX: number,
   endZ: number
 ): { x: number; z: number }[] | null {
-  // Standard BFS pathfinding
-  const queue: { x: number; z: number; path: { x: number; z: number }[] }[] = [];
-  const visited = new Set<string>();
+  if (startX === endX && startZ === endZ) {
+    return [{ x: startX, z: startZ }];
+  }
 
-  queue.push({ x: startX, z: startZ, path: [{ x: startX, z: startZ }] });
-  visited.add(`${startX}_${startZ}`);
+  // Restrict search space to a localized bounding box around start and end
+  const margin = 8;
+  const minX = Math.max(0, Math.min(startX, endX) - margin);
+  const maxX = Math.min(gridSize - 1, Math.max(startX, endX) + margin);
+  const minZ = Math.max(0, Math.min(startZ, endZ) - margin);
+  const maxZ = Math.min(gridSize - 1, Math.max(startZ, endZ) + margin);
 
-  while (queue.length > 0) {
-    const curr = queue.shift()!;
-    if (curr.x === endX && curr.z === endZ) {
-      return curr.path;
+  const maxCells = gridSize * gridSize;
+  
+  // Parallel queues for X and Z to avoid allocation
+  const queueX = new Int32Array(maxCells);
+  const queueZ = new Int32Array(maxCells);
+  let head = 0;
+  let tail = 0;
+
+  // parentMap tracks standard 1D indices: parentX * gridSize + parentZ.
+  // Unvisited coordinates are marked as -1.
+  const parentMap = new Int32Array(maxCells);
+  parentMap.fill(-1);
+
+  // Initialize start node
+  const startIdx = startX * gridSize + startZ;
+  queueX[tail] = startX;
+  queueZ[tail] = startZ;
+  tail++;
+  parentMap[startIdx] = startIdx; // self parent to denote start and visited
+
+  let found = false;
+
+  const dirs = [
+    { dx: 0, dz: -1 },
+    { dx: 0, dz: 1 },
+    { dx: -1, dz: 0 },
+    { dx: 1, dz: 0 }
+  ];
+
+  while (head < tail) {
+    const cx = queueX[head];
+    const cz = queueZ[head];
+    head++;
+
+    if (cx === endX && cz === endZ) {
+      found = true;
+      break;
     }
 
-    // Check 4 directions
-    const dirs = [
-      { dx: 0, dz: -1 },
-      { dx: 0, dz: 1 },
-      { dx: -1, dz: 0 },
-      { dx: 1, dz: 0 }
-    ];
+    for (let i = 0; i < 4; i++) {
+      const nx = cx + dirs[i].dx;
+      const nz = cz + dirs[i].dz;
 
-    for (const dir of dirs) {
-      const nx = curr.x + dir.dx;
-      const nz = curr.z + dir.dz;
-      const key = `${nx}_${nz}`;
+      // Constrain search to the bounding box
+      if (nx >= minX && nx <= maxX && nz >= minZ && nz <= maxZ) {
+        const nIdx = nx * gridSize + nz;
+        if (parentMap[nIdx] === -1) {
+          const neighborCell = grid[nx]?.[nz];
+          if (neighborCell) {
+            const isRoad = neighborCell.type === 'road';
+            const isTarget = nx === endX && nz === endZ;
 
-      if (nx >= 0 && nx < gridSize && nz >= 0 && nz < gridSize && !visited.has(key)) {
-        const neighborCell = grid[nx][nz];
-        const isRoad = neighborCell.type === 'road';
-        const isTarget = nx === endX && nz === endZ;
-
-        if (isRoad || isTarget) {
-          visited.add(key);
-          queue.push({
-            x: nx,
-            z: nz,
-            path: [...curr.path, { x: nx, z: nz }]
-          });
+            if (isRoad || isTarget) {
+              parentMap[nIdx] = cx * gridSize + cz;
+              queueX[tail] = nx;
+              queueZ[tail] = nz;
+              tail++;
+            }
+          }
         }
       }
     }
+  }
+
+  if (found) {
+    // Reconstruct path backward
+    const path: { x: number; z: number }[] = [];
+    let currIdx = endX * gridSize + endZ;
+    while (true) {
+      const cz = currIdx % gridSize;
+      const cx = (currIdx - cz) / gridSize;
+      path.push({ x: cx, z: cz });
+      
+      const parent = parentMap[currIdx];
+      if (parent === currIdx) {
+        break; // reached start
+      }
+      currIdx = parent;
+    }
+    return path.reverse();
   }
 
   // No road-only path found: fallback to a straight line pathway across grass

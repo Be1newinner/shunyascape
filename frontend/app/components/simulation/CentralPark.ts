@@ -8,7 +8,7 @@ export function createCentralPark(ctx: SimContext): void {
   const halfGrid = (gs * cs) / 2;
 
   const centerCell = Math.floor(gs / 2);
-  const parkRadius = 3; // ±3 cells from center = 6×6 park
+  const parkRadius = 9; // ±9 cells from center = 18×18 park
 
   const parkMinX = centerCell - parkRadius;
   const parkMaxX = centerCell + parkRadius - 1;
@@ -24,7 +24,7 @@ export function createCentralPark(ctx: SimContext): void {
 
   // ── 1. Bright grass base ──────────────────────────────────────────────────
   const grassGeom = new THREE.PlaneGeometry(parkWorldW, parkWorldD);
-  const grassMat = new THREE.MeshStandardMaterial({ color: '#4a7c59', roughness: 0.85 });
+  const grassMat = new THREE.MeshLambertMaterial({ color: '#4a7c59' });
   const grassPlane = new THREE.Mesh(grassGeom, grassMat);
   grassPlane.rotation.x = -Math.PI / 2;
   grassPlane.position.set(parkCenterX, 0.02, parkCenterZ);
@@ -32,7 +32,7 @@ export function createCentralPark(ctx: SimContext): void {
   ctx.scene.add(grassPlane);
 
   // ── 2. Diagonal stone paths ───────────────────────────────────────────────
-  const pathMat = new THREE.MeshStandardMaterial({ color: '#b0a090', roughness: 0.9 });
+  const pathMat = new THREE.MeshLambertMaterial({ color: '#b0a090' });
 
   // North-South path (thin vertical strip through center)
   const pathH = new THREE.Mesh(new THREE.PlaneGeometry(cs * 0.5, parkWorldD), pathMat);
@@ -52,30 +52,39 @@ export function createCentralPark(ctx: SimContext): void {
   _createFountain(ctx, parkCenterX, parkCenterZ);
 
   // ── 4. Park benches (one per quadrant) ────────────────────────────────────
-  const benchOffset = cs * 1.5;
+  const benchOffset = cs * 4.5;
   _createBench(ctx, parkCenterX - benchOffset, parkCenterZ - benchOffset, Math.PI * 0.25);
   _createBench(ctx, parkCenterX + benchOffset, parkCenterZ - benchOffset, Math.PI * -0.25);
   _createBench(ctx, parkCenterX - benchOffset, parkCenterZ + benchOffset, Math.PI * 0.75);
   _createBench(ctx, parkCenterX + benchOffset, parkCenterZ + benchOffset, Math.PI * -0.75);
+  // Extra benches
+  _createBench(ctx, parkCenterX, parkCenterZ - benchOffset, 0);
+  _createBench(ctx, parkCenterX, parkCenterZ + benchOffset, Math.PI);
+  _createBench(ctx, parkCenterX - benchOffset, parkCenterZ, Math.PI * 0.5);
+  _createBench(ctx, parkCenterX + benchOffset, parkCenterZ, Math.PI * -0.5);
 
   // ── 5. Lamp posts ─────────────────────────────────────────────────────────
-  const lampOffset = cs * 2.2;
+  const lampOffset = cs * 6.5;
   _createLampPost(ctx, parkCenterX - lampOffset, parkCenterZ - lampOffset);
   _createLampPost(ctx, parkCenterX + lampOffset, parkCenterZ - lampOffset);
   _createLampPost(ctx, parkCenterX - lampOffset, parkCenterZ + lampOffset);
   _createLampPost(ctx, parkCenterX + lampOffset, parkCenterZ + lampOffset);
+  _createLampPost(ctx, parkCenterX - lampOffset, parkCenterZ);
+  _createLampPost(ctx, parkCenterX + lampOffset, parkCenterZ);
+  _createLampPost(ctx, parkCenterX, parkCenterZ - lampOffset);
+  _createLampPost(ctx, parkCenterX, parkCenterZ + lampOffset);
 
   // ── 6. Flower beds ────────────────────────────────────────────────────────
-  const flowerColors = [0xff6688, 0xffdd44, 0xff9922, 0xee44ff, 0x44ddff];
+  const flowerColors = [0xff6688, 0xffdd44, 0xff9922, 0xee44ff, 0x44ddff, 0xff4444, 0x44ff88, 0xffaa22];
   const flowerPositions = [
-    { x: parkCenterX - cs * 1.0, z: parkCenterZ - cs * 2.2 },
-    { x: parkCenterX + cs * 1.0, z: parkCenterZ - cs * 2.2 },
-    { x: parkCenterX - cs * 1.0, z: parkCenterZ + cs * 2.2 },
-    { x: parkCenterX + cs * 1.0, z: parkCenterZ + cs * 2.2 },
-    { x: parkCenterX - cs * 2.2, z: parkCenterZ - cs * 1.0 },
-    { x: parkCenterX + cs * 2.2, z: parkCenterZ - cs * 1.0 },
-    { x: parkCenterX - cs * 2.2, z: parkCenterZ + cs * 1.0 },
-    { x: parkCenterX + cs * 2.2, z: parkCenterZ + cs * 1.0 },
+    { x: parkCenterX - cs * 3.0, z: parkCenterZ - cs * 6.5 },
+    { x: parkCenterX + cs * 3.0, z: parkCenterZ - cs * 6.5 },
+    { x: parkCenterX - cs * 3.0, z: parkCenterZ + cs * 6.5 },
+    { x: parkCenterX + cs * 3.0, z: parkCenterZ + cs * 6.5 },
+    { x: parkCenterX - cs * 6.5, z: parkCenterZ - cs * 3.0 },
+    { x: parkCenterX + cs * 6.5, z: parkCenterZ - cs * 3.0 },
+    { x: parkCenterX - cs * 6.5, z: parkCenterZ + cs * 3.0 },
+    { x: parkCenterX + cs * 6.5, z: parkCenterZ + cs * 3.0 },
   ];
 
   flowerPositions.forEach((fp, i) => {
@@ -83,11 +92,20 @@ export function createCentralPark(ctx: SimContext): void {
   });
 
   // ── 7. Decorative park trees in corners ───────────────────────────────────
-  const treeOffset = cs * 2.6;
+  const treeOffset = cs * 7.8;
   _createParkTree(ctx, parkCenterX - treeOffset, parkCenterZ - treeOffset);
   _createParkTree(ctx, parkCenterX + treeOffset, parkCenterZ - treeOffset);
   _createParkTree(ctx, parkCenterX - treeOffset, parkCenterZ + treeOffset);
   _createParkTree(ctx, parkCenterX + treeOffset, parkCenterZ + treeOffset);
+  // Extra trees along edges
+  _createParkTree(ctx, parkCenterX - treeOffset, parkCenterZ);
+  _createParkTree(ctx, parkCenterX + treeOffset, parkCenterZ);
+  _createParkTree(ctx, parkCenterX, parkCenterZ - treeOffset);
+  _createParkTree(ctx, parkCenterX, parkCenterZ + treeOffset);
+  _createParkTree(ctx, parkCenterX - cs * 4, parkCenterZ - cs * 4);
+  _createParkTree(ctx, parkCenterX + cs * 4, parkCenterZ - cs * 4);
+  _createParkTree(ctx, parkCenterX - cs * 4, parkCenterZ + cs * 4);
+  _createParkTree(ctx, parkCenterX + cs * 4, parkCenterZ + cs * 4);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -98,7 +116,7 @@ function _createFountain(ctx: SimContext, x: number, z: number) {
 
   // Basin
   const basinGeom = new THREE.CylinderGeometry(1.0, 1.1, 0.35, 12);
-  const stoneMat = new THREE.MeshStandardMaterial({ color: '#8b9aaa', roughness: 0.7 });
+  const stoneMat = new THREE.MeshLambertMaterial({ color: '#8b9aaa' });
   const basin = new THREE.Mesh(basinGeom, stoneMat);
   basin.position.y = 0.18;
   basin.castShadow = true;
@@ -107,10 +125,8 @@ function _createFountain(ctx: SimContext, x: number, z: number) {
 
   // Inner water pool
   const waterGeom = new THREE.CylinderGeometry(0.85, 0.85, 0.05, 12);
-  const waterMat = new THREE.MeshStandardMaterial({
+  const waterMat = new THREE.MeshLambertMaterial({
     color: '#2090cc',
-    roughness: 0.1,
-    metalness: 0.7,
     transparent: true,
     opacity: 0.85,
   });
@@ -131,7 +147,7 @@ function _createFountain(ctx: SimContext, x: number, z: number) {
   group.add(topBowl);
 
   // Animated water spray particles (static blue spheres)
-  const sprayMat = new THREE.MeshStandardMaterial({
+  const sprayMat = new THREE.MeshLambertMaterial({
     color: '#66ccff',
     emissive: '#224466',
     transparent: true,
@@ -153,8 +169,8 @@ function _createBench(ctx: SimContext, x: number, z: number, rotY: number) {
   group.position.set(x, 0, z);
   group.rotation.y = rotY;
 
-  const woodMat = new THREE.MeshStandardMaterial({ color: '#7a4a20', roughness: 0.9 });
-  const metalMat = new THREE.MeshStandardMaterial({ color: '#555', roughness: 0.5 });
+  const woodMat = new THREE.MeshLambertMaterial({ color: '#7a4a20' });
+  const metalMat = new THREE.MeshLambertMaterial({ color: '#555' });
 
   // Seat
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.07, 0.35), woodMat);
@@ -184,7 +200,7 @@ function _createLampPost(ctx: SimContext, x: number, z: number) {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
 
-  const metalMat = new THREE.MeshStandardMaterial({ color: '#3a3a4a', roughness: 0.4 });
+  const metalMat = new THREE.MeshLambertMaterial({ color: '#3a3a4a' });
 
   // Pole
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 2.8, 8), metalMat);
@@ -198,7 +214,7 @@ function _createLampPost(ctx: SimContext, x: number, z: number) {
   group.add(arm);
 
   // Lamp globe (glowing)
-  const globeMat = new THREE.MeshStandardMaterial({
+  const globeMat = new THREE.MeshLambertMaterial({
     color: '#fffbe0',
     emissive: '#ffe066',
     emissiveIntensity: 1.2,
@@ -221,13 +237,12 @@ function _createFlowerBed(ctx: SimContext, x: number, z: number, color: number) 
   const group = new THREE.Group();
   group.position.set(x, 0, z);
 
-  const soilMat = new THREE.MeshStandardMaterial({ color: '#3a2a1a', roughness: 1.0 });
-  const flowerMat = new THREE.MeshStandardMaterial({
+  const soilMat = new THREE.MeshLambertMaterial({ color: '#3a2a1a' });
+  const flowerMat = new THREE.MeshLambertMaterial({
     color,
     emissive: new THREE.Color(color).multiplyScalar(0.2),
-    roughness: 0.7,
   });
-  const leafMat = new THREE.MeshStandardMaterial({ color: '#2d6e2d', roughness: 0.8 });
+  const leafMat = new THREE.MeshLambertMaterial({ color: '#2d6e2d' });
 
   // Soil patch
   const soil = new THREE.Mesh(new THREE.CircleGeometry(0.5, 8), soilMat);
@@ -257,8 +272,8 @@ function _createParkTree(ctx: SimContext, x: number, z: number) {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
 
-  const trunkMat = new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.95 });
-  const foliageMat = new THREE.MeshStandardMaterial({ color: '#2d6b10', roughness: 0.8, flatShading: true });
+  const trunkMat = new THREE.MeshLambertMaterial({ color: '#5c4033' });
+  const foliageMat = new THREE.MeshLambertMaterial({ color: '#2d6b10', flatShading: true });
 
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 1.3, 6), trunkMat);
   trunk.position.y = 0.65;
@@ -279,7 +294,7 @@ function _createParkTree(ctx: SimContext, x: number, z: number) {
 /** Returns the set of grid cells that belong to the central park */
 export function getParkCells(gridSize: number): Set<string> {
   const center = Math.floor(gridSize / 2);
-  const parkRadius = 3;
+  const parkRadius = 9;
   const set = new Set<string>();
   for (let x = center - parkRadius; x < center + parkRadius; x++) {
     for (let z = center - parkRadius; z < center + parkRadius; z++) {

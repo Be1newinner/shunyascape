@@ -73,6 +73,15 @@ const UserSchema = new Schema({
     type: String,
     default: null
   },
+  gender: {
+    type: String,
+    enum: ['male', 'female', 'other', 'skip'],
+    default: 'skip'
+  },
+  dob: {
+    type: String,
+    default: null
+  },
   createdAt: { 
     type: Date, 
     default: Date.now 

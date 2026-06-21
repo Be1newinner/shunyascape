@@ -301,10 +301,10 @@ export function createNameTag(name: string): THREE.Sprite {
     c.fill();
 
     c.strokeStyle = 'rgba(56, 189, 248, 0.9)';
-    c.lineWidth = 3;
+    c.lineWidth = 2;
     c.stroke();
 
-    c.font = 'bold 22px "Outfit", sans-serif';
+    c.font = 'bold 18px "Outfit", sans-serif';
     c.fillStyle = '#ffffff';
     c.textAlign = 'center';
     c.textBaseline = 'middle';
@@ -319,8 +319,8 @@ export function createNameTag(name: string): THREE.Sprite {
   });
 
   const sprite = new THREE.Sprite(spriteMat);
-  sprite.scale.set(1.5, 0.375, 1);
-  sprite.position.set(0, 0.9, 0); // floats above character head
+  sprite.scale.set(0.9, 0.225, 1);
+  sprite.position.set(0, 0.82, 0); // floats above character head
   return sprite;
 }
 
@@ -626,8 +626,6 @@ export function updateHumans(
     // 2. Handle movement and actions
     if (h.isPlayer) {
       const hasMovementInput =
-        keysPressed['w'] || keysPressed['s'] ||
-        keysPressed['a'] || keysPressed['d'] ||
         keysPressed['arrowup'] || keysPressed['arrowdown'] ||
         keysPressed['arrowleft'] || keysPressed['arrowright'];
 
@@ -653,10 +651,10 @@ export function updateHumans(
         camRight.normalize();
 
         const moveVec = new THREE.Vector3(0, 0, 0);
-        if (keysPressed['w'] || keysPressed['arrowup']) moveVec.add(camDir);
-        if (keysPressed['s'] || keysPressed['arrowdown']) moveVec.sub(camDir);
-        if (keysPressed['d'] || keysPressed['arrowright']) moveVec.add(camRight);
-        if (keysPressed['a'] || keysPressed['arrowleft']) moveVec.sub(camRight);
+        if (keysPressed['arrowup']) moveVec.add(camDir);
+        if (keysPressed['arrowdown']) moveVec.sub(camDir);
+        if (keysPressed['arrowright']) moveVec.add(camRight);
+        if (keysPressed['arrowleft']) moveVec.sub(camRight);
 
         if (moveVec.lengthSq() > 0) {
           moveVec.normalize();

@@ -142,6 +142,56 @@ function useDraggable() {
   };
 }
 
+interface GPUInfo {
+  vendor: string;
+  renderer: string;
+  isDedicated: boolean;
+}
+
+function detectGPU(): GPUInfo {
+  if (typeof window === "undefined") {
+    return { vendor: "", renderer: "", isDedicated: false };
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = (canvas.getContext("webgl") || canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+    if (!gl) {
+      return { vendor: "", renderer: "", isDedicated: false };
+    }
+    const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+    if (!debugInfo) {
+      return { vendor: "", renderer: "", isDedicated: false };
+    }
+    const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || "";
+    const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "";
+
+    const rendererLower = renderer.toLowerCase();
+    const vendorLower = vendor.toLowerCase();
+    const isDedicated =
+      rendererLower.includes("nvidia") ||
+      rendererLower.includes("geforce") ||
+      rendererLower.includes("rtx") ||
+      rendererLower.includes("gtx") ||
+      rendererLower.includes("quadro") ||
+      rendererLower.includes("amd") ||
+      rendererLower.includes("radeon") ||
+      rendererLower.includes("rx ") ||
+      rendererLower.includes("apple gpu") ||
+      rendererLower.includes("m1") ||
+      rendererLower.includes("m2") ||
+      rendererLower.includes("m3") ||
+      rendererLower.includes("m4") ||
+      vendorLower.includes("nvidia") ||
+      vendorLower.includes("amd") ||
+      vendorLower.includes("ati");
+
+    return { vendor, renderer, isDedicated };
+  } catch (e) {
+    console.error("Error detecting GPU:", e);
+    return { vendor: "", renderer: "", isDedicated: false };
+  }
+}
+
 export default function CitySimulator() {
   const containerRef = useRef<HTMLDivElement>(null);
   const cityRef = useRef<ThreeCity | null>(null);
@@ -186,6 +236,7 @@ export default function CitySimulator() {
   >("skip");
   const [settingsDob, setSettingsDob] = useState<string>("");
   const [settingsFpsCap, setSettingsFpsCap] = useState<number>(60);
+  const [gpuInfo, setGpuInfo] = useState<{ vendor: string; renderer: string; isDedicated: boolean } | null>(null);
   const [settingsGraphicsPreset, setSettingsGraphicsPreset] = useState<"low" | "medium" | "high">("low");
   const [settingsSaving, setSettingsSaving] = useState<boolean>(false);
   const [settingsSaveMsg, setSettingsSaveMsg] = useState<string>("");
@@ -1594,9 +1645,18 @@ export default function CitySimulator() {
 
     cityRef.current = citySim;
 
+    // Detect GPU and set graphics preset dynamically before initializing city
+    const info = detectGPU();
+    setGpuInfo(info);
+    let activePreset = settingsGraphicsPreset;
+    if (info.isDedicated) {
+      activePreset = "high";
+      setSettingsGraphicsPreset("high");
+    }
+
     // Set initial configuration
     citySim.fpsCap = settingsFpsCap;
-    citySim.graphicsPreset = settingsGraphicsPreset;
+    citySim.graphicsPreset = activePreset;
     citySim.buildMode = "road";
     citySim.timeSpeed = 1 / 120; // 1 in-game day = 8 real hours (24 / (8*3600*0.1))
     citySim.audio.toggle(false);
@@ -3510,9 +3570,34 @@ export default function CitySimulator() {
                         </div>
                       </button>
                     ))}
-                    <p className="text-[10px] text-slate-500 italic">
+                     <p className="text-[10px] text-slate-500 italic">
                       Select a rendering preset. &apos;Low&apos; is recommended for machines without a dedicated GPU.
                     </p>
+                    {gpuInfo && (
+                      <div className="mt-3 p-3 rounded-2xl bg-slate-800/40 border border-slate-700/40 flex flex-col gap-1.5 text-[11px] text-left">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                          Detected GPU Hardware
+                        </p>
+                        <div className="flex justify-between items-center mt-1">
+                          <span className="text-slate-400">Renderer:</span>
+                          <span className="text-slate-200 font-semibold text-right max-w-[180px] truncate" title={gpuInfo.renderer}>
+                            {gpuInfo.renderer || "Unknown"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">Vendor:</span>
+                          <span className="text-slate-200 font-semibold text-right max-w-[180px] truncate" title={gpuInfo.vendor}>
+                            {gpuInfo.vendor || "Unknown"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">GPU Mode:</span>
+                          <span className={`font-bold ${gpuInfo.isDedicated ? "text-emerald-400" : "text-amber-400"}`}>
+                            {gpuInfo.isDedicated ? "🚀 Dedicated High-Performance" : "🔋 Power-Saving / Integrated"}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </>
               )}

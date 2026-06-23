@@ -256,7 +256,7 @@ export class ThreeCity {
       return;
     }
 
-    const range = 15;
+    const range = 12; // 25x25 blocks visibility area (12 on each side + 1 center block)
     const minX = Math.max(0, playerGx - range);
     const maxX = Math.min(this.gridSize - 1, playerGx + range);
     const minZ = Math.max(0, playerGz - range);
@@ -708,8 +708,8 @@ export class ThreeCity {
     }
 
     await report(95, "Spawning city population & wildlife...");
-    // 70 NPCs
-    for (let i = 0; i < 70; i++) {
+    // 200 NPCs (increased from 70)
+    for (let i = 0; i < 200; i++) {
       this.spawnHumanAtRandomHouse();
     }
 

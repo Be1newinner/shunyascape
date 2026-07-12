@@ -1,6 +1,29 @@
 import * as THREE from 'three';
 import { SimContext, HumanAgent } from './Types';
 import { findPath } from './Pathfinding';
+import {
+  loadCharacter,
+  getNpcCharacterUrl,
+  CHARACTER,
+  ANIM,
+  crossFadeTo,
+  PRELOAD_PRIORITY,
+  preloadCharacters,
+} from './CharacterLoader';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOD distances (in world units)  — tune these as needed
+// ─────────────────────────────────────────────────────────────────────────────
+const LOD_LOAD_DIST   = 45;  // within this → swap in glTF character
+const LOD_ANIM_DIST   = 30;  // within this → run AnimationMixer each frame
+const LOD_UNLOAD_DIST = 60;  // beyond this → dispose mixer, keep glTF mesh
+
+// NPC index counter — incremented per spawned NPC for deterministic char assignment
+let _npcSpawnIndex = 0;
+
+// Re-export so ThreeCity.ts can call preloadCharacters during loadCity
+export { preloadCharacters, PRELOAD_PRIORITY };
+
 
 export function createRefinedHumanMesh(
   ctx: SimContext,
@@ -324,7 +347,99 @@ export function createNameTag(name: string): THREE.Sprite {
   return sprite;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// glTF Character swap — LOD-gated
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Assign an NPC index (for deterministic outfit selection) and mark
+ * the agent as ready to receive a glTF character on next LOD update.
+ * Call this once when spawning a new NPC agent.
+ */
+export function assignNpcCharacter(h: HumanAgent, isPlayer: boolean, isDbUser: boolean): void {
+  if (isPlayer) {
+    h.charUrl = CHARACTER.KING;
+  } else if (isDbUser) {
+    h.charUrl = CHARACTER.SUIT;
+  } else {
+    h.npcIndex = _npcSpawnIndex++;
+    h.charUrl  = getNpcCharacterUrl(h.npcIndex);
+  }
+  h.gltfLoaded = false;
+}
+
+/**
+ * Call once per frame per agent.
+ * • Loads the glTF character when the agent enters LOD_LOAD_DIST.
+ * • Creates/destroys the AnimationMixer based on LOD_ANIM_DIST.
+ * • Drives the correct animation clip (Idle / Walk) from agent state.
+ *
+ * @param h         The human agent
+ * @param playerPos World position of the current player (or null in admin view)
+ * @param delta     Frame delta time in seconds
+ */
+export function updateCharacterLOD(
+  h: HumanAgent,
+  playerPos: THREE.Vector3 | null,
+  delta: number,
+): void {
+  if (!h.charUrl) return;
+
+  // Distance from player (or 0 if no player / admin view — always show all)
+  const dist = playerPos ? h.mesh.position.distanceTo(playerPos) : 0;
+
+  // ── Load glTF model when in range ──────────────────────────────────────────
+  if (!h.gltfLoaded && dist < LOD_LOAD_DIST) {
+    h.gltfLoaded = true; // optimistic — prevents double-load
+
+    const targetScale = 0.6; // characters are ~1.8m; scale to fit cellSize
+
+    loadCharacter(h.charUrl, targetScale)
+      .then(({ group, clips }) => {
+        // Remove existing procedural mesh children (keep the nameTag sprite)
+        const targets = h.mesh.children.filter((child) => child !== h.nameTag);
+        targets.forEach((child) => h.mesh.remove(child));
+
+        group.rotation.y = 0; // Let the agent rotation handle facing
+        h.mesh.add(group);
+
+        h.animClips = clips;
+        h.currentAnim = undefined;
+      })
+      .catch((err) => {
+        console.error(`[LOD] Failed to load character glTF for ${h.id}:`, err);
+        h.gltfLoaded = false; // allow retry on next frame
+      });
+  }
+
+  // ── Manage AnimationMixer based on LOD_ANIM_DIST ──────────────────────────
+  if (!h.animClips) return; // glTF not loaded yet
+
+  if (dist < LOD_ANIM_DIST) {
+    // Create mixer if not present
+    if (!h.mixer) {
+      h.mixer = new THREE.AnimationMixer(h.mesh);
+    }
+
+    // Choose animation from agent state
+    const targetAnim = h.state === 'walking' ? ANIM.WALK : ANIM.IDLE;
+    if (h.currentAnim !== targetAnim) {
+      crossFadeTo(h.mixer, h.animClips, targetAnim);
+      h.currentAnim = targetAnim;
+    }
+
+    h.mixer.update(delta);
+
+  } else if (h.mixer) {
+    // Out of anim range — stop mixer to free GPU skinning cost
+    h.mixer.stopAllAction();
+    h.mixer = undefined;
+    h.currentAnim = undefined;
+  }
+}
+
 export function wanderHuman(ctx: SimContext, h: HumanAgent) {
+
   h.workTimer = 0;
   const tx = Math.max(0, Math.min(ctx.gridSize - 1, h.targetCellX + Math.floor(Math.random() * 7) - 3));
   const tz = Math.max(0, Math.min(ctx.gridSize - 1, h.targetCellZ + Math.floor(Math.random() * 7) - 3));
@@ -449,6 +564,8 @@ export function loadAllDatabaseUsers(
       nameTag,
     };
 
+    // Assign Suit character for registered DB users
+    assignNpcCharacter(npcAgent, false, true);
     humansList.push(npcAgent);
   });
 
@@ -565,6 +682,8 @@ export function addDatabaseUser(
     nameTag,
   };
 
+  // Assign Suit character for registered DB user
+  assignNpcCharacter(npcAgent, false, true);
   humansList.push(npcAgent);
 }
 

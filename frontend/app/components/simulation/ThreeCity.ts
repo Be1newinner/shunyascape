@@ -35,6 +35,10 @@ import {
   addDatabaseUser,
   updateHumans,
   syncNpcsToDatabase,
+  assignNpcCharacter,
+  updateCharacterLOD,
+  preloadCharacters,
+  PRELOAD_PRIORITY,
 } from "./NPCHuman";
 import { CollectibleManager } from "./Collectibles";
 import { createCentralPark, getParkCells } from "./CentralPark";
@@ -50,6 +54,7 @@ import {
   getBarberPoles,
   getPoliceRefs,
 } from "./SpecialBuildings";
+import { preloadGltfAssets, ALL_BUILDING_URLS } from "./GltfLoader";
 
 export class ThreeCity {
   // Three.js Core
@@ -161,6 +166,13 @@ export class ThreeCity {
   }
 
   public async loadCity(onProgress?: (progress: number, text: string) => void) {
+    // Kick off glTF downloads in parallel — models will be cached by the time
+    // the city grid spawns buildings, minimising visible stand-in swap delay.
+    preloadGltfAssets([...ALL_BUILDING_URLS]);
+
+    // Preload the 5 most common character types (King + Suit + 3 NPC outfits)
+    preloadCharacters([...PRELOAD_PRIORITY]);
+
     await this.initGrid(onProgress);
     this.initRaycasting();
     this.collectibleManager = new CollectibleManager(this.getSimContext());
@@ -1363,6 +1375,9 @@ export class ThreeCity {
       jumpVelocity: 0,
     };
 
+    // Assign glTF character (outfit loaded lazily when player gets close)
+    assignNpcCharacter(human, false, false);
+
     this.humans.push(human);
   }
 
@@ -1455,6 +1470,9 @@ export class ThreeCity {
       jumpVelocity: 0,
       nameTag,
     };
+
+    // Assign King character for the player — loads immediately (distance = 0)
+    assignNpcCharacter(playerAgent, true, false);
 
     this.humans.push(playerAgent);
     this.player = playerAgent;
@@ -1939,6 +1957,9 @@ export class ThreeCity {
       nameTag,
     };
 
+    // Assign glTF character for system NPCs loaded from data
+    assignNpcCharacter(npc, false, false);
+
     this.humans.push(npc);
   }
 
@@ -2185,6 +2206,10 @@ export class ThreeCity {
     );
     this.positionSyncTimer = syncStates.positionSyncTimer;
 
+    // LOD-gated glTF character swap + AnimationMixer updates
+    const playerPos = this.player ? this.player.mesh.position : null;
+    this.humans.forEach((h) => updateCharacterLOD(h, playerPos, delta));
+
     // Periodic NPC database sync (admin only)
     if (this.isAdmin && this.player && this.player.playerEmail) {
       this.npcSyncTimer -= delta;
@@ -2194,6 +2219,7 @@ export class ThreeCity {
         syncNpcsToDatabase(this.getSimContext(), this.humans);
       }
     }
+
 
     // 3. Vehicles updates
     updateVehicles(this.getSimContext(), this.vehicles, this.grid, delta);
@@ -2245,7 +2271,7 @@ export class ThreeCity {
     this.humans.forEach((h) => {
       if (h.nameTag) {
         if (h.isPlayer) {
-          h.nameTag.visible = true;
+          h.nameTag.visible = false; // Hidden as requested
         } else if (this.fidoQuestOwnerId && h.id === this.fidoQuestOwnerId) {
           h.nameTag.visible = (this.fidoQuestState === "active" || this.fidoQuestState === "fido_found");
         } else {

@@ -79,6 +79,20 @@ export interface HumanAgent {
   jumpVelocity?: number;
   seatedInVehicleId?: string; // tracks if seated in a car
   nameTag?: THREE.Sprite;
+
+  // ── glTF Character fields (LOD-gated, optional) ───────────────────────────
+  /** URL of the glTF character assigned to this agent */
+  charUrl?: string;
+  /** Stable NPC index for deterministic character assignment */
+  npcIndex?: number;
+  /** True once the glTF model has been swapped in */
+  gltfLoaded?: boolean;
+  /** AnimationMixer — only created when within LOD range */
+  mixer?: THREE.AnimationMixer;
+  /** Shared animation clips from the loaded glTF */
+  animClips?: THREE.AnimationClip[];
+  /** Name of the currently playing animation */
+  currentAnim?: string;
 }
 
 export interface VehicleAgent {

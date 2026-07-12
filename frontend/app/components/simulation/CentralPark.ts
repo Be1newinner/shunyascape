@@ -24,7 +24,17 @@ export function createCentralPark(ctx: SimContext): void {
 
   // ── 1. Bright grass base ──────────────────────────────────────────────────
   const grassGeom = new THREE.PlaneGeometry(parkWorldW, parkWorldD);
-  const grassMat = new THREE.MeshLambertMaterial({ color: '#4a7c59' });
+  
+  const textureLoader = new THREE.TextureLoader();
+  const parkGrassTexture = textureLoader.load('/images/grass.jpg');
+  parkGrassTexture.wrapS = THREE.RepeatWrapping;
+  parkGrassTexture.wrapT = THREE.RepeatWrapping;
+  parkGrassTexture.repeat.set(parkWorldW / 15, parkWorldD / 15);
+
+  const grassMat = new THREE.MeshLambertMaterial({
+    map: parkGrassTexture,
+    color: '#8baf7c'
+  });
   const grassPlane = new THREE.Mesh(grassGeom, grassMat);
   grassPlane.rotation.x = -Math.PI / 2;
   grassPlane.position.set(parkCenterX, 0.02, parkCenterZ);

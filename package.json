@@ -1,0 +1,11 @@
+{
+  "name": "unthikable-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"pnpm -C backend dev\" \"pnpm -C frontend dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

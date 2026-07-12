@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { SimContext, GridCell } from './Types';
 
+let roadTexture: THREE.Texture | null = null;
+
 export function createRoadMesh(ctx: SimContext, x: number, z: number): THREE.Group {
   const group = new THREE.Group();
   const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
@@ -8,13 +10,31 @@ export function createRoadMesh(ctx: SimContext, x: number, z: number): THREE.Gro
   const worldZ = (z * ctx.cellSize) - halfGrid + ctx.cellSize / 2;
   group.position.set(worldX, 0, worldZ);
 
-  // Base dark grey asphalt
+  // Base dark grey asphalt (borders/curb)
   const roadGeom = ctx.getGeometry('road_base', () => new THREE.BoxGeometry(3.0, 0.08, 3.0));
-  const roadMat = ctx.getMaterial('road_base', { color: '#2b2b2b', roughness: 0.8 });
+  const roadMat = ctx.getMaterial('road_base', { color: '#1b1b1b', roughness: 0.8 });
   const roadMesh = new THREE.Mesh(roadGeom, roadMat);
   roadMesh.position.y = 0.04;
   roadMesh.receiveShadow = false;
   group.add(roadMesh);
+
+  // Textured Inner Road (except border)
+  if (!roadTexture) {
+    const textureLoader = new THREE.TextureLoader();
+    roadTexture = textureLoader.load('/images/road.jpg');
+    roadTexture.wrapS = THREE.RepeatWrapping;
+    roadTexture.wrapT = THREE.RepeatWrapping;
+  }
+  const innerRoadGeom = ctx.getGeometry('road_inner', () => new THREE.PlaneGeometry(3.0, 3.0));
+  const roadInnerMat = ctx.getMaterial('road_inner_mat', {
+    map: roadTexture,
+    roughness: 0.8
+  });
+  const innerMesh = new THREE.Mesh(innerRoadGeom, roadInnerMat);
+  innerMesh.rotation.x = -Math.PI / 2;
+  innerMesh.position.y = 0.081; // slightly above road_base top at 0.08
+  innerMesh.receiveShadow = true;
+  group.add(innerMesh);
 
   return group;
 }
@@ -25,9 +45,9 @@ export function recalculateRoadConnections(ctx: SimContext, grid: GridCell[][]) 
       const cell = grid[x][z];
       if (cell.type !== 'road' || !cell.mesh) continue;
 
-      // Clear existing markers/lines on the road mesh (keep only asphalt base)
-      while (cell.mesh.children.length > 1) {
-        cell.mesh.remove(cell.mesh.children[1]);
+      // Clear existing markers/lines on the road mesh (keep only asphalt base and inner road)
+      while (cell.mesh.children.length > 2) {
+        cell.mesh.remove(cell.mesh.children[2]);
       }
 
       // Neighbors
@@ -35,6 +55,12 @@ export function recalculateRoadConnections(ctx: SimContext, grid: GridCell[][]) 
       const nS = z < ctx.gridSize - 1 && grid[x][z + 1].type === 'road';
       const nW = x > 0 && grid[x - 1][z].type === 'road';
       const nE = x < ctx.gridSize - 1 && grid[x + 1][z].type === 'road';
+
+      const innerMesh = cell.mesh.children[1] as THREE.Mesh;
+      if (innerMesh) {
+        innerMesh.geometry = ctx.getGeometry('road_inner', () => new THREE.PlaneGeometry(3.0, 3.0));
+        innerMesh.position.set(0, 0.081, 0);
+      }
 
       // Yellow dashes or solid lines depending on connections
       const lineMat = ctx.getMaterial('road_lines', { color: '#ffcc00', roughness: 0.9 });

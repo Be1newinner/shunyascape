@@ -660,7 +660,7 @@ export function updateHumans(
           moveVec.normalize();
           h.state = 'walking';
 
-          const speed = h.speed;
+          const speed = keysPressed['shift'] ? h.speed : h.speed / 3;
           const candidateX = h.mesh.position.x + moveVec.x * speed * delta;
           const candidateZ = h.mesh.position.z + moveVec.z * speed * delta;
 
@@ -898,7 +898,12 @@ export function updateHumans(
     }
 
     // 3. Limb animations
-    h.bounceTimer += delta * (h.state === 'walking' ? h.speed * 4.5 : 2.0);
+    if (!h.mesh || !h.mesh.visible) return;
+
+    const speedForAnim = h.isPlayer
+      ? (keysPressed['shift'] ? h.speed : h.speed / 3)
+      : h.speed;
+    h.bounceTimer += delta * (h.state === 'walking' ? speedForAnim * 4.5 : 2.0);
     const time = h.bounceTimer;
 
     const leftLeg = h.leftLegPivot;

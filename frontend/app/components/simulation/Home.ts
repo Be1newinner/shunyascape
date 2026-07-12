@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SimContext } from './Types';
 
 export function createHouseMesh(ctx: SimContext, x: number, z: number): THREE.Group {
@@ -79,43 +80,52 @@ export function createSkyscraperMesh(ctx: SimContext, x: number, z: number): THR
   tower.receiveShadow = true;
   group.add(tower);
 
-  // Add visual window grids on sides
-  const gridGroup = new THREE.Group();
+  // Add visual window grids on sides (merged into a single geometry for massive draw call savings)
   const winRows = Math.floor(height * 2.5);
   const winCols = 4;
   const gridWinGeom = ctx.getGeometry('skys_win', () => new THREE.BoxGeometry(0.12, 0.12, 0.02));
   const gridWinMat = ctx.getMaterial('lit_window', { color: '#ffffff', emissive: '#000000', roughness: 0.1 });
+  const windowGeometries: THREE.BufferGeometry[] = [];
 
   for (let r = 0; r < winRows; r++) {
     const yPos = 0.4 + r * 0.35;
     for (let c = 0; c < winCols; c++) {
       const xPos = (c - (winCols - 1) / 2) * (widthSize / winCols);
 
-      // Add windows on the 4 vertical faces
       // North face
-      const wN = new THREE.Mesh(gridWinGeom, gridWinMat);
-      wN.position.set(xPos, yPos, widthSize / 2 + 0.01);
-      gridGroup.add(wN);
+      const gN = gridWinGeom.clone();
+      gN.translate(xPos, yPos, widthSize / 2 + 0.01);
+      windowGeometries.push(gN);
 
       // South face
-      const wS = new THREE.Mesh(gridWinGeom, gridWinMat);
-      wS.position.set(xPos, yPos, -widthSize / 2 - 0.01);
-      gridGroup.add(wS);
+      const gS = gridWinGeom.clone();
+      gS.translate(xPos, yPos, -widthSize / 2 - 0.01);
+      windowGeometries.push(gS);
 
       // East face
-      const wE = new THREE.Mesh(gridWinGeom, gridWinMat);
-      wE.rotation.y = Math.PI / 2;
-      wE.position.set(widthSize / 2 + 0.01, yPos, xPos);
-      gridGroup.add(wE);
+      const gE = gridWinGeom.clone();
+      gE.rotateY(Math.PI / 2);
+      gE.translate(widthSize / 2 + 0.01, yPos, xPos);
+      windowGeometries.push(gE);
 
       // West face
-      const wW = new THREE.Mesh(gridWinGeom, gridWinMat);
-      wW.rotation.y = Math.PI / 2;
-      wW.position.set(-widthSize / 2 - 0.01, yPos, xPos);
-      gridGroup.add(wW);
+      const gW = gridWinGeom.clone();
+      gW.rotateY(Math.PI / 2);
+      gW.translate(-widthSize / 2 - 0.01, yPos, xPos);
+      windowGeometries.push(gW);
     }
   }
-  group.add(gridGroup);
+
+  if (windowGeometries.length > 0) {
+    const mergedWinGeom = BufferGeometryUtils.mergeGeometries(windowGeometries, true);
+    const mergedWinMesh = new THREE.Mesh(mergedWinGeom, gridWinMat);
+    mergedWinMesh.castShadow = false;
+    mergedWinMesh.receiveShadow = false;
+    group.add(mergedWinMesh);
+
+    // Dispose of the temporary cloned geometries to prevent memory leaks
+    windowGeometries.forEach((g) => g.dispose());
+  }
 
   // Antenna on top
   const antGeom = ctx.getGeometry('antenna', () => new THREE.CylinderGeometry(0.04, 0.04, 1.0, 4));

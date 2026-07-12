@@ -23,7 +23,8 @@ export function createTreeMesh(ctx: SimContext, x: number, z: number): THREE.Gro
   const leafSizes = [0.9, 0.7, 0.5];
 
   leafHeights.forEach((h, idx) => {
-    const leafGeom = new THREE.ConeGeometry(leafSizes[idx], 0.8, 5);
+    const leafGeomName = `foliage_cone_${idx}`;
+    const leafGeom = ctx.getGeometry(leafGeomName, () => new THREE.ConeGeometry(leafSizes[idx], 0.8, 5));
     const leaves = new THREE.Mesh(leafGeom, foliageMat);
     leaves.position.y = h;
     leaves.castShadow = false;

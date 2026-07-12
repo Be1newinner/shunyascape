@@ -124,6 +124,7 @@ export class ThreeCity {
   public fpsCap = 60;
   public graphicsPreset: "low" | "medium" | "high" = "low";
   private lastFrameTime = 0;
+  private frameCounter = 0;
 
   // Materials & Geometries caching
   private materialsCache: { [key: string]: THREE.Material } = {};
@@ -457,7 +458,7 @@ export class ThreeCity {
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       if (this.weatherManager && this.weatherManager.dirLight) {
         this.weatherManager.dirLight.castShadow = true;
-        const size = preset === "medium" ? 512 : 2048;
+        const size = preset === "medium" ? 512 : 1024;
         this.weatherManager.dirLight.shadow.mapSize.width = size;
         this.weatherManager.dirLight.shadow.mapSize.height = size;
         
@@ -2200,8 +2201,9 @@ export class ThreeCity {
     // 4. Animal updates (Wandering Cows, Dogs, Cats, Flying Birds)
     updateAnimals(this.getSimContext(), this.animals, delta, this.player);
 
-    // 4.2. Update dynamic entity visibility on every frame (to keep up with NPC movement)
-    if (this.player && this.lastVisibleGx !== -1) {
+    // 4.2. Update dynamic entity visibility every 10 frames to reduce CPU overhead (to keep up with NPC movement)
+    this.frameCounter++;
+    if (this.player && this.lastVisibleGx !== -1 && this.frameCounter % 10 === 0) {
       const range = 15;
       this.updateDynamicEntitiesVisibility(
         this.lastVisibleGx - range,
@@ -2594,6 +2596,21 @@ export class ThreeCity {
     if (this.collectibleManager) {
       this.collectibleManager.destroy();
     }
+
+    // Recursively dispose geometries and materials in the scene
+    this.scene.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh) {
+        const mesh = node as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        if (mesh.material) {
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => m.dispose());
+          } else {
+            mesh.material.dispose();
+          }
+        }
+      }
+    });
 
     Object.values(this.geometriesCache).forEach((g) => g.dispose());
     Object.values(this.materialsCache).forEach((m) => m.dispose());

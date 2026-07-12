@@ -2982,7 +2982,13 @@ export default function CitySimulator() {
                 <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">
                   Arrows
                 </kbd>
-                <span>Move</span>
+                <span>Walk (Default)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">
+                  Shift
+                </kbd>
+                <span>Run</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">
@@ -3014,11 +3020,11 @@ export default function CitySimulator() {
                 </kbd>
                 <span>Punch/Kick</span>
               </div>
-              <div className="col-span-2 flex items-center gap-1.5 mt-0.5">
+              <div className="flex items-center gap-1.5">
                 <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-sky-400 font-semibold font-mono text-[9px] shadow">
                   J key
                 </kbd>
-                <span>Sit / Stand Toggle</span>
+                <span>Sit/Stand</span>
               </div>
             </div>
           </div>

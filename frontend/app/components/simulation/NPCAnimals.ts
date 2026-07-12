@@ -727,6 +727,8 @@ export function updateAnimals(
     }
 
     // 2. Animations
+    if (!a.mesh || !a.mesh.visible) return;
+
     a.bounceTimer += delta * (a.state !== 'idle' ? 6.0 : 2.0);
     const time = a.bounceTimer;
 

@@ -10,10 +10,24 @@ export function createLand(ctx: SimContext): {
 } {
   const halfGridWorld = (ctx.gridSize * ctx.cellSize) / 2;
 
+  // Load grass texture
+  const textureLoader = new THREE.TextureLoader();
+  const grassTexture = textureLoader.load('/images/grass.jpg');
+  grassTexture.wrapS = THREE.RepeatWrapping;
+  grassTexture.wrapT = THREE.RepeatWrapping;
+
   // Grass Ground (covers entire scene including mountains area)
   const groundSize = Math.max(ctx.gridSize * ctx.cellSize + 160, 400);
+  const repeatFactor = groundSize / 15;
+  grassTexture.repeat.set(repeatFactor, repeatFactor);
+
   const groundGeom = ctx.getGeometry('ground', () => new THREE.PlaneGeometry(groundSize, groundSize));
-  const groundMat = ctx.getMaterial('ground', { color: '#4a6840', roughness: 0.9, flatShading: true });
+  const groundMat = ctx.getMaterial('ground', {
+    map: grassTexture,
+    color: '#8baf7c',
+    roughness: 0.9,
+    flatShading: true
+  });
   groundMesh = new THREE.Mesh(groundGeom, groundMat);
   groundMesh.rotation.x = -Math.PI / 2;
   groundMesh.position.y = -0.05;

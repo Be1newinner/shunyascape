@@ -1,176 +1,110 @@
-# Express.js and TypeScript Quickstart Template
+# ShunyaScape Backend Service 🖥️
 
-Welcome to the **Express.js and TypeScript Quickstart Template**! This repository provides a clean, scalable, and production-ready boilerplate for building web applications using **Express.js** and **TypeScript**.
+This is the backend service for **ShunyaScape**, a real-time multiplayer 3D simulation server. It is built as a standalone Express server using **TypeScript**, native **WebSockets**, **MongoDB** via Mongoose, and **Nodemailer** for email verification.
 
-## Table of Contents
-
-1. [Features](#features)
-2. [Requirements](#requirements)
-3. [Installation](#installation)
-4. [Project Structure](#project-structure)
-5. [Usage](#usage)
-6. [Scripts](#scripts)
-7. [Best Practices](#best-practices)
-8. [Contributing](#contributing)
-9. [License](#license)
+To prevent database bottlenecking during real-time movement and actions, the backend implements an **in-memory database write-back caching system** that flushes state changes to MongoDB in batches once every 10 seconds.
 
 ---
 
-## Features
+## 📂 Project Structure
 
-- 🚀 **TypeScript Support**: Strong type-checking for safer and more maintainable code.
-- 🌟 **Express.js Integration**: Lightweight and robust web framework.
-- 🔧 **Developer Tools**: Pre-configured with **ESLint**, **Prettier**, and **Nodemon**.
-- 📂 **Scalable Folder Structure**: Organized for small to large applications.
-- 🛡️ **Error Handling**: Middleware for consistent error responses.
-- 📦 **Dependency Management**: Minimal yet extensible setup.
+```
+backend/
+├── src/
+│   ├── config/
+│   │   └── db.ts          # Mongoose database connection setup
+│   ├── middlewares/
+│   │   └── auth.ts        # Authentication & email verification enforcement middleware
+│   ├── models/
+│   │   ├── GridCell.ts    # Model for voxel 32x32 city grid (roads, houses, permissions)
+│   │   ├── Group.ts       # Model for user/player group relations
+│   │   ├── Npc.ts         # Model for active NPCs (coordinates, actions)
+│   │   ├── Settings.ts    # Model for global simulation variables (speed, time of day)
+│   │   └── User.ts        # Model for accounts, game inventory (XP, SC, wood, coordinates)
+│   ├── utils/
+│   │   ├── auth.ts        # Utilities for password hashing and OTP generation
+│   │   └── mailer.ts      # Nodemailer OAuth2 configurations for sending OTPs
+│   └── index.ts           # Core server entry: boots Express, WebSockets, and database syncer loop
+├── esbuild.config.js      # Production build bundling configuration
+├── tsconfig.json          # TypeScript compiler options
+└── package.json           # Scripts, dependencies, and ESLint configs
+```
 
 ---
 
-## Requirements
+## ⚙️ Core Modules & Features
 
-Ensure you have the following installed:
+### 1. In-Memory Write-Back Database Syncer
+To support high-frequency coordinate and grid updates without triggering MongoDB API limits or causing latency spikes:
+*   Active user coordinates and NPC states are modified in **server-side memory** and instantly broadcasted to WebSocket clients.
+*   A background timer runs every **10 seconds** to flush all accumulated local coordinate changes to the MongoDB database using a bulk write operation (`bulkWrite`).
+*   When a user closes their WebSocket connection, a cleanup handler immediately flushes their final coordinates to MongoDB.
 
-- **Node.js**: v14 or higher
-- **npm** or **yarn**: Latest version
+### 2. Native WebSocket Event Handlers
+The WebSocket server runs side-by-side with the Express app on port `8005`:
+*   `player-move` / `player-moved`: Propagates player world positions in real-time.
+*   `npc-sync` / `npcs-updated`: Replicates NPC positions across all connected user clients (driven by the admin client's browser simulation).
+*   `settings-update` / `settings-updated`: Syncs environmental metrics like play speed, time-of-day clock, and paused state.
+*   `grid-update` / `grid-updated`: Broad-casts changes to the 32x32 construction map cells.
+
+### 3. Secure OTP Email Authentication
+Instead of sending credentials directly, registration and logins are protected:
+*   **OTP Gated**: Unverified registrations/logins prompt a One-Time Password generation sent to the user's email.
+*   **Mailer Utility**: Uses `nodemailer` with Gmail OAuth2 or basic SMTP settings to deliver OTP codes.
+*   **Access Control**: The auth middleware intercepts requests to verify both JWT authenticity and verified status.
 
 ---
 
+## 🛰️ API Endpoints (Express)
 
-## Create new project using this template
+The Express server exposes the following authentication and state REST routes (prefixed implicitly or proxied):
 
+*   `POST /api/auth/register` - Create an account. Sends OTP code to email.
+*   `POST /api/auth/verify-otp` - Verify the OTP code to activate the account.
+*   `POST /api/auth/login` - Authenticate using email and password. Generates session JWT.
+*   `POST /api/auth/logout` - Clear the session cookie.
+*   `GET /api/auth/me` - Get profile info of current logged-in user.
+*   `POST /api/auth/forgot-password` - Request a password reset OTP.
+*   `POST /api/auth/reset-password` - Reset password using verified OTP.
+*   `GET /api/settings` - Retrieve current environment settings.
+
+---
+
+## 🛠️ Developer Commands
+
+### 1. Local Development
+Runs the server with hot-reload support using `tsx` (TypeScript Execute):
 ```bash
-npm create express-type project-name
-cd cart
-npm run dev
+pnpm dev
 ```
+*(Runs inside monorepo root or via `pnpm -C backend dev`)*
 
-## If you want to clone and modify this
-
-### 1. Clone the Repository
-
+### 2. Linting & Formatting
+Run ESLint to check for stylistic and program code guidelines:
 ```bash
-git clone https://github.com/Be1newinner/express-ts-template.git
-cd express-ts-template
+pnpm run lint
 ```
-
-### 2. Install Dependencies
-
-Using npm:
+To fix simple issues automatically:
 ```bash
-npm install
+pnpm run lint:fix
 ```
 
-Or using yarn:
+### 3. Compile-checking (TypeScript)
+Run `tsc` in check mode without emitting files:
 ```bash
-yarn install
+pnpm run check
 ```
 
----
-
-## Project Structure
-
-The template follows a modular and scalable folder structure:
-
-```
-express-ts-template/
-├── eslint.config.js
-├── LICENSE
-├── loader.mjs
-├── nodemon.json
-├── package.json
-├── package-lock.json
-├── README.md
-├── src
-│   ├── controllers
-│   │   └── sample.ts
-│   ├── index.ts
-│   ├── middlewares
-│   │   └── sample.ts
-│   ├── models
-│   │   └── sample.ts
-│   └── routes
-│       └── sample.ts
-└── tsconfig.json
-```
-
----
-
-## Usage
-
-### 1. Development Mode
-
-Run the app with **Nodemon** for auto-reloading:
-
+### 4. Build for Production
+Bundle and transpile TypeScript code using `esbuild`:
 ```bash
-npm run dev
+pnpm run build
 ```
+This generates the optimized bundle in `dist/index.js`.
 
-Access the application at: [http://localhost:8000](http://localhost:8000)
-
-### 2. Build for Production
-
-Compile the TypeScript files to JavaScript:
-
+### 5. Production Start
+Run the compiled JavaScript bundle:
 ```bash
-npm run build
+pnpm start
 ```
-
-Run the compiled app:
-
-```bash
-npm start
-```
-
----
-
-## Scripts
-
-- `npm run dev`: Start the app in development mode with Nodemon.
-- `npm run build`: Compile TypeScript to JavaScript.
-- `npm start`: Run the compiled app in production mode.
-- `npm run lint`: Check for linting issues.
-- `npm run lint:fix`: Fix linting issues automatically.
-
----
-
-## Best Practices
-
-- **Type Annotations**: Use TypeScript’s powerful type system to avoid runtime errors.
-- **Folder Organization**: Keep your business logic separate from your route definitions.
-- **Environment Variables**: Use `.env` files for managing secrets (e.g., database URLs).
-- **Error Handling**: Implement consistent error responses using middleware.
-- **Testing**: Add unit and integration tests using a framework like Jest.
-
----
-
-## Contributing
-
-We welcome contributions! If you’d like to enhance this template:
-
-1. Fork the repository.
-2. Create a new branch for your feature or bugfix.
-3. Submit a pull request with a detailed explanation of your changes.
-
----
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
-
----
-
-## Keywords (SEO)
-
-- Express.js TypeScript Template
-- Express.js Boilerplate
-- TypeScript Node.js Starter
-- Scalable Express.js App
-- Express TypeScript Quickstart
-
----
-
-## Connect
-
-For more templates and tutorials, check out my YouTube channel: [Asaan Hai Coding](https://www.youtube.com/@asaan_hai_coding).
-
+*(Typically managed using PM2 via `ecosystem.config.cjs` in VPS staging/production environments)*

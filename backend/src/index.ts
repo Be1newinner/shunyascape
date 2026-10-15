@@ -13,6 +13,7 @@ import { sendOtpEmail } from "./utils/mailer";
 import { googleClientId, verifyGoogleIdToken } from "./utils/google";
 import { OUTFITS, levelFor, matchXp } from "./game/profile";
 import { attachMatchServer } from "./match/socket";
+import { initPhysics } from "./match/World";
 import type { HumanResult } from "./match/Match";
 
 const app = express();
@@ -84,6 +85,17 @@ async function startSession(user: any, res: express.Response) {
   };
   res.cookie("accessToken", accessToken, { ...cookie, maxAge: ACCESS_TOKEN_MS });
   res.cookie("refreshToken", refreshToken, { ...cookie, maxAge: REFRESH_TOKEN_MS });
+  return refreshToken;
+}
+
+/**
+ * The mobile app (header `X-Client: app`) can't read cookies, so it also gets
+ * the session's refresh token in the response, kept in the device's secure
+ * storage and sent back as `Authorization: Bearer`. Same session, same
+ * single-device rule: signing in elsewhere invalidates it.
+ */
+function appSession(req: express.Request, refreshToken: string) {
+  return req.get("x-client") === "app" ? { appToken: refreshToken } : {};
 }
 
 /** The signed-in user's own view of their account (includes their email). */
@@ -173,8 +185,8 @@ app.post(
         return;
       }
 
-      await startSession(user, res);
-      res.status(200).json({ message: "Login successful", user: sessionUser(user) });
+      const refresh = await startSession(user, res);
+      res.status(200).json({ message: "Login successful", user: sessionUser(user), ...appSession(req, refresh) });
     } catch (error) {
       console.error("Login API Error:", error);
       res.status(500).json({ error: "Internal server error during login" });
@@ -290,9 +302,9 @@ app.post(
       user.isVerified = true;
       user.otp = null;
       user.otpExpires = null;
-      await startSession(user, res);
+      const refresh = await startSession(user, res);
 
-      res.status(200).json({ message: "Verification successful" });
+      res.status(200).json({ message: "Verification successful", user: sessionUser(user), ...appSession(req, refresh) });
     } catch (error) {
       console.error("OTP Verification Error:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -366,11 +378,12 @@ app.post(
         created = true;
       }
 
-      await startSession(user, res);
+      const refresh = await startSession(user, res);
       res.status(200).json({
         message: created ? "Account created with Google" : "Login successful",
         created,
         user: sessionUser(user),
+        ...appSession(req, refresh),
       });
     } catch (error) {
       console.error("Google Sign-In Error:", error);
@@ -534,6 +547,52 @@ app.patch(
   },
 );
 
+// ==========================================
+// MOBILE APP -> WEBVIEW SESSION HANDOFF
+// ==========================================
+
+/** One-time codes that log the app's WebView into the app's session (60 s, single use). */
+const handoffCodes = new Map<string, { userId: string; sessionId: string; expires: number }>();
+const HANDOFF_MS = 60_000;
+
+// POST /api/auth/handoff — the app (Bearer token) asks for a code for its WebView
+app.post(
+  "/api/auth/handoff",
+  requireAuth as express.RequestHandler,
+  (req: AuthenticatedRequest, res: express.Response) => {
+    const now = Date.now();
+    for (const [c, v] of handoffCodes) if (v.expires < now) handoffCodes.delete(c);
+    const code = crypto.randomBytes(24).toString("base64url");
+    handoffCodes.set(code, { userId: req.user._id.toString(), sessionId: req.user.currentSessionId, expires: now + HANDOFF_MS });
+    res.status(200).json({ code });
+  },
+);
+
+// GET /api/auth/handoff?code=…&next=/battleground — the WebView opens this; it sets the
+// session cookies for this site and continues into the game
+app.get("/api/auth/handoff", async (req: express.Request, res: express.Response) => {
+  const code = String(req.query.code ?? "");
+  const next = String(req.query.next ?? "/battleground");
+  // Only same-site paths: never redirect to another origin.
+  const target = next.startsWith("/") && !next.startsWith("//") ? next : "/battleground";
+  const entry = handoffCodes.get(code);
+  handoffCodes.delete(code);
+  try {
+    if (!entry || entry.expires < Date.now()) throw new Error("expired");
+    await connectDB();
+    const user = await User.findById(entry.userId);
+    // Still the same session (no sign-in elsewhere in the meantime).
+    if (!user || user.currentSessionId !== entry.sessionId || !user.currentRefreshToken) throw new Error("stale");
+    const claims = { userId: user._id, email: user.email, role: user.role, sessionId: user.currentSessionId };
+    const cookie = { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax" as const, path: "/" };
+    res.cookie("accessToken", signToken(claims, "1d"), { ...cookie, maxAge: ACCESS_TOKEN_MS });
+    res.cookie("refreshToken", user.currentRefreshToken, { ...cookie, maxAge: REFRESH_TOKEN_MS });
+    res.redirect(302, target);
+  } catch {
+    res.redirect(302, `${target}${target.includes("?") ? "&" : "?"}handoff=failed`);
+  }
+});
+
 // GET /api/match/ticket — short-lived pass for the game server's WebSocket
 app.get(
   "/api/match/ticket",
@@ -668,7 +727,8 @@ app.post(
 const server = http.createServer(app);
 attachMatchServer(server, recordHumanResult);
 
-connectDB()
+// The bots' physics engine (WebAssembly) must be ready before any match starts.
+Promise.all([connectDB(), initPhysics()])
   .then(() => {
     server.listen(PORT, () => {
       console.log(`API + game server running on port ${PORT}`);

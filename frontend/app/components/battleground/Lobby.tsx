@@ -18,6 +18,7 @@ interface Props {
   onStart: () => void;
   lastMatch: { placement: number; kills: number; xpGained: number } | null;
   touch?: boolean;
+  onLogout?: () => void;
 }
 
 function fmtHours(seconds: number) {
@@ -27,7 +28,7 @@ function fmtHours(seconds: number) {
 
 /** BGMI-style home screen: your soldier, your record, the wardrobe and the Start button. */
 export default function Lobby(props: Props) {
-  const { profile, outfit, onOutfit, quality, onQuality, sensitivity, onSensitivity, onStart, lastMatch, touch } = props;
+  const { profile, outfit, onOutfit, quality, onQuality, sensitivity, onSensitivity, onStart, lastMatch, touch, onLogout } = props;
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<LobbyScene | null>(null);
   const [panel, setPanel] = useState<"none" | "wardrobe" | "settings">("none");
@@ -170,6 +171,11 @@ export default function Lobby(props: Props) {
                   <input type="range" min={0.3} max={3} step={0.05} value={sensitivity} onChange={(e) => onSensitivity(Number(e.target.value))} />
                 </label>
               </div>
+              {onLogout && (
+                <button className="bg-cta ghost bg-logout" onClick={onLogout}>
+                  Log out
+                </button>
+              )}
               {!touch && <ul className="bg-controls">
                 {CONTROLS.map((c) => (
                   <li key={c.action}>

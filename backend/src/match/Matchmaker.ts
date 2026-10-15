@@ -58,9 +58,18 @@ export class Matchmaker {
     this.forming = null;
     const peers = [...f.peers];
     if (peers.length === 0) return;
-    const match = new Match(peers, this.onHumanResult, (m) => this.matches.delete(m));
-    this.matches.add(match);
-    match.start();
+    // A broken match must never take the whole game server down with it.
+    try {
+      const match = new Match(peers, this.onHumanResult, (m) => this.matches.delete(m));
+      this.matches.add(match);
+      match.start();
+    } catch (err) {
+      console.error("Failed to start match:", err);
+      for (const p of peers) {
+        p.match = null;
+        p.send({ t: "match-failed" });
+      }
+    }
   }
 
   stats() {

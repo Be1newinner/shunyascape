@@ -9,7 +9,10 @@ export interface AuthenticatedRequest extends Request {
 export async function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const accessToken = req.cookies?.accessToken;
-    const refreshToken = req.cookies?.refreshToken;
+    // The mobile app sends its session's refresh token as a bearer token.
+    const auth = req.headers.authorization;
+    const bearer = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : undefined;
+    const refreshToken = req.cookies?.refreshToken ?? bearer;
 
     if (!accessToken && !refreshToken) {
       req.user = null;

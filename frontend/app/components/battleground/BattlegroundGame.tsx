@@ -10,6 +10,7 @@ import Lobby from "./Lobby";
 import TouchControls from "./TouchControls";
 import type { MatchClient, MatchStart } from "./engine/MatchClient";
 import { fetchProfile, saveOutfit, type Profile } from "./profile";
+import { isNativeApp, postToApp } from "../../lib/nativeApp";
 import "./battleground.css";
 
 const SENS_KEY = "bg.sensitivity";
@@ -69,6 +70,8 @@ export default function BattlegroundGame() {
       }
       gameRef.current?.dispose();
       gameRef.current = null;
+      // In the app, its native login screen takes over.
+      if (isNativeApp()) postToApp("session-expired");
       setSessionExpired(true);
     };
     window.addEventListener("auth-unauthorized", onUnauthorized);
@@ -187,6 +190,7 @@ export default function BattlegroundGame() {
       clientRef.current = client;
       client.on((msg) => {
         if (msg.t === "queue") setQueueInfo({ players: msg.players, max: msg.max, startsIn: msg.startsIn });
+        if (msg.t === "match-failed") setNetError("Couldn't start the match. Please try again.");
         if (msg.t === "start") {
           setOnline({ client, start: msg });
           setScreen("match");
@@ -233,6 +237,20 @@ export default function BattlegroundGame() {
 
   useEffect(() => () => clientRef.current?.close(), []);
 
+  const logout = async () => {
+    closeClient();
+    gameRef.current?.dispose();
+    gameRef.current = null;
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    try {
+      localStorage.removeItem("shunyascape_user");
+    } catch {
+      // ignore
+    }
+    if (isNativeApp()) postToApp("logout");
+    else router.replace("/");
+  };
+
   const changeOutfit = (id: string) => {
     setOutfit(id);
     saveOutfit(id)
@@ -247,7 +265,7 @@ export default function BattlegroundGame() {
           <div className="bg-menu-card compact">
             <h2 className="bg-title small">Session expired</h2>
             <p className="bg-sub">You were signed out, or your account was opened on another device.</p>
-            <button className="bg-cta" onClick={() => router.replace("/")}>Sign in again</button>
+            {!isNativeApp() && <button className="bg-cta" onClick={() => router.replace("/")}>Sign in again</button>}
           </div>
         </div>
       </div>
@@ -272,6 +290,7 @@ export default function BattlegroundGame() {
             writePref(SENS_KEY, String(v));
           }}
           onStart={findMatch}
+          onLogout={logout}
           lastMatch={lastMatch}
           touch={touch}
         />

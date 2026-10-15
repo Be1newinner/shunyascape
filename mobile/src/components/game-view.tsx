@@ -3,24 +3,24 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import * as SplashScreen from 'expo-splash-screen';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { WebView, type WebViewNavigation } from 'react-native-webview';
+import { ActivityIndicator, BackHandler, Platform, StyleSheet, View } from 'react-native';
+import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
+import { Body, GoldButton, Title } from '@/components/ui';
+import { ApiError, api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { APP_USER_AGENT, GAME_ORIGIN, GAME_URL, colors } from '@/lib/config';
 
 /**
- * The whole game is the ShunyaScape web app in a full-screen WebView: one
- * codebase for browser and app. The site adds on-screen controls and the phone
- * graphics preset itself (it recognises the app by its user agent).
+ * The game (lobby, matches) is the ShunyaScape website in a full-screen
+ * WebView. The app logs the WebView into its own session with a one-time
+ * handoff code, then listens for the site saying the session ended.
  */
-/** The site's address, e.g. https://play.example.com — set EXPO_PUBLIC_GAME_URL in mobile/.env. */
-const GAME_URL = (process.env.EXPO_PUBLIC_GAME_URL ?? '').replace(/\/$/, '');
-const GAME_ORIGIN = GAME_URL ? new URL(GAME_URL).origin : '';
-/** The site checks for this to skip the landing page and hide Google sign-in (Google blocks it in web views). */
-const APP_USER_AGENT = 'ShunyaScapeApp/1.0';
-
 export default function GameView() {
   useKeepAwake();
+  const { token, signOut } = useAuth();
   const webview = useRef<WebView>(null);
   const canGoBack = useRef(false);
+  const [uri, setUri] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
@@ -28,6 +28,29 @@ export default function GameView() {
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
   }, []);
+
+  // Exchange the app session for a one-time code the WebView turns into site cookies.
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    api
+      .handoff(token)
+      .then(({ code }) => {
+        if (!cancelled) setUri(`${GAME_URL}/api/auth/handoff?code=${encodeURIComponent(code)}&next=%2Fbattleground`);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // Session gone (signed in on another device, or expired): back to login.
+        if (err instanceof ApiError && err.status === 401) signOut({ remote: false });
+        else {
+          SplashScreen.hideAsync().catch(() => {});
+          setFailed(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, attempt, signOut]);
 
   // Android back button navigates inside the game before leaving the app.
   useEffect(() => {
@@ -49,29 +72,40 @@ export default function GameView() {
     return false;
   }, []);
 
-  if (!GAME_URL) {
-    SplashScreen.hideAsync().catch(() => {});
+  // The site tells us when you log out or the session ends; the native login takes over.
+  const onMessage = useCallback(
+    (e: WebViewMessageEvent) => {
+      let type = '';
+      try {
+        type = (JSON.parse(e.nativeEvent.data) as { type?: string }).type ?? '';
+      } catch {
+        return;
+      }
+      if (type === 'logout' || type === 'session-expired' || type === 'auth-required') signOut({ remote: false });
+    },
+    [signOut],
+  );
+
+  const retry = () => {
+    setFailed(false);
+    setUri(null);
+    setAttempt((a) => a + 1);
+  };
+
+  if (failed) {
     return (
-      <View style={styles.error}>
-        <Text style={styles.errorTitle}>Game address not set</Text>
-        <Text style={styles.errorText}>Set EXPO_PUBLIC_GAME_URL in mobile/.env and restart Expo.</Text>
+      <View style={styles.center}>
+        <Title size={22}>Can&apos;t reach ShunyaScape</Title>
+        <Body>Check your internet connection and try again.</Body>
+        <GoldButton title="Try again" onPress={retry} style={{ marginTop: 8, minWidth: 180 }} />
       </View>
     );
   }
 
-  if (failed) {
+  if (!uri) {
     return (
-      <View style={styles.error}>
-        <Text style={styles.errorTitle}>Can&apos;t reach ShunyaScape</Text>
-        <Text style={styles.errorText}>Check your internet connection and try again.</Text>
-        <Pressable
-          style={styles.retry}
-          onPress={() => {
-            setFailed(false);
-            setAttempt((a) => a + 1);
-          }}>
-          <Text style={styles.retryText}>Try again</Text>
-        </Pressable>
+      <View style={styles.center}>
+        <ActivityIndicator color={colors.gold} size="large" />
       </View>
     );
   }
@@ -80,7 +114,7 @@ export default function GameView() {
     <WebView
       key={attempt}
       ref={webview}
-      source={{ uri: `${GAME_URL}/battleground` }}
+      source={{ uri }}
       style={styles.web}
       containerStyle={styles.web}
       applicationNameForUserAgent={APP_USER_AGENT}
@@ -98,6 +132,7 @@ export default function GameView() {
       androidLayerType="hardware"
       webviewDebuggingEnabled={__DEV__}
       onShouldStartLoadWithRequest={onNavigate}
+      onMessage={onMessage}
       onNavigationStateChange={(nav) => {
         canGoBack.current = nav.canGoBack;
       }}
@@ -106,18 +141,14 @@ export default function GameView() {
         SplashScreen.hideAsync().catch(() => {});
         setFailed(true);
       }}
-      // The game's 3D page can be killed in the background on low-memory phones: reload it.
-      onRenderProcessGone={() => setAttempt((a) => a + 1)}
-      onContentProcessDidTerminate={() => webview.current?.reload()}
+      // The 3D page can be killed in the background on low-memory phones: start it again.
+      onRenderProcessGone={retry}
+      onContentProcessDidTerminate={retry}
     />
   );
 }
 
 const styles = StyleSheet.create({
-  web: { flex: 1, backgroundColor: '#070b12' },
-  error: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24, backgroundColor: '#070b12' },
-  errorTitle: { color: '#ffffff', fontSize: 22, fontWeight: '700' },
-  errorText: { color: '#b8c2d1', fontSize: 15, textAlign: 'center' },
-  retry: { marginTop: 8, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 12, backgroundColor: '#f5a623' },
-  retryText: { color: '#2a1700', fontSize: 16, fontWeight: '700' },
+  web: { flex: 1, backgroundColor: colors.bg },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24, backgroundColor: colors.bg },
 });

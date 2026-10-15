@@ -3,13 +3,16 @@
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { isNativeApp } from "../lib/nativeApp";
+import { isNativeApp, postToApp } from "../lib/nativeApp";
 
 // WebGPU / WebGL and pointer lock only exist in the browser.
 const BattlegroundGame = dynamic(() => import("../components/battleground/BattlegroundGame"), { ssr: false });
 
-/** In the mobile app, skip the marketing page and go straight to sign-in. */
-const signInUrl = () => (isNativeApp() ? "/?signin=1" : "/");
+/** Not signed in: the app shows its own login screen; on the web, back to the landing page. */
+function needSignIn(router: ReturnType<typeof useRouter>) {
+  if (isNativeApp()) postToApp("auth-required");
+  else router.replace("/");
+}
 
 /** Only signed-in players get in; everyone else goes back to the landing page to sign in. */
 export default function BattlegroundLoader() {
@@ -22,10 +25,10 @@ export default function BattlegroundLoader() {
       .then((res) => {
         if (cancelled) return;
         if (res.ok) setAllowed(true);
-        else router.replace(signInUrl());
+        else needSignIn(router);
       })
       .catch(() => {
-        if (!cancelled) router.replace(signInUrl());
+        if (!cancelled) needSignIn(router);
       });
     return () => {
       cancelled = true;

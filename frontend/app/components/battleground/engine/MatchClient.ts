@@ -77,6 +77,7 @@ export type ServerMessage =
   | { t: "hello"; you: string }
   | { t: "queue"; players: number; max: number; startsIn: number }
   | { t: "queue-left" }
+  | { t: "match-failed" }
   | ({ t: "start" } & MatchStart)
   | { t: "snap"; s: unknown[][]; alive: number }
   | ({ t: "zone" } & ZoneSync)

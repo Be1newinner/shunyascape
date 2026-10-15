@@ -18,7 +18,6 @@ import {
 import LandingEffects from "./components/landing/LandingEffects";
 import Logo, { LogoMark } from "./components/landing/Logo";
 import PlayButton from "./components/landing/PlayButton";
-import AutoSignIn from "./components/landing/AutoSignIn";
 import SplitWords from "./components/landing/SplitWords";
 import {
   ARSENAL,
@@ -196,7 +195,6 @@ export default function Home() {
     <div className="ls-page">
       <JsonLd />
       <LandingEffects />
-      <AutoSignIn />
       <div className="ls-progress" aria-hidden="true" />
       <div className="ls-grain" aria-hidden="true" />
       <a href="#main" className="ls-skip">

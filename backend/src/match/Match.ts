@@ -149,14 +149,22 @@ export class Match {
       peer.send({ t: "start", match: this.id, seed: this.seed, you: peer.userId, host: null, roster, peace: PEACE_SECONDS });
     }
     let last = Date.now();
-    this.timers.push(setInterval(() => {
+    // An error in one tick is logged, never allowed to crash the game server.
+    const guard = (name: string, fn: () => void) => () => {
+      try {
+        fn();
+      } catch (err) {
+        console.error(`Match ${this.id} ${name} tick failed:`, err);
+      }
+    };
+    this.timers.push(setInterval(guard("bots", () => {
       const now = Date.now();
       const dt = Math.min(0.2, (now - last) / 1000);
       last = now;
       this.botTick(dt);
-    }, BOT_TICK_MS));
-    this.timers.push(setInterval(() => this.snapshot(), SNAPSHOT_MS));
-    this.timers.push(setInterval(() => this.zoneTick(1), 1000));
+    }), BOT_TICK_MS));
+    this.timers.push(setInterval(guard("snapshot", () => this.snapshot()), SNAPSHOT_MS));
+    this.timers.push(setInterval(guard("zone", () => this.zoneTick(1)), 1000));
   }
 
   private botTick(dt: number) {

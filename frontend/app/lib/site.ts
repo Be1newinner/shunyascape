@@ -5,6 +5,8 @@
 export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
 
 export const SITE_NAME = "ShunyaScape";
+/** Where players reach the developer about privacy and account deletion. */
+export const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL || "be1newinner@gmail.com";
 export const SITE_TITLE = "ShunyaScape — Free 3D Battle Royale in Your Browser";
 export const SITE_DESCRIPTION =
   "Drop into a realistic 3D battleground, loot guns, ammo and med kits, and outfight 24 AI soldiers as the zone closes in. Free, third-person, and it runs right in your browser.";

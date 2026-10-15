@@ -547,6 +547,24 @@ app.patch(
   },
 );
 
+// DELETE /api/profile — the player deletes their own account (profile, stats, sign-in) for good
+app.delete(
+  "/api/profile",
+  requireAuth as express.RequestHandler,
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      await connectDB();
+      await User.deleteOne({ _id: req.user._id });
+      res.clearCookie("accessToken", { path: "/" });
+      res.clearCookie("refreshToken", { path: "/" });
+      res.status(200).json({ deleted: true });
+    } catch (error) {
+      console.error("Account deletion error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
 // ==========================================
 // MOBILE APP -> WEBVIEW SESSION HANDOFF
 // ==========================================

@@ -1,2 +1,4 @@
 node_modules
 frontend/unused_assets/**
+# Built app packages (APKs)
+/built/

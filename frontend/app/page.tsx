@@ -212,6 +212,7 @@ export default function Home() {
             <a href="#match">A match</a>
             <a href="#how-to-play">How to play</a>
             <a href="#faq">FAQ</a>
+            <Link href="/privacy">Privacy</Link>
           </nav>
           <div className="ls-nav__actions">
             <PlayButton className="ls-link-btn">Log in</PlayButton>

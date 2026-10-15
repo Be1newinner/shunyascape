@@ -166,6 +166,10 @@ export default function GoogleSignInButton({
       <div
         ref={containerRef}
         className={`flex min-h-[44px] w-full justify-center ${state === "signing-in" ? "pointer-events-none opacity-60" : ""}`}
+        // Google's iframe is a light-scheme document; inside our dark page the
+        // browser would paint an opaque white box behind it. Matching the
+        // scheme here keeps its background transparent.
+        style={{ colorScheme: "light" }}
         aria-busy={state !== "ready"}
       />
       {state === "signing-in" && <p className="text-xs text-slate-400">Signing you in with Google…</p>}

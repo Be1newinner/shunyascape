@@ -31,16 +31,19 @@ export const STATS = [
   { value: "Free", label: "in your browser, no download" },
 ] as const;
 
-export const PERMITS = [
-  { name: "Road Builder", cost: 50 },
-  { name: "Barber Shop", cost: 100 },
-  { name: "Arborist", cost: 100 },
-  { name: "Cloth Shop", cost: 150 },
-  { name: "Restaurant", cost: 200 },
-  { name: "Residential", cost: 250 },
-  { name: "Police Station", cost: 300 },
-  { name: "Commercial (skyscrapers)", cost: 500 },
-] as const;
+export type Rarity = "common" | "rare" | "epic" | "legendary";
+
+/** Building permits, styled as an in-game item shop (rarity follows price). */
+export const PERMITS: { name: string; cost: number; unlocks: string; rarity: Rarity }[] = [
+  { name: "Road Builder", cost: 50, unlocks: "Lay roads and link intersections", rarity: "common" },
+  { name: "Arborist", cost: 100, unlocks: "Plant trees you can harvest for wood", rarity: "common" },
+  { name: "Barber Shop", cost: 100, unlocks: "Open a barber for new hairstyles", rarity: "common" },
+  { name: "Cloth Shop", cost: 150, unlocks: "Sell shirts, pants and shoes", rarity: "rare" },
+  { name: "Restaurant", cost: 200, unlocks: "Feed the hungry city", rarity: "rare" },
+  { name: "Residential", cost: 250, unlocks: "Build homes; new citizens move in", rarity: "epic" },
+  { name: "Police Station", cost: 300, unlocks: "Keep the streets in order", rarity: "epic" },
+  { name: "Commercial", cost: 500, unlocks: "Raise skyscrapers with office jobs", rarity: "legendary" },
+];
 
 export const CONTROLS = [
   { keys: ["↑", "↓", "←", "→"], action: "Walk" },

@@ -5,54 +5,54 @@
 export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
 
 export const SITE_NAME = "ShunyaScape";
-export const SITE_TITLE = "ShunyaScape — Free Multiplayer 3D City Builder in Your Browser";
+export const SITE_TITLE = "ShunyaScape — Free 3D Battle Royale in Your Browser";
 export const SITE_DESCRIPTION =
-  "Build a living 3D city with friends, free in your browser. Earn coins at jobs, buy building permits, raise skyscrapers and watch 220+ citizens live their daily routines in a shared real-time world.";
+  "Drop into a realistic 3D battleground, loot guns, ammo and med kits, and outfight 24 AI soldiers as the zone closes in. Free, third-person, and it runs right in your browser.";
 
 export const KEYWORDS = [
-  "multiplayer city builder",
-  "browser city building game",
-  "free 3D city builder",
-  "online city simulation",
-  "city builder with friends",
-  "WebGL game",
-  "life simulation game",
+  "browser battle royale",
+  "free battle royale game",
+  "third-person shooter browser",
+  "3D shooter no download",
+  "WebGPU game",
+  "battle royale with bots",
   "ShunyaScape",
 ];
 
 /** Short, citable definition used in the "What is" section and llms.txt. */
 export const DEFINITION =
-  "ShunyaScape is a free multiplayer 3D city-building and life-simulation game that runs in the web browser. Players share one persistent 200×200 city, earn ShunyaCoins by working jobs, collecting resources and completing quests, buy permits to build roads, homes, shops and skyscrapers, and live alongside a population of computer-controlled citizens who follow daily routines.";
+  "ShunyaScape is a free third-person battle royale shooter that runs in the web browser. Each match drops you onto a 640-metre map of towns, fields, forests and hills with 24 AI soldiers. You loot guns, ammo and med kits from houses and crates, and fight to be the last one standing while a blue zone shrinks the play area.";
 
 export const STATS = [
-  { value: "200×200", label: "shared city grid" },
-  { value: "220+", label: "citizens with daily routines" },
-  { value: "8", label: "players per party" },
+  { value: "25", label: "soldiers in every match" },
+  { value: "640 m", label: "map of towns, forests and hills" },
+  { value: "6", label: "zone phases to survive" },
   { value: "Free", label: "in your browser, no download" },
 ] as const;
 
 export type Rarity = "common" | "rare" | "epic" | "legendary";
 
-/** Building permits, styled as an in-game item shop (rarity follows price). */
-export const PERMITS: { name: string; cost: number; unlocks: string; rarity: Rarity }[] = [
-  { name: "Road Builder", cost: 50, unlocks: "Lay roads and link intersections", rarity: "common" },
-  { name: "Arborist", cost: 100, unlocks: "Plant trees you can harvest for wood", rarity: "common" },
-  { name: "Barber Shop", cost: 100, unlocks: "Open a barber for new hairstyles", rarity: "common" },
-  { name: "Cloth Shop", cost: 150, unlocks: "Sell shirts, pants and shoes", rarity: "rare" },
-  { name: "Restaurant", cost: 200, unlocks: "Feed the hungry city", rarity: "rare" },
-  { name: "Residential", cost: 250, unlocks: "Build homes; new citizens move in", rarity: "epic" },
-  { name: "Police Station", cost: 300, unlocks: "Keep the streets in order", rarity: "epic" },
-  { name: "Commercial", cost: 500, unlocks: "Raise skyscrapers with office jobs", rarity: "legendary" },
+/** Weapons and gear, styled as an in-game item card list. */
+export const ARSENAL: { name: string; stat: string; detail: string; rarity: Rarity }[] = [
+  { name: "P92", stat: "9mm · 15", detail: "Sidearm you drop in with. Quick to aim, semi-auto.", rarity: "common" },
+  { name: "Ammo box", stat: "×30–60", detail: "5.56mm, 7.62mm or 9mm. Picked up as you walk over it.", rarity: "common" },
+  { name: "Med kit", stat: "100 HP", detail: "Restores full health in 4.5 seconds. Don't get caught healing.", rarity: "rare" },
+  { name: "M416", stat: "5.56mm · 30", detail: "Full-auto rifle with a red-dot sight. The all-rounder.", rarity: "epic" },
+  { name: "Kar98k", stat: "7.62mm · 5", detail: "Bolt-action with a 4× scope. One headshot is enough.", rarity: "legendary" },
 ];
 
 export const CONTROLS = [
-  { keys: ["↑", "↓", "←", "→"], action: "Walk" },
-  { keys: ["Shift"], action: "Sprint" },
+  { keys: ["W", "A", "S", "D"], action: "Move" },
+  { keys: ["Mouse"], action: "Look around" },
+  { keys: ["Left click"], action: "Shoot" },
+  { keys: ["Right click"], action: "Aim / scope" },
   { keys: ["Space"], action: "Jump" },
-  { keys: ["W", "A", "S", "D"], action: "Orbit the camera" },
-  { keys: ["Q", "E"], action: "Zoom in / out" },
-  { keys: ["R"], action: "Talk, shop or work" },
-  { keys: ["U", "I"], action: "Punch / kick trees for wood" },
+  { keys: ["Shift"], action: "Sprint" },
+  { keys: ["U"], action: "Reload" },
+  { keys: ["I"], action: "Pick up" },
+  { keys: ["J", "K"], action: "Crouch / prone" },
+  { keys: ["O"], action: "Switch weapon" },
+  { keys: ["L"], action: "Use med kit" },
 ] as const;
 
 export const FAQ = [
@@ -62,26 +62,26 @@ export const FAQ = [
   },
   {
     q: "Is ShunyaScape free to play?",
-    a: "Yes. ShunyaScape is free and runs directly in a modern web browser using WebGL, so there is nothing to download or install. You only need a free account to save your progress.",
+    a: "Yes. ShunyaScape is free and runs directly in a modern web browser, so there is nothing to download or install. You only need a free account, which you can create with Google or an email address.",
+  },
+  {
+    q: "Who do I fight against?",
+    a: "Every match has 24 AI soldiers. They roam the map, move into the safe zone, strafe while fighting, fire in bursts and reload. They only hunt you, so every soldier left alive is a threat to you.",
+  },
+  {
+    q: "How does the zone work?",
+    a: "The match starts with a 30-second ceasefire to grab a gun. Then a blue zone shrinks the play area in six phases. Outside it you lose health every second, and the damage grows with each phase.",
   },
   {
     q: "Can I play with friends?",
-    a: "Yes. Everyone plays in the same persistent city in real time. You can see other players walk around, build next to each other, and form a party of up to 8 players.",
-  },
-  {
-    q: "How do I earn ShunyaCoins?",
-    a: "Work jobs inside skyscrapers and houses, help speed up construction sites, collect coins, energy crystals and crates around the map, harvest wood from trees, and complete quests and achievements. Spend coins on building permits, food, clothes and haircuts.",
-  },
-  {
-    q: "What do the citizens in the city do?",
-    a: "More than 220 computer-controlled citizens follow a daily schedule on the server: they sleep at home, commute to work, take lunch at restaurants, run errands at shops, walk in Central Park and head home at night. Builder citizens walk to new construction sites and build them.",
+    a: "Not yet. Matches are currently you against AI soldiers. Online multiplayer is planned.",
   },
   {
     q: "Do I need a powerful computer?",
-    a: "No. ShunyaScape has low, medium and high graphics presets and adjusts automatically. Any recent laptop or desktop with a WebGL-capable browser can play.",
+    a: "No. The game uses WebGPU when your browser supports it and falls back to WebGL 2 otherwise. Low, medium and high graphics presets let it run on most recent laptops and desktops.",
   },
   {
-    q: "What happens if my character gets hungry?",
-    a: "Hunger drops each in-game day. Eat at a restaurant to restore it; going three in-game days without food resets your progress, so plan your coins.",
+    q: "Where do the 3D models come from?",
+    a: "Props, rocks, guns and ground textures are photo-scanned CC0 assets from Poly Haven, compressed for the web. Trees are generated with EZ-Tree, and the soldier comes from the three.js examples.",
   },
 ] as const;

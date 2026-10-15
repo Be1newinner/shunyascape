@@ -499,242 +499,20 @@ html[data-scrolled] .ls-nav__inner {
   will-change: transform;
 }
 
-.ls-sky {
-  background:
-    radial-gradient(120% 60% at 50% 78%, hsl(330 85% 52% / 0.55), transparent 60%),
-    radial-gradient(70% 40% at 50% 74%, hsl(30 100% 60% / 0.55), transparent 70%),
-    linear-gradient(to bottom, hsl(250 62% 6%) 0%, hsl(262 58% 12%) 38%, hsl(292 55% 22%) 62%, hsl(330 70% 36%) 76%, hsl(250 50% 8%) 100%);
+/* In-game screenshot behind the hero copy */
+.ls-hero-shot {
+  inset: -40px -60px -40px;
 }
-
-.ls-stars {
+.ls-hero-shot__img {
+  object-fit: cover;
+  object-position: 50% 45%;
+}
+.ls-hero-shade {
   position: absolute;
-  inset: 0 0 45%;
-  background-image:
-    radial-gradient(1.5px 1.5px at 12% 18%, white, transparent),
-    radial-gradient(1px 1px at 27% 42%, white, transparent),
-    radial-gradient(1.5px 1.5px at 41% 12%, white, transparent),
-    radial-gradient(1px 1px at 56% 30%, white, transparent),
-    radial-gradient(1.5px 1.5px at 68% 8%, white, transparent),
-    radial-gradient(1px 1px at 79% 36%, white, transparent),
-    radial-gradient(1.5px 1.5px at 91% 20%, white, transparent),
-    radial-gradient(1px 1px at 6% 52%, white, transparent),
-    radial-gradient(1px 1px at 34% 60%, white, transparent),
-    radial-gradient(1px 1px at 86% 58%, white, transparent);
-  opacity: 0.8;
-  animation: ls-twinkle 5s ease-in-out infinite alternate;
-}
-
-@keyframes ls-twinkle {
-  to {
-    opacity: 0.35;
-  }
-}
-
-.ls-sun {
-  position: absolute;
-  left: 50%;
-  bottom: var(--floor);
-  width: min(40vw, 400px);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  transform: translate(-50%, 50%);
-  background: linear-gradient(to bottom, hsl(50 100% 70%), hsl(28 100% 60%) 45%, hsl(330 90% 58%));
-  box-shadow:
-    0 0 80px 10px hsl(330 90% 58% / 0.5),
-    0 0 180px 60px hsl(28 100% 60% / 0.25);
-  /* Retro horizontal slices across the lower half */
-  -webkit-mask: linear-gradient(to bottom, black 48%, transparent 48%) top / 100% 100% no-repeat,
-    repeating-linear-gradient(to bottom, black 0 9px, transparent 9px 15px);
-  mask:
-    linear-gradient(to bottom, black 48%, transparent 48%) top / 100% 100% no-repeat,
-    repeating-linear-gradient(to bottom, black 0 9px, transparent 9px 15px);
-}
-
-.ls-mountains svg {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--floor) + 10px);
-  width: 100%;
-  height: clamp(90px, 16vh, 190px);
-}
-.ls-mountain-back {
-  fill: hsl(272 40% 22%);
-}
-.ls-mountain-front {
-  fill: hsl(266 45% 14%);
-}
-
-.ls-skyline-svg {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--floor) + 6px);
-  width: 100%;
-  height: clamp(130px, 22vh, 240px);
-}
-.ls-skyline--near .ls-skyline-svg {
-  bottom: var(--floor);
-  height: clamp(150px, 26vh, 280px);
-}
-
-.ls-window-warm {
-  fill: hsl(42 100% 70%);
-}
-.ls-window-cool {
-  fill: hsl(188 100% 72%);
-}
-.ls-skyline--near .ls-window-warm:nth-child(7n) {
-  animation: ls-flicker 6s steps(1) infinite;
-}
-.ls-beacon {
-  fill: hsl(352 100% 62%);
-  animation: ls-blink 1.6s steps(1) infinite;
-}
-
-@keyframes ls-flicker {
-  0%,
-  86% {
-    opacity: 1;
-  }
-  88%,
-  92% {
-    opacity: 0.2;
-  }
-}
-
-@keyframes ls-blink {
-  50% {
-    opacity: 0.15;
-  }
-}
-
-.ls-traffic {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--floor) - 6px);
-  height: 8px;
-  overflow: hidden;
-}
-
-.ls-car {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 70px;
-  height: 3px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, transparent, hsl(55 100% 85%));
-  box-shadow: 0 0 12px 2px hsl(55 100% 75% / 0.7);
-  animation: ls-drive 9s linear infinite;
-}
-.ls-car--rev {
-  top: 4px;
-  background: linear-gradient(270deg, transparent, hsl(352 100% 62%));
-  box-shadow: 0 0 12px 2px hsl(352 100% 62% / 0.6);
-  animation-name: ls-drive-rev;
-}
-
-@keyframes ls-drive {
-  from {
-    transform: translateX(-80px);
-  }
-  to {
-    transform: translateX(110vw);
-  }
-}
-@keyframes ls-drive-rev {
-  from {
-    transform: translateX(110vw);
-  }
-  to {
-    transform: translateX(-80px);
-  }
-}
-
-.ls-floor {
-  top: auto;
-  height: var(--floor);
-  perspective: 260px;
-  perspective-origin: 50% 0%;
-  overflow: hidden;
-}
-
-.ls-grid {
-  position: absolute;
-  inset: 0 -60% -120%;
-  transform: rotateX(68deg);
-  transform-origin: top;
-  background-color: hsl(255 55% 6%);
-  background-image:
-    linear-gradient(hsl(188 96% 56% / 0.75) 2px, transparent 2px),
-    linear-gradient(90deg, hsl(318 90% 62% / 0.6) 2px, transparent 2px);
-  background-size: 64px 64px;
-  animation: ls-grid-move 1.6s linear infinite;
-  -webkit-mask: linear-gradient(to bottom, transparent, black 18%);
-  mask: linear-gradient(to bottom, transparent, black 18%);
-  box-shadow: inset 0 3px 0 hsl(318 90% 70% / 0.9);
-}
-
-@keyframes ls-grid-move {
-  to {
-    background-position: 0 64px;
-  }
-}
-
-.ls-hud {
   inset: 0;
-}
-
-.ls-chip {
-  position: absolute;
-  padding: 9px 14px;
-  border-radius: 12px;
-  font-family: var(--display);
-  font-size: 0.82rem;
-  font-weight: 700;
-  white-space: nowrap;
-  color: var(--ink);
-  border: 1px solid var(--chip, var(--cyan));
-  background: hsl(252 45% 8% / 0.62);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 0 24px -6px var(--chip, var(--cyan));
-  animation: ls-float 6s ease-in-out infinite alternate;
-}
-.ls-chip::before {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 8px;
-  border-radius: 50%;
-  background: var(--chip, var(--cyan));
-  box-shadow: 0 0 10px var(--chip, var(--cyan));
-}
-.ls-chip--coin {
-  --chip: var(--amber);
-}
-.ls-chip--npc {
-  --chip: var(--emerald);
-  animation-delay: -2s;
-}
-.ls-chip--xp {
-  --chip: var(--violet);
-  animation-delay: -4s;
-}
-.ls-chip--build {
-  --chip: var(--cyan);
-  animation-delay: -1s;
-}
-
-@keyframes ls-float {
-  from {
-    transform: translateY(-8px);
-  }
-  to {
-    transform: translateY(10px);
-  }
+  background:
+    radial-gradient(90% 70% at 50% 38%, oklch(0.16 0.03 260 / 0.35), oklch(0.12 0.03 260 / 0.78) 75%),
+    linear-gradient(to bottom, oklch(0.12 0.03 260 / 0.55), transparent 30%);
 }
 
 .ls-fade {
@@ -744,107 +522,6 @@ html[data-scrolled] .ls-nav__inner {
   background: linear-gradient(to bottom, transparent, var(--bg));
 }
 
-
-/* ── Live ticker (angled ribbon under the hero) ─────────────────────────── */
-
-.ls-ticker {
-  position: relative;
-  z-index: 3;
-  margin-top: -28px;
-  padding-block: 14px;
-  overflow: hidden;
-  background: linear-gradient(90deg, oklch(0.2 0.06 290), oklch(0.17 0.05 280));
-  border-block: 1px solid oklch(0.87 0.16 88 / 0.45);
-  box-shadow:
-    0 10px 40px -10px oklch(0 0 0 / 0.6),
-    0 0 30px -12px oklch(0.87 0.16 88 / 0.6);
-  transform: rotate(-1.4deg) scale(1.03);
-}
-
-.ls-ticker__track {
-  display: flex;
-  width: max-content;
-  animation: ls-marquee 48s linear infinite;
-}
-.ls-ticker:hover .ls-ticker__track {
-  animation-play-state: paused;
-}
-
-.ls-ticker__group {
-  display: flex;
-  align-items: center;
-  gap: 34px;
-  padding-right: 34px;
-  font-family: var(--hud);
-  font-size: 0.92rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  color: var(--ink-soft);
-}
-
-.ls-ticker__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.ls-ticker__item::before {
-  content: "◆";
-  font-size: 0.55rem;
-  color: var(--gold);
-  margin-right: 26px;
-}
-.ls-ticker__item strong {
-  color: var(--gold);
-  font-weight: 700;
-}
-
-.ls-ticker__live {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: oklch(0.9 0.21 130 / 0.12);
-  border: 1px solid oklch(0.9 0.21 130 / 0.4);
-  color: var(--lime);
-  font-weight: 700;
-}
-.ls-ticker__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--lime);
-  box-shadow: 0 0 0 0 oklch(0.9 0.21 130 / 0.7);
-  animation: ls-pulse 1.8s ease-out infinite;
-}
-
-/* Shimmer placeholders while live numbers load */
-.ls-ticker__skeleton {
-  width: 120px;
-  height: 14px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, oklch(1 0 0 / 0.06) 20%, oklch(1 0 0 / 0.16) 50%, oklch(1 0 0 / 0.06) 80%);
-  background-size: 200% 100%;
-  animation: ls-skeleton 1.3s linear infinite;
-}
-
-@keyframes ls-marquee {
-  to {
-    transform: translateX(-50%);
-  }
-}
-@keyframes ls-pulse {
-  to {
-    box-shadow: 0 0 0 10px oklch(0.9 0.21 130 / 0);
-  }
-}
-@keyframes ls-skeleton {
-  to {
-    background-position: -200% 0;
-  }
-}
 
 /* ── Section scaffolding ────────────────────────────────────────────────── */
 
@@ -1725,13 +1402,6 @@ html[data-scrolled] .ls-nav__inner {
   font-weight: 700;
   color: var(--gold);
 }
-.ls-item__price abbr {
-  text-decoration: none;
-}
-.ls-item__coin {
-  width: 20px;
-  height: 20px;
-}
 
 /* ── FAQ ────────────────────────────────────────────────────────────────── */
 
@@ -1880,44 +1550,6 @@ html[data-scrolled] .ls-nav__inner {
   pointer-events: none;
 }
 
-.ls-float-coin {
-  position: absolute;
-  width: 40px;
-  height: 40px;
-  z-index: -1;
-  filter: drop-shadow(0 10px 18px oklch(0.8 0.17 70 / 0.5));
-  animation: ls-levitate 5s ease-in-out infinite alternate;
-}
-.ls-float-coin--0 {
-  top: 14%;
-  left: 10%;
-}
-.ls-float-coin--1 {
-  top: 22%;
-  right: 12%;
-  width: 54px;
-  height: 54px;
-  animation-delay: -1.5s;
-}
-.ls-float-coin--2 {
-  bottom: 18%;
-  left: 18%;
-  width: 30px;
-  height: 30px;
-  animation-delay: -3s;
-}
-.ls-float-coin--3 {
-  bottom: 14%;
-  right: 20%;
-  animation-delay: -2s;
-}
-.ls-float-coin--4 {
-  top: 50%;
-  left: 4%;
-  width: 26px;
-  height: 26px;
-  animation-delay: -4s;
-}
 @keyframes ls-levitate {
   from {
     transform: translateY(-10px) rotate(-12deg);
@@ -2032,10 +1664,6 @@ html[data-scrolled] .ls-nav__inner {
   .ls-step-day {
     min-height: 0;
   }
-  .ls-chip--npc,
-  .ls-chip--build {
-    display: none;
-  }
 }
 
 @media (max-width: 640px) {
@@ -2056,9 +1684,6 @@ html[data-scrolled] .ls-nav__inner {
   }
   .ls-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .ls-chip {
-    display: none;
   }
   .ls-items {
     grid-template-columns: minmax(0, 1fr);
@@ -2090,12 +1715,5 @@ html[data-scrolled] .ls-nav__inner {
   .ls-btn,
   .ls-outline-word {
     transform: none;
-  }
-  .ls-ticker__track {
-    flex-wrap: wrap;
-    width: auto;
-  }
-  .ls-ticker__group + .ls-ticker__group {
-    display: none;
   }
 }

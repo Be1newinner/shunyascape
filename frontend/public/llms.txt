@@ -1,36 +1,29 @@
 # ShunyaScape
 
-> ShunyaScape is a free multiplayer 3D city-building and life-simulation game that runs in the web browser. Players share one persistent 200×200 city, earn ShunyaCoins by working jobs, collecting resources and completing quests, buy permits to build roads, homes, shops and skyscrapers, and live alongside a population of computer-controlled citizens who follow daily routines.
+> ShunyaScape is a free third-person battle royale shooter that runs in the web browser. Each match drops you onto a 640-metre map of towns, fields, forests and hills with 24 AI soldiers. You loot guns, ammo and med kits from houses and crates, and fight to be the last one standing while a blue zone shrinks the play area.
 
 ## Key facts
 
-- Genre: multiplayer city builder and life simulation (sandbox)
-- Platform: any modern web browser with WebGL; no download or install
-- Price: free to play; a free account saves progress
-- World: one shared, persistent 200×200 city simulated in real time for all players
-- Citizens: 220+ computer-controlled citizens with homes, jobs and daily schedules (sleep, commute, work, lunch, errands, park walks); builder citizens walk to new construction sites and build them
-- Day length: one in-game day lasts eight real hours
-- Multiplayer: everyone plays in the same city; parties hold up to 8 players
-- Currency: ShunyaCoins (SC); new players start with 100 SC
+- Genre: battle royale, third-person shooter
+- Platform: any modern web browser; WebGPU when available, WebGL 2 otherwise; no download or install
+- Price: free to play; a free account (Google or email) is required
+- Match: 1 player against 24 AI soldiers; the soldiers only hunt the player
+- Map: 640 × 640 m with nine towns of enterable houses, roads, forests, fields and hills
+- Zone: 30-second ceasefire, then six shrinking phases; outside the zone you lose health every second
+- Multiplayer: not yet; online play is planned
 
-## How to earn
+## Weapons and loot
 
-- Work jobs: tech office in skyscrapers (+50 SC), house repairs (+30 SC), helping construction sites (+20 SC)
-- Collect coins (+10 SC), energy crystals (+25 SC) and crates (+15 SC, +5 wood) around the map
-- Harvest wood by punching or kicking trees
-- Complete quests (find the lost dog Fido, plant three trees, climb a skyscraper) and achievements
-
-## Building permits (one-time purchase)
-
-- Road Builder 50 SC, Arborist 100 SC, Barber Shop 100 SC, Cloth Shop 150 SC, Restaurant 200 SC, Residential 250 SC, Police Station 300 SC, Commercial (skyscrapers) 500 SC
-
-## Survival
-
-- Hunger drops every in-game day; eat at restaurants to restore it. Three in-game days without food resets progress.
+- M416: 5.56mm, 30 rounds, full-auto, red-dot sight
+- Kar98k: 7.62mm, 5 rounds, bolt action, 4× scope
+- P92: 9mm, 15 rounds, semi-auto pistol (you start with one)
+- Ammo boxes and med kits (full heal in 4.5 s) are picked up automatically
 
 ## Controls
 
-- Arrow keys walk, Shift sprints, Space jumps, W/A/S/D orbit the camera, Q/E zoom, R talks/shops/works, U/I punch or kick
+- W/A/S/D move, mouse looks, left click shoots, right click aims or scopes
+- Space jumps, Shift sprints
+- U reload, I pick up, J crouch, K prone, O switch weapon, L use med kit, 1/2/3 weapon slots
 
 ## Links
 

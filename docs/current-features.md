@@ -1,101 +1,79 @@
 # Current Features
 
+ShunyaScape is a browser battle royale (`/battleground`). The earlier city-builder game, its WebSocket sync, NPC simulation, economy and city admin pages were removed.
+
 ## 1. Standalone TypeScript Express Backend
-* Migrated from Next.js serverless Vercel API routes to a dedicated server-based backend running on port `8005`.
-* Configured using `dotenv` and type-checked using TypeScript configurations with paths resolution.
-* Manages user registration, login, logout, password resets, active user coordinates, NPCs, and global settings.
+* Dedicated Express server on port `8005` (`backend/src/index.ts`), configured with `dotenv` and type-checked with TypeScript. The same port serves the game server's WebSocket at `/ws`.
+* Handles accounts and sessions (register, OTP verification, login, Google sign-in, logout, password reset, profile), the battleground profile (outfit, career stats), match tickets, online matches and the admin player list.
 
-## 2. Real-Time WebSocket Synchronization
-* Implemented instant synchronization of the simulation state using native WebSockets (`ws` library on the server and native browser `WebSocket` client on the frontend).
-* **Synchronized Event Types**:
-  * `player-move` / `player-moved`: Synchronizes player world coordinate movements across clients in real-time.
-  * `npc-paths` / `npcs-added`: Routes of the server-simulated city NPCs (see section 13).
-  * `settings-update` / `settings-updated`: Synchronizes simulation time of day, play speed, and pause state instantly.
-  * `grid-update` / `grid-updated`: Propagates grid build, demolish, and construction progress updates across clients.
-* **Auto-Reconnection**: The client-side WebSocket wrapper features an automatic 3-second reconnect handler to withstand server restarts.
+## 2. Secure Email OTP Authentication
+* Mandatory email One-Time Password (OTP) verification using `nodemailer`; OTP codes use `crypto.randomInt`.
+* Unverified logins get a new OTP and are sent to the OTP verification modal.
+* Full flows for registration (with email verification), Forgot Password and Reset Password.
 
-## 3. High-Performance In-Memory DB Caching
-* Maintains active player coordinates, NPC arrays, and global environment states in local server memory.
-* Broadcasts real-time events immediately in-memory without blocking on database I/O.
-* A background write-back thread runs every **10 seconds** to flush modified cached data in bulk (using MongoDB `bulkWrite`) to MongoDB, preventing database write throttling.
-* Triggers an immediate database flush of a user's final coordinates when their WebSocket connection terminates to guarantee data consistency.
+## 3. Sessions: Single-Device Login
+* Access token (1 day) and refresh token (30 days) in HTTP-only, SameSite=Lax cookies.
+* Each login rotates `currentSessionId` / `currentRefreshToken`; every authenticated call checks them, so signing in elsewhere ends the old session with `401`.
+* The game listens for the `auth-unauthorized` event (fired on any `401`), stops the match, clears local storage and shows a "Session expired" screen.
 
-## 4. Spectator Mode for Guest Sessions
-* Allows guest (unauthenticated) users to establish a spectator WebSocket connection.
-* Spectators receive all real-time player, NPC, settings, and grid cell updates to view the simulation in real time but are restricted from emitting updates or executing administrative actions.
-
-## 5. Touchpad & Keyboard Camera Controls
-* Added `touchAction: 'none'` styling on the main 3D canvas container to prevent the browser from capturing scroll/pinch trackpad gestures, routing them to OrbitControls instead.
-* Implemented `Q` and `E` key listeners in the simulation tick loop to rotate the camera azimuthal angle horizontally around the target, providing trackpad/laptop users an easy navigation alternative when mouse dragging is occupied by construction tools.
-
-## 6. Database Write & Sync Frequency Optimization
-* **10-Second Database Writes**: Reduced database write-back flush operations on the Express server to a maximum frequency of once every 10 seconds.
-* **HTTP Sync Fallbacks**: In the event of a WebSocket disconnect, the frontend uses a fallback HTTP synchronization mechanism. Fallback position updates for players are throttled to a safe frequency of once every **10 seconds** to avoid database bloat and query throttling.
-* **Bandwidth & State Optimization**:
-  * **NPC Humans**: Simulated on the server; clients receive a path and start time per decision and animate the walk locally (see section 13).
-  * **NPC Animals**: Cows, Dogs, Cats, and Birds are simulated locally on each client's browser as ambient animations. This entirely removes the need to sync animals over the network.
-  * **Clouds & Weather**: Clouds are generated and simulated client-side. The network only synchronizes Time of Day and Play Speed settings parameters.
-
-## 7. Secure Email OTP Authentication
-* Migrated from instant JWT issuing to a mandatory email-based One-Time Password (OTP) verification system using `nodemailer`.
-* Blocks unverified logins and intercepts them to redirect users seamlessly to an OTP verification modal.
-* Provides full flows for Account Registration (with email verification), Password Recovery (Forgot Password), and Reset Password.
-
-## 8. Server-Authoritative Economy
-* Clients no longer send coin/XP/permit totals. The old `progress-update` and `admin-revenue` socket events are removed.
-* Clients send **actions** and the server applies amounts from its own tables (`backend/src/game/economy.ts`):
-  * `earn` (`collect_coin`, `collect_crystal`, `collect_crate`, `harvest_tree`, jobs, one-time quests), rate-limited with token buckets.
-  * `job-start` → `earn job_*`: the server times each job and checks the player is next to the right building.
-  * `achievement`, `buy-permit`, `buy-item` (food, clothes, haircut; the player must be at the shop), `progress-reset` (starvation).
-  * Construction costs are deducted by the server when it accepts a build order.
-* The server replies with `progress` (authoritative totals) or `action-rejected` (reason shown as a toast). Quest completions are stored per user (`completedQuests`) so rewards can't be re-claimed after a reload.
-
-## 9. Shared City Layout
-* The 200×200 city is generated once on the server from a fixed seed (`backend/src/world/layout.ts`) and served by `GET /api/world` as a compact layout string plus every changed cell. Every player now sees the same city.
-* MongoDB stores only cells that differ from the base layout. The old "wipe and regenerate the grid when the cell count isn't 1024" logic is removed.
-* Grid changes are validated against the current world state: players can only order construction on empty cells they hold a permit for, advance a construction site, or complete it. Admins can set any cell.
-* Building looks (height, colour, rotation) are derived from the cell coordinates, so they match between players.
-* One-time migration (`worldVersion` 2): the legacy 32×32 grid and the old admin-pushed NPC records are cleared (they were test data).
-* Land expansion is disabled until it can be applied to the whole world at once.
-
-## 10. Connection & Stability Fixes
-* WebSocket hardening: 64 KB message limit, ping/pong heartbeat, per-socket error handler (a malformed frame used to crash the server), position validation.
-* Opening the game in a second tab closes the first with code `4001`; that client stops reconnecting instead of fighting the new tab every 3 seconds. A replaced socket no longer unregisters the new one.
-* OTP codes use `crypto.randomInt`; logout flushes unsaved progress instead of dropping it.
-* Distance walked updates React state once per second instead of every frame.
-
-## 11. Player Privacy
-* Emails are never sent to other players. `GET /api/users`, the WebSocket `init` and `player-connected` messages carry only public fields (`publicUser()` in `backend/src/index.ts`).
-* Clients identify players by user id. Store cells record `ownerId` / `ownerName` instead of the owner's email, plus `builderId` for whoever ordered the build.
-* Admins get emails from `GET /api/admin/users` (admin role required), used by the admin panel.
-
-## 12. Password & Token Security
+## 4. Password & Token Security
 * Passwords are hashed with scrypt and a random per-user salt (`scrypt$<salt>$<hash>`), asynchronously so logins don't block the server.
 * Accounts with a hash from the old fixed-salt scheme get `403 { requiresPasswordReset: true }` on login and must use "Forgot password".
-* `JWT_SECRET` is required in production; development uses a random per-process secret instead of a hard-coded one. Token signatures are compared in constant time.
+* `JWT_SECRET` is required in production; development uses a random per-process secret. Token signatures are compared in constant time.
 
-## 13. Server-Simulated City Population
-* ~220 NPCs (up to 320) are simulated by the backend (`backend/src/world/npcs.ts`), so they keep living when no admin is online.
-* Each NPC has a home, a role (worker, shopkeeper, builder, resident), a walking speed and a personal daily schedule tied to the shared clock: sleep at home, go to work, lunch at a nearby restaurant, errands at shops, walks in Central Park, strolls, a few night owls.
-* Paths use A* over the city grid (`backend/src/world/pathfinding.ts`): roads and the park are preferred, grass costs more, buildings and trees block. Each NPC walks with a small lateral offset so crowds don't move single file.
-* NPCs inside a building (home, work, shop) are hidden; clients only render people who are outside.
-* Builder NPCs walk to new construction sites and build them (10%/s each); unattended sites still finish slowly. Finished houses get 1–2 new residents.
-* Clients receive `npc-paths` only when an NPC makes a new decision and animate the walk against the server clock; nothing is streamed per frame.
-* NPC chat lines reflect what the NPC is doing (going to work, lunch, errands, the park, building).
-
-## 14. Landing Page, SEO & GEO
-* The home page (`frontend/app/page.tsx`) is a server component and is prerendered as static HTML; only the motion effects (`components/landing/LandingEffects.tsx`) and the sign-in buttons (`PlayButton.tsx`) are client islands.
-* Game-style hero: a layered synthwave city (sky, sun, mountains, two skyline layers with lit windows and blinking beacons, traffic, a moving neon grid floor, floating HUD chips) with scroll and pointer parallax. Feature cards tilt toward the pointer; sections reveal on scroll; the final call to action has an animated gradient border. All motion is disabled under `prefers-reduced-motion`, and content stays visible without JavaScript.
-* SEO: title/description/keywords, canonical URL, Open Graph and Twitter cards, a generated 1200×630 share image (`app/opengraph-image.tsx`), `robots.txt` (blocks `/world`, `/admin`, `/api/`), `sitemap.xml`, semantic landmarks, one H1 and a proper heading outline.
-* Structured data (JSON-LD): `VideoGame`, `WebSite` and `FAQPage`.
-* GEO (answer engines): a citable "What is ShunyaScape?" definition, concrete facts (prices, controls, schedule), an FAQ mirrored in JSON-LD, and `public/llms.txt`. Facts live in `app/lib/site.ts` so the copy, metadata and structured data stay in sync.
-* Set `NEXT_PUBLIC_SITE_URL` (e.g. `https://your-domain`) so canonical links, the sitemap and social cards use absolute URLs.
-* Fonts: Outfit (display) and Inter (text) via `next/font`, self-hosted at build time.
-* Fix: the page body is scrollable again (it was locked with `overflow: hidden` for the game); the game page now locks scroll itself.
-
-## 15. Sign in with Google
-* "Continue with Google" / "Sign up with Google" in the landing sign-in modal and the in-game sign-in form (`frontend/app/components/GoogleSignInButton.tsx`), using Google Identity Services in popup mode.
-* The browser gets a Google-signed ID token; `POST /api/auth/google` verifies its signature, issuer, expiry and audience with `google-auth-library` (`backend/src/utils/google.ts`) and starts the usual single-device cookie session. No client secret is needed.
-* New Google users are created already verified (no OTP email). An existing account with the same verified email is linked. If that account was never verified, its password is cleared, so whoever registered the email can't keep access.
+## 5. Sign in with Google
+* "Continue with Google" / "Sign up with Google" in the sign-in modal (`frontend/app/components/GoogleSignInButton.tsx`), using Google Identity Services in popup mode.
+* `POST /api/auth/google` verifies the Google ID token (signature, issuer, expiry, audience) with `google-auth-library` (`backend/src/utils/google.ts`) and starts the usual single-device session. No client secret is needed.
+* New Google users are created already verified. An existing account with the same verified email is linked; if that account was never verified, its password is cleared.
 * Google-only accounts have no password; a password login gets a "use Google" message, and "Forgot password" can add one later.
-* Configuration: set `GOOGLE_CLIENT_ID` on the backend only. The frontend reads it from `GET /api/auth/config`, and the button stays hidden when it isn't set.
+* Configuration: set `GOOGLE_CLIENT_ID` on the backend only. The frontend reads it from `GET /api/auth/config`; the button stays hidden when it isn't set.
+
+## 6. Admin Panel (`/admin`)
+* Admin-only (role checked on the server). One page, **Players**: every account with email, sign-in method (Google / email, verified or not), role and sign-up date.
+* Actions: toggle admin role, delete a player. `GET /api/admin/users` and `POST /api/admin/users` (`changeRole`, `delete`).
+* The first account ever created becomes the admin.
+
+## 7. Landing Page, SEO & GEO
+* The home page (`frontend/app/page.tsx`) is a server component prerendered as static HTML; motion effects (`components/landing/LandingEffects.tsx`) and the sign-in buttons (`PlayButton.tsx`) are client islands.
+* Battle royale content: hero over a real in-game screenshot with pointer/scroll parallax, gameplay screenshots, feature bento, a "match timeline" scrollytelling section, first-match steps, controls and an arsenal card list, FAQ and a final call to action. All motion is disabled under `prefers-reduced-motion`.
+* Screenshots in `public/images/landing/bg-*.webp` are captured from the game itself.
+* SEO: title/description/keywords, canonical URL, Open Graph and Twitter cards, generated share image (`app/opengraph-image.tsx`), `robots.txt` (blocks `/battleground`, `/admin`, `/api/`), `sitemap.xml`, semantic landmarks and heading outline.
+* Structured data (JSON-LD): `VideoGame`, `WebSite`, `FAQPage`. GEO: a citable definition, concrete facts and an FAQ in `app/lib/site.ts` (single source for copy, metadata and JSON-LD), plus `public/llms.txt`.
+* Set `NEXT_PUBLIC_SITE_URL` so canonical links, the sitemap and social cards use absolute URLs.
+* Signing in sends players to `/battleground`.
+
+## 8. Battleground (`/battleground`)
+* Sign-in required (`GET /api/auth/me`; otherwise back to the landing page). Third-person battle royale: online matches of 30 soldiers (see section 10), or offline practice against bots when the game server can't be reached. Code in `frontend/app/components/battleground/` (engine in `engine/`), assets in `frontend/public/battleground/` (about 12 MB, credits in `CREDITS.md`).
+* Rendered with three.js `WebGPURenderer` (falls back to WebGL 2; `?renderer=webgl` forces it). Physics and character movement use Rapier (`@dimforge/rapier3d-compat`).
+* World: 640 m heightmap terrain with grass/dirt/road/triplanar-rock texturing, nine towns of enterable procedural houses (doors, windows, stairs), roads, EZ-Tree trees with near/far detail levels (far leaves alpha-sharpened so they don't fade), wind-animated grass tufts, Poly Haven props as cover, analytic sky with image-based lighting and sun shadows.
+* Controls: mouse look (pointer lock), WASD move, Space jump, Shift sprint, left click shoot, right click aim/scope, U reload, I pick up, J crouch, K prone, O or mouse wheel switch weapon, L med kit, 1–3 weapon slots.
+* Weapons: M416 (auto), Kar98k (bolt action), P92 pistol. Three slots (two primaries + pistol), magazines, reserve ammo per calibre, reload, recoil, spread, headshots. No single hit does more than 19 damage (`MAX_HIT_DAMAGE`), so everyone survives at least 5 hits; it takes 6–12 depending on gun and headshots.
+* Shooting feel: muzzle flash with light and smoke, ejected brass, short bullet tracers (always for enemy fire, sometimes for yours), sparks on hard surfaces, dust plumes and debris on the ground, directional blood, bullet holes that stay for 25 s, impact sounds, the crack of near misses, a camera jolt when you're hit, and soldiers falling away from the killing shot.
+* Movement: quick acceleration and braking, walk/run animations played at the body's real speed (no foot sliding), a forward lean, slight head bob and wider FOV when sprinting.
+* Scopes: Red Dot, 2×, 4× and 6× scopes are loot. They mount on the M416 and Kar98k (better scopes replace worse ones; spares go to the backpack and mount on the next gun). Each scope sets its own zoom; magnified scopes show a scope overlay. The Kar98k starts on iron sights.
+* Loot: guns, scopes, ammo and med kits in houses and next to crates. Walking over ammo, med kits, scopes — and guns while a matching slot is free — picks them up; I picks up or swaps the nearest gun or scope, even with ammo lying closer. Swapped guns are dropped and their scope goes to the backpack. Dead soldiers drop their gear.
+* Bots fight only humans (their bullets pass through other bots) and hold fire for the first 30 seconds. When they spot a player they turn, run toward them until in range for their gun, then stop (sometimes crouch) and fire in bursts; if shot from out of sight they head toward the shooter.
+* Shrinking blue zone (six phases) with increasing damage. HUD: compass, minimap with zone circles, alive/kill counters, kill feed, health, weapon slots with ammo and scope, pickup toasts, hit markers, damage direction, reload/heal progress. Result screen: placement, kills, damage, survival time; back to lobby or play again.
+* Graphics presets (low / medium / high) and mouse sensitivity are saved in local storage.
+
+## 9. Lobby (home screen)
+* The battleground opens on a BGMI-style lobby (`Lobby.tsx`, 3D stage in `engine/LobbyScene.ts`): your soldier on a lit platform (drag to turn), player card with level and XP bar, career stats (matches, wins, kills, K/D, top-10 rate, best placement, average damage, time played) and the last match's XP.
+* Wardrobe: eight outfits that tint the soldier; the choice is saved and worn in every match.
+* Settings panel: graphics preset, mouse sensitivity and the controls list. **Start** launches a match.
+* API: `GET /api/profile`, `PATCH /api/profile/outfit`. Stats come only from online matches and are written by the game server (practice matches don't count). XP: 20 per kill + placement bonus + 100 for a win + survival time; levels need 15% more XP each (`backend/src/game/profile.ts`).
+
+## 10. Online Matches & Matchmaking
+* **Start** joins matchmaking (`backend/src/match/`). A match has 30 soldiers: up to 25 players, with bots filling the rest (always at least 5). It starts as soon as 25 players are in, or 60 seconds after the first player queued (`MATCH_QUEUE_MS` overrides the wait). The queue screen shows players found, the countdown and the player/bot split; you can cancel.
+* Connection: the client gets a 90-second ticket from `GET /api/match/ticket` and opens `NEXT_PUBLIC_GAME_SERVER_URL` (default `ws(s)://<host>:8005/ws`), so it works when the API and site are on different domains. One game connection per account; a new tab replaces the old one.
+* Server authority: health, damage (from the server's own weapon table and the 19-damage cap), kills, placement, the zone (same schedule, seeded per match) and zone damage, loot claims (first come, first served) and results. Shots are checked for fire rate, range and that the hit point is on the target. Bots never damage bots.
+* Clients send their movement and pose ~15 times a second; the server relays a snapshot of everyone at 15 Hz and other soldiers are drawn 120 ms behind real time, blended between snapshots. Everyone derives the same map, loot and spawn points from the match seed.
+* Bots run on the game server (`backend/src/match/BotSim.ts`), not on any player's machine: they move, hunt and shoot on the server's clock whatever players do, and are relayed to everyone like any other soldier. The server has its own physics world (Rapier) built from `backend/src/match/world.json` — terrain heights plus every wall, floor, prop and tree trunk, exported from the client's map generator (`exportCollisionWorld()` in `engine/Game.ts`; regenerate it whenever map generation changes). Bots resolve their own shots against players' positions and drop their kit when killed.
+* Dropped gear (swapped guns, a dead soldier's kit) goes through the server so every player sees the same piles.
+* No player gets special treatment. Switching tabs, lagging or leaving doesn't pause anything: your soldier stays in the world (standing still once you stop sending) and can be killed by bots, players or the zone; your result is recorded when that happens. A match ends when one soldier is left or no connected player is still alive in it (soldiers of players who left share the best place still open); each player's result is saved by the server.
+* Production: the frontend needs `NEXT_PUBLIC_GAME_SERVER_URL=wss://shunya-api.shipsar.in/ws` at build time; nginx on the VPS already proxies `/ws` (WebSocket upgrade) to the backend container.
+
+## 11. Mobile: On-Screen Controls, Phone Preset & App
+* Touch screens (`(pointer: coarse)`) get BGMI-style on-screen controls (`components/battleground/TouchControls.tsx`): a floating joystick on the left (push past the rim to sprint), drag anywhere on the right to look, two fire buttons that also aim while held, and buttons for scope, jump, crouch, prone, reload and switch weapon, plus context buttons for pick-up and med kit and a pause button. Each finger is tracked separately; weapon slots are tappable. Controls scale down on short screens and respect safe areas.
+* Touch play goes fullscreen and asks for landscape; portrait shows a "turn your phone" prompt. Look sensitivity is boosted for fingers. The HUD and lobby re-lay out for phone screens.
+* `mobile` graphics preset (default on touch devices): no shadows, 280 m view distance, sparse grass, simpler far soldiers. Every preset now scales its rendering resolution automatically (down when frames run slow, back up with headroom); the HUD shows the current resolution.
+* Mobile app (`mobile/`, Expo SDK 57): a full-screen WebView of `EXPO_PUBLIC_GAME_URL/battleground` (set in `mobile/.env`), locked to landscape, screen kept awake, status bar hidden, Android back button navigates inside the game, outside links open in the browser, reload if the system kills the page. The app adds `ShunyaScapeApp` to its user agent; the site then skips the landing page (`/?signin=1` opens sign-in) and hides Google sign-in, which Google blocks inside web views. Email sign-in works in the app.

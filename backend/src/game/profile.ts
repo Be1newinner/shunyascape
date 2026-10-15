@@ -1,0 +1,28 @@
+/** Battleground profile rules: outfits, match rewards and levels. */
+
+export const OUTFITS = ["classic", "desert", "woodland", "urban", "night", "crimson", "arctic", "royal"] as const;
+export type Outfit = (typeof OUTFITS)[number];
+
+export interface MatchResult {
+  placement: number;
+  kills: number;
+  damage: number;
+  survived: number;
+}
+
+export function matchXp(m: MatchResult) {
+  return m.kills * 20 + (31 - m.placement) * 4 + (m.placement === 1 ? 100 : 0) + Math.floor(m.survived / 30);
+}
+
+/** Level curve: each level needs a bit more XP than the last. */
+export function levelFor(xp: number) {
+  let level = 1;
+  let need = 100;
+  let left = xp;
+  while (left >= need) {
+    left -= need;
+    level++;
+    need = Math.round(need * 1.15);
+  }
+  return { level, xpIntoLevel: left, xpForNext: need };
+}

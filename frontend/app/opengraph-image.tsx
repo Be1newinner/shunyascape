@@ -5,7 +5,7 @@ import { LOGO_FACES } from "./lib/logo";
 
 // Social share card (Open Graph + Twitter): logo, headline and a real
 // gameplay screenshot. Rendered once at build time.
-export const alt = "ShunyaScape — build a living 3D city with friends, free in your browser";
+export const alt = "ShunyaScape — free 3D battle royale in your browser";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -115,13 +115,13 @@ export default async function OpengraphImage() {
               letterSpacing: -3,
             }}
           >
-            <span>Build a living</span>
-            <span>city with</span>
-            <span style={{ color: gold }}>friends.</span>
+            <span>Drop in.</span>
+            <span>Loot up.</span>
+            <span style={{ color: gold }}>Be #1.</span>
           </div>
 
           <div style={{ display: "flex", marginTop: 26, fontSize: 28, fontWeight: 600, color: "#d9d3ff" }}>
-            Free multiplayer 3D city builder
+            Free 3D battle royale vs 24 AI soldiers
           </div>
 
           <div style={{ display: "flex", marginTop: 30 }}>

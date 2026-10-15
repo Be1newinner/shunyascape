@@ -1126,3 +1126,28 @@ kbd {
 .bg-podium-name em { font-style: normal; font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.1em; }
 .bg-podium-xp { font: 700 12px var(--hud-font); color: hsl(45 100% 62%); }
 .bg-podium-wait { margin-top: 10px; font-size: 13px; }
+
+/* ---------- account deletion (settings) ---------- */
+.bg-link-danger {
+  margin-top: 6px;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: hsl(4 85% 66%);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.bg-delete-confirm {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid hsl(4 80% 55% / 0.6);
+  border-radius: 12px;
+  background: hsl(4 70% 20% / 0.35);
+  font-size: 13px;
+}
+.bg-delete-confirm p { margin: 0 0 10px; }
+.bg-delete-error { color: hsl(4 90% 72%); }
+.bg-delete-actions { display: flex; gap: 8px; }
+.bg-delete-actions .bg-cta { flex: 1; }
+.bg-cta.bg-danger { background: linear-gradient(180deg, hsl(4 80% 58%), hsl(4 75% 44%)); color: #fff; box-shadow: none; }

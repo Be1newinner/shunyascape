@@ -1,8 +1,1 @@
-{
-  "claudeCode.environmentVariables": [
-    {
-      "name": "CLAUDE_CONFIG_DIR",
-      "value": "${userHome}/.gsb"
-    }
-  ]
-}
+{}

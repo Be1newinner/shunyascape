@@ -20,6 +20,8 @@ interface Props {
   lastMatch: { placement: number; kills: number; xpGained: number } | null;
   touch?: boolean;
   onLogout?: () => void;
+  /** Permanently deletes the account; resolves to an error message on failure. */
+  onDeleteAccount?: () => Promise<string | null>;
 }
 
 function fmtHours(seconds: number) {
@@ -29,7 +31,10 @@ function fmtHours(seconds: number) {
 
 /** BGMI-style home screen: your soldier, your record, the wardrobe and the Start button. */
 export default function Lobby(props: Props) {
-  const { profile, outfit, onOutfit, quality, onQuality, sensitivity, onSensitivity, onStart, lastMatch, touch, onLogout } = props;
+  const { profile, outfit, onOutfit, quality, onQuality, sensitivity, onSensitivity, onStart, lastMatch, touch, onLogout, onDeleteAccount } = props;
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const status = useServerStatus();
   const full = serverFull(status);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -183,6 +188,36 @@ export default function Lobby(props: Props) {
                   Log out
                 </button>
               )}
+              {onDeleteAccount &&
+                (confirmDelete ? (
+                  <div className="bg-delete-confirm" role="alertdialog" aria-label="Delete account">
+                    <p>
+                      Delete your account for good? Your profile, level, stats and outfit are erased and can&apos;t be
+                      recovered.
+                    </p>
+                    {deleteError && <p className="bg-delete-error">{deleteError}</p>}
+                    <div className="bg-delete-actions">
+                      <button className="bg-cta ghost" onClick={() => setConfirmDelete(false)} disabled={deleting}>
+                        Cancel
+                      </button>
+                      <button
+                        className="bg-cta bg-danger"
+                        disabled={deleting}
+                        onClick={async () => {
+                          setDeleting(true);
+                          setDeleteError(await onDeleteAccount());
+                          setDeleting(false);
+                        }}
+                      >
+                        {deleting ? "Deleting…" : "Delete forever"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button className="bg-link-danger" onClick={() => { setDeleteError(null); setConfirmDelete(true); }}>
+                    Delete account
+                  </button>
+                ))}
               {!touch && <ul className="bg-controls">
                 {CONTROLS.map((c) => (
                   <li key={c.action}>

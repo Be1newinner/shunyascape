@@ -263,6 +263,26 @@ export default function BattlegroundGame() {
     else router.replace("/");
   };
 
+  /** Deletes the account for good, then leaves like a logout. Returns an error message on failure. */
+  const deleteAccount = async (): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/profile", { method: "DELETE" });
+      if (!res.ok) return "Couldn't delete your account. Please try again.";
+    } catch {
+      return "Couldn't reach the server. Please try again.";
+    }
+    closeClient();
+    disposeGame();
+    try {
+      localStorage.removeItem("shunyascape_user");
+    } catch {
+      // ignore
+    }
+    if (isNativeApp()) postToApp("logout");
+    else router.replace("/");
+    return null;
+  };
+
   const changeOutfit = (id: string) => {
     setOutfit(id);
     saveOutfit(id)
@@ -303,6 +323,7 @@ export default function BattlegroundGame() {
           }}
           onStart={findMatch}
           onLogout={logout}
+          onDeleteAccount={deleteAccount}
           lastMatch={lastMatch}
           touch={touch}
         />

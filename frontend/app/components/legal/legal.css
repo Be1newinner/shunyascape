@@ -1,0 +1,64 @@
+/* Policy pages (privacy, account deletion), on top of the landing page tokens. */
+
+.lg-header {
+  padding-block: 24px;
+}
+.lg-main {
+  max-width: 760px;
+  padding-block: 24px 72px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+.lg-main h1 {
+  font-family: var(--display);
+  font-size: clamp(2rem, 6vw, 2.8rem);
+  line-height: 1.15;
+  color: var(--ink);
+  margin: 0 0 6px;
+}
+.lg-main h2 {
+  font-family: var(--display);
+  font-size: 1.3rem;
+  color: var(--ink);
+  margin: 36px 0 8px;
+}
+.lg-main p,
+.lg-main ul,
+.lg-main ol {
+  margin: 0 0 14px;
+}
+.lg-main ul,
+.lg-main ol {
+  padding-left: 22px;
+}
+.lg-main li {
+  margin-bottom: 6px;
+}
+.lg-main ul {
+  list-style: disc;
+}
+.lg-main ol {
+  list-style: decimal;
+}
+.lg-main a {
+  color: var(--gold);
+  text-decoration: underline;
+}
+.lg-main strong {
+  color: var(--ink);
+}
+.lg-updated {
+  font-family: var(--hud);
+  font-size: 0.85rem;
+  color: var(--ink-mute);
+}
+.lg-card {
+  margin: 20px 0;
+  padding: 18px 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.lg-card h2 {
+  margin-top: 0;
+}

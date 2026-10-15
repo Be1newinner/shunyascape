@@ -1,10 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Outfit } from "next/font/google";
+import { Chakra_Petch, Inter, Outfit } from "next/font/google";
 import "./globals.css";
 import { KEYWORDS, SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL } from "./lib/site";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit", display: "swap" });
+// HUD-style font for labels, numbers and clocks
+const hud = Chakra_Petch({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-hud", display: "swap" });
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -31,7 +33,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b0718",
+  themeColor: "#120b26",
   colorScheme: "dark",
 };
 
@@ -41,7 +43,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${outfit.variable} antialiased`} suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} ${outfit.variable} ${hud.variable} antialiased`} suppressHydrationWarning>
       <body className="min-h-full w-full bg-slate-950">{children}</body>
     </html>
   );

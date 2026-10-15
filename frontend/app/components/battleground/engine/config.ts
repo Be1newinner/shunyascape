@@ -54,7 +54,10 @@ export interface WeaponStats {
   auto: boolean;
   damage: number;
   headMultiplier: number;
+  /** Furthest a round travels, in metres: it stops there and hits nothing. */
   range: number;
+  /** Full damage up to this distance; it fades to 60% at `range`. */
+  falloff: number;
   reloadTime: number;
   /** Cone half-angle in degrees. */
   hipSpread: number;
@@ -74,20 +77,39 @@ export interface WeaponStats {
 export const WEAPONS: Record<WeaponId, WeaponStats> = {
   m416: {
     id: "m416", name: "M416", ammo: "5.56mm", slot: "primary", magSize: 30, fireInterval: 0.086, auto: true,
-    damage: 12, headMultiplier: 1.55, range: 300, reloadTime: 2.1, hipSpread: 2.6, adsSpread: 0.35,
+    damage: 12, headMultiplier: 1.55, range: 220, falloff: 60, reloadTime: 2.1, hipSpread: 2.6, adsSpread: 0.35,
     recoilPitch: 0.0085, recoilYaw: 0.0045, ironFov: 55, takesScope: true, botBurst: [3, 7], soundPitch: 1,
   },
   kar98k: {
     id: "kar98k", name: "Kar98k", ammo: "7.62mm", slot: "primary", magSize: 5, fireInterval: 1.9, auto: false,
-    damage: 18, headMultiplier: 1.1, range: 600, reloadTime: 3.2, hipSpread: 4.0, adsSpread: 0.03,
+    damage: 18, headMultiplier: 1.1, range: 500, falloff: 500, reloadTime: 3.2, hipSpread: 4.0, adsSpread: 0.03,
     recoilPitch: 0.045, recoilYaw: 0.006, ironFov: 50, takesScope: true, botBurst: [1, 1], soundPitch: 0.72,
   },
   p92: {
     id: "p92", name: "P92", ammo: "9mm", slot: "secondary", magSize: 15, fireInterval: 0.14, auto: false,
-    damage: 9, headMultiplier: 1.6, range: 120, reloadTime: 1.6, hipSpread: 2.2, adsSpread: 0.6,
+    damage: 9, headMultiplier: 1.6, range: 70, falloff: 25, reloadTime: 1.6, hipSpread: 2.2, adsSpread: 0.6,
     recoilPitch: 0.012, recoilYaw: 0.006, ironFov: 58, takesScope: false, botBurst: [2, 5], soundPitch: 1.35,
   },
 };
+
+/** Damage multiplier at `dist` metres (same formula as the game server). */
+export function rangeFalloff(stats: WeaponStats, dist: number) {
+  if (dist <= stats.falloff) return 1;
+  return Math.max(0.6, 1 - (0.4 * (dist - stats.falloff)) / Math.max(1, stats.range - stats.falloff));
+}
+
+/**
+ * Bots notice a player who comes this close (and is in sight); snipers look
+ * further, crouching / lying down shrinks it. Once a bot has noticed you it
+ * hunts you until one of you is dead. Same numbers as the game server.
+ */
+export const BOT_NOTICE_RANGE = 55;
+export const BOT_NOTICE_RANGE_SNIPER = 95;
+export const NOTICE_STANCE = { stand: 1, crouch: 0.7, prone: 0.4 } as const;
+/** Bots hear gunfire this close and come for the shooter. */
+export const BOT_HEARING_RANGE = 45;
+/** At most this many bots hunt the same player at once (more only if shot). */
+export const MAX_HUNTERS = 3;
 
 export type ScopeId = "reddot" | "2x" | "4x" | "6x";
 

@@ -47,8 +47,13 @@ kbd {
   inset: 0;
   display: grid;
   place-items: center;
+  /* "safe": a card taller than the screen starts at the top and scrolls instead of being cut off. */
+  place-items: safe center;
   padding: 16px;
   z-index: 20;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .bg-menu {
@@ -869,7 +874,14 @@ kbd {
 .bg-queue-count span { color: var(--ink-dim); }
 
 /* ---------- touch screens ---------- */
-.bg-root.touch { touch-action: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+/* Menus and result cards still scroll and take taps; only the play surface swallows gestures. */
+.bg-root.touch { touch-action: manipulation; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.bg-root.touch .bg-canvas,
+.bg-root.touch .bg-touch { touch-action: none; }
+/* Blurring the live 3D view behind a menu is costly on phones and makes taps feel dead. */
+.bg-root.touch .bg-result,
+.bg-root.touch .bg-click { backdrop-filter: none; background: hsla(218, 40%, 4%, 0.72); }
+.bg-cta { touch-action: manipulation; }
 
 .bg-touch {
   position: absolute;
@@ -1151,3 +1163,34 @@ kbd {
 .bg-delete-actions { display: flex; gap: 8px; }
 .bg-delete-actions .bg-cta { flex: 1; }
 .bg-cta.bg-danger { background: linear-gradient(180deg, hsl(4 80% 58%), hsl(4 75% 44%)); color: #fff; box-shadow: none; }
+
+/* ---------- result / queue cards on short (phone landscape) screens ---------- */
+@media (max-height: 520px) {
+  .bg-result-card { padding: 14px 18px; }
+  .bg-result-card.dead,
+  .bg-result-card.won {
+    width: min(720px, 100%);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 18px;
+    align-items: start;
+  }
+  .bg-result-card.dead > *,
+  .bg-result-card.won > * { grid-column: 1; }
+  .bg-result-card.dead > .bg-podium,
+  .bg-result-card.won > .bg-podium,
+  .bg-result-card.dead > .bg-podium-wait,
+  .bg-result-card.won > .bg-podium-wait { grid-column: 2; grid-row: 1 / span 5; margin-top: 0; }
+  .bg-result-card .bg-result-actions { grid-column: 1 / -1; margin-top: 10px; }
+  .bg-place { margin: 0 0 8px; font-size: 44px; }
+  .bg-place span { font-size: 20px; }
+  .bg-stats { margin-bottom: 8px; gap: 6px; }
+  .bg-stats div { padding: 7px 4px; }
+  .bg-stats b { font-size: 18px; }
+  .bg-podium li { padding: 5px 8px; }
+  .bg-cta { padding: 12px; font-size: 15px; }
+  .bg-menu-card { padding: 16px 18px; }
+  .bg-queue-ring { width: 84px; height: 84px; margin: 8px auto; }
+  .bg-queue-ring span { font-size: 22px; }
+  .bg-queue .bg-cta { margin-top: 8px; }
+}

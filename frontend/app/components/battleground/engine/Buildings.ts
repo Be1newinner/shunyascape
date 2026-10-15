@@ -24,6 +24,8 @@ const FLOOR_H = 3.2;
 const WALL_T = 0.25;
 const SLAB_T = 0.22;
 const BASE_Y = 0.25;
+/** Ground-floor slab sits this much above the foundation top. */
+const FLOOR_LIFT = 0.015;
 
 const PLASTER_TINTS = ["#efe6d2", "#f2dcae", "#d9e3e6", "#eac3a6", "#f4f0e8", "#d8c9b0", "#cfd8c4", "#e9d5c9"];
 const NEUTRAL_TINTS = ["#ffffff", "#f0ebe4", "#e5e0da", "#d9d4cf"];
@@ -215,12 +217,14 @@ export class Buildings {
     const wood = new THREE.Color("#6b4a32");
     const t = 0.08;
     const depth = WALL_T + 0.06;
+    // Nudged 1 cm into the opening so the frame's inner faces don't z-fight the wall's edges.
+    const e = 0.01;
     const parts: Array<[number, number, number, number]> = [
-      [o.u0 - t / 2, (o.v0 + o.v1) / 2, t, o.v1 - o.v0],
-      [o.u1 + t / 2, (o.v0 + o.v1) / 2, t, o.v1 - o.v0],
-      [(o.u0 + o.u1) / 2, o.v1 + t / 2, o.u1 - o.u0 + t * 2, t],
+      [o.u0 - t / 2 + e, (o.v0 + o.v1) / 2, t, o.v1 - o.v0],
+      [o.u1 + t / 2 - e, (o.v0 + o.v1) / 2, t, o.v1 - o.v0],
+      [(o.u0 + o.u1) / 2, o.v1 + t / 2 - e, o.u1 - o.u0 + t * 2, t],
     ];
-    if (o.v0 > 0.05) parts.push([(o.u0 + o.u1) / 2, o.v0 - t / 2, o.u1 - o.u0 + t * 2, t]);
+    if (o.v0 > 0.05) parts.push([(o.u0 + o.u1) / 2, o.v0 - t / 2 + e, o.u1 - o.u0 + t * 2, t]);
     for (const [u, v, w, h] of parts) {
       if (axis === "x") this.box(m, yaw, "wood", wood, from + u, y0 + v, fixed, w, h, depth, false);
       else this.box(m, yaw, "wood", wood, fixed, y0 + v, from + u, depth, h, w, false);
@@ -301,9 +305,11 @@ export class Buildings {
           [{ u0: gapC - 0.55, u1: gapC + 0.55, v0: 0, v1: 2.2 }]);
       }
 
-      // Floor of this storey (ground floor slab sits on the foundation).
+      // Floor of this storey (ground floor slab sits on the foundation). Its top is
+      // FLOOR_LIFT above the foundation's: two surfaces at the same height z-fight
+      // (the floor flickered and flashed white indoors, worst on phones).
       if (f === 0) {
-        this.box(m, yaw, "floor", floorTint, 0, BASE_Y - 0.05, 0, W - 0.05, 0.1, D - 0.05);
+        this.box(m, yaw, "floor", floorTint, 0, BASE_Y - 0.05 + FLOOR_LIFT, 0, W - 0.05, 0.1, D - 0.05);
       }
       this.lootSpotsFor(lot, m, y0, hasStairs, rng);
     }

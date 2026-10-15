@@ -1,6 +1,9 @@
 import type RAPIER_T from "@dimforge/rapier3d-compat";
 import { BOT_GROUP, RAPIER, createWorld, heightAt, openPoints, sites } from "./World";
-import { EYE_HEIGHT, STANCE_HEIGHT, WEAPONS, mulberry32, type ServerZone, type WeaponId } from "./rules";
+import {
+  BOT_HEARING_RANGE, BOT_NOTICE_RANGE, BOT_NOTICE_RANGE_SNIPER, EYE_HEIGHT, MAX_HUNTERS, NOTICE_STANCE, STANCE_HEIGHT, WEAPONS,
+  mulberry32, type ServerZone, type WeaponId,
+} from "./rules";
 
 /** A soldier the bots can see and shoot (a human, as the match knows them). */
 export interface Target {
@@ -10,6 +13,10 @@ export interface Target {
   stance: "s" | "c" | "p";
   vx: number;
   vz: number;
+  /** Spawn protection: bots don't pick this soldier as a target yet. */
+  shielded: boolean;
+  /** Seconds since this soldier last fired (bots nearby hear it). */
+  sinceShot: number;
 }
 
 /** What the bot simulation needs from its match. */
@@ -61,9 +68,11 @@ interface Bot {
   mag: number;
   reloadLeft: number;
   fireCooldown: number;
+  /** roam: no target. engage: target in sight and in range. chase: locked on, closing in. */
   state: "roam" | "engage" | "chase";
   wx: number;
   wz: number;
+  /** The player this bot has noticed; it hunts them until one of them is dead. */
   target: string | null;
   lastSeen: V3;
   lastSeenTime: number;
@@ -177,8 +186,8 @@ export class BotSim {
     return hit ? hit.timeOfImpact : null;
   }
 
-  /** Can bot `b` see target `t`? Field of view unless just shot, line of sight, stance. */
-  private canSee(b: Bot, t: Target, maxDist: number) {
+  /** Can bot `b` see target `t`? Field of view (unless just shot or `fov` is off), line of sight, stance. */
+  private canSee(b: Bot, t: Target, maxDist: number, fov = true) {
     if (!t.pos) return false;
     const ex = b.x, ey = b.y + EYE_HEIGHT[b.stance], ez = b.z;
     const tx = t.pos[0], ty = t.pos[1] + EYE_HEIGHT[t.stance] * 0.75, tz = t.pos[2];
@@ -187,7 +196,7 @@ export class BotSim {
     if (d > maxDist || d < 0.01) return false;
     const recentlyHit = this.now - b.lastHitAt < 3;
     const facing = Math.cos(wrap(Math.atan2(dx, dz) - b.yaw));
-    if (!recentlyHit && facing < Math.cos((75 * Math.PI) / 180) && d > 6) return false;
+    if (fov && !recentlyHit && facing < Math.cos((75 * Math.PI) / 180) && d > 6) return false;
     if (t.stance === "p" && d > 60) return false;
     if (t.stance === "c" && d > 140 && b.rng() < 0.5) return false;
     const blocked = this.castWorld({ x: ex, y: ey, z: ez }, { x: dx / d, y: dy / d, z: dz / d }, d - 0.4);
@@ -240,11 +249,64 @@ export class BotSim {
     this.now += dt;
     const humans = this.host.humans();
     const peaceful = this.host.peaceful();
-    for (const b of this.bots.values()) if (b.alive) this.updateBot(b, dt, humans, peaceful);
+    // How many bots are already hunting each player.
+    const hunters = new Map<string, number>();
+    for (const b of this.bots.values()) if (b.alive && b.target) hunters.set(b.target, (hunters.get(b.target) ?? 0) + 1);
+    for (const b of this.bots.values()) if (b.alive) this.updateBot(b, dt, humans, peaceful, hunters);
     this.world.step();
   }
 
-  private updateBot(b: Bot, dt: number, humans: Target[], peaceful: boolean) {
+  /**
+   * Pick and keep a target. A bot notices a player who comes within its notice
+   * range (and in sight), hears one firing close by, or turns on whoever shot
+   * it. Once it has noticed someone it hunts them until one of them is dead.
+   */
+  private think(b: Bot, humans: Target[], peaceful: boolean, hunters: Map<string, number>) {
+    let locked = b.target ? humans.find((h) => h.id === b.target && h.alive && h.pos) : undefined;
+    if (b.target && !locked) {
+      // Our target is dead (or gone): back to roaming.
+      hunters.set(b.target, Math.max(0, (hunters.get(b.target) ?? 1) - 1));
+      b.target = null;
+      b.state = "roam";
+      this.pickWaypoint(b);
+    }
+    if (peaceful) return;
+    const range = WEAPONS[b.weapon].range;
+
+    if (!locked) {
+      const attacker = b.lastHitBy && this.now - b.lastHitAt < 4 ? humans.find((h) => h.id === b.lastHitBy && h.alive && h.pos) : undefined;
+      let pick: Target | undefined = attacker;
+      if (!pick) {
+        const notice = range > 400 ? BOT_NOTICE_RANGE_SNIPER : BOT_NOTICE_RANGE;
+        let bestD = Infinity;
+        for (const h of humans) {
+          if (!h.alive || !h.pos || h.shielded || (hunters.get(h.id) ?? 0) >= MAX_HUNTERS) continue;
+          const d = Math.hypot(h.pos[0] - b.x, h.pos[2] - b.z);
+          if (d >= bestD) continue;
+          const reach = notice * NOTICE_STANCE[h.stance];
+          const heard = h.sinceShot < 0.6 && d < BOT_HEARING_RANGE;
+          if (heard || (d < reach && this.canSee(b, h, reach))) {
+            pick = h;
+            bestD = d;
+          }
+        }
+      }
+      if (!pick) return;
+      locked = pick;
+      b.target = pick.id;
+      hunters.set(pick.id, (hunters.get(pick.id) ?? 0) + 1);
+      b.reaction = (range > 400 ? 1.1 : 0.7) + (1 - b.skill) * 0.9 + b.rng() * 0.4;
+      b.crouchPref = b.rng() < 0.35;
+    }
+
+    // Locked on: fight when they're in sight and in range, otherwise go after them.
+    const p = locked.pos!;
+    b.lastSeen = { x: p[0], y: p[1], z: p[2] };
+    b.lastSeenTime = this.now;
+    b.state = this.canSee(b, locked, range, false) ? "engage" : "chase";
+  }
+
+  private updateBot(b: Bot, dt: number, humans: Target[], peaceful: boolean, hunters: Map<string, number>) {
     const stats = WEAPONS[b.weapon];
     b.fireCooldown = Math.max(0, b.fireCooldown - dt);
     if (b.reloadLeft > 0) {
@@ -258,46 +320,7 @@ export class BotSim {
     b.think -= dt;
     if (b.think <= 0) {
       b.think = 0.25 + b.rng() * 0.1;
-      const maxD = range > 400 ? 220 : 140;
-      let best: Target | null = null;
-      const attacker = b.lastHitBy ? humans.find((h) => h.id === b.lastHitBy && h.alive) : undefined;
-      if (attacker && this.now - b.lastHitAt < 4 && this.canSee(b, attacker, maxD * 1.3)) best = attacker;
-      if (!best) {
-        const near = humans
-          .filter((h) => h.alive && h.pos)
-          .map((h) => ({ h, d: Math.hypot(h.pos![0] - b.x, h.pos![2] - b.z) }))
-          .filter((e) => e.d < maxD)
-          .sort((p, q) => p.d - q.d)
-          .slice(0, 3);
-        for (const { h } of near) {
-          if (this.canSee(b, h, maxD)) {
-            best = h;
-            break;
-          }
-        }
-      }
-      if (best && !peaceful) {
-        if (b.target !== best.id) {
-          b.reaction = (range > 400 ? 1.1 : 0.7) + (1 - b.skill) * 0.9 + b.rng() * 0.4;
-          b.crouchPref = b.rng() < 0.35;
-        }
-        b.target = best.id;
-        b.state = "engage";
-        b.lastSeen = { x: best.pos![0], y: best.pos![1], z: best.pos![2] };
-        b.lastSeenTime = this.now;
-      } else if (b.state === "engage") {
-        b.state = "chase";
-      } else if (attacker && attacker.pos && this.now - b.lastHitAt < 1 && !peaceful) {
-        // Shot from somewhere unseen: head toward the shooter.
-        b.state = "chase";
-        b.lastSeen = { x: attacker.pos[0], y: attacker.pos[1], z: attacker.pos[2] };
-        b.lastSeenTime = this.now;
-      }
-      if (b.state === "chase" && this.now - b.lastSeenTime > 9) {
-        b.state = "roam";
-        b.target = null;
-        this.pickWaypoint(b);
-      }
+      this.think(b, humans, peaceful, hunters);
     }
 
     let vx = 0;
@@ -361,8 +384,8 @@ export class BotSim {
       const dx = b.wx - b.x;
       const dz = b.wz - b.z;
       if (Math.hypot(dx, dz) < 3) {
-        if (b.state === "chase") b.state = "roam";
-        this.pickWaypoint(b);
+        // Reached the hunted player's spot without a clear shot: wait for the next look.
+        if (b.state !== "chase") this.pickWaypoint(b);
       } else {
         const yaw = this.avoid(b, Math.atan2(dx, dz));
         b.yaw += wrap(yaw - b.yaw) * (1 - Math.exp(-dt * 5));

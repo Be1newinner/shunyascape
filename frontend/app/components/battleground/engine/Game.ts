@@ -5,7 +5,7 @@ import { GameAudio } from "./Audio";
 import { BotBrain, type BotWorld } from "./Bots";
 import { Buildings } from "./Buildings";
 import { Combatant, type SlotIndex } from "./Combatant";
-import { BOT_COUNT, BOT_NAMES, MAX_HIT_DAMAGE, MAP_HALF, MAP_SIZE, PLAYER_MAX_HEALTH, QUALITY, SCOPES, WEAPONS, type AmmoType, type Quality, type ScopeId, type WeaponId } from "./config";
+import { BOT_COUNT, BOT_NAMES, MAX_HIT_DAMAGE, rangeFalloff, MAP_HALF, MAP_SIZE, PLAYER_MAX_HEALTH, QUALITY, SCOPES, WEAPONS, type AmmoType, type Quality, type ScopeId, type WeaponId } from "./config";
 import { Effects } from "./Effects";
 import { Input } from "./Input";
 import { Loot, lootLabel, type LootEntity } from "./Loot";
@@ -39,7 +39,7 @@ export interface HudState {
   maxHealth: number;
   alive: number;
   kills: number;
-  slots: Array<{ slot: number; name: string; mag: number; magSize: number; reserve: number; ammo: AmmoType; active: boolean; scope: string | null } | null>;
+  slots: Array<{ slot: number; name: string; mag: number; magSize: number; reserve: number; ammo: AmmoType; active: boolean; scope: string | null; range: number } | null>;
   /** What the held gun aims through: iron sights, a red dot or a magnified scope. */
   sight: "iron" | "reddot" | "magnified";
   zoom: string | null;
@@ -144,6 +144,8 @@ export class Game {
     sendAcc: number;
     alive: number;
     peaceEndsAt: number;
+    /** End of our spawn protection (set when we start playing; cleared when we fire). */
+    graceEndsAt: number;
     pendingPicks: Set<string>;
     unsubscribe: () => void;
     result: { placement: number; kills: number; damage: number; survived: number; survivor?: boolean } | null;
@@ -175,6 +177,7 @@ export class Game {
         sendAcc: 0,
         alive: online.start.roster.length,
         peaceEndsAt: performance.now() / 1000 + online.start.peace,
+        graceEndsAt: 0,
         pendingPicks: new Set(),
         unsubscribe: () => {},
         result: null,
@@ -267,6 +270,11 @@ export class Game {
     }
     if (this.phase === "ready") {
       this.startTime = this.now;
+      if (this.net) {
+        // The server starts our spawn protection now, not when the match began (we may have been loading).
+        this.net.client.send({ t: "play" });
+        this.net.graceEndsAt = performance.now() / 1000 + (this.net.start.grace ?? 0);
+      }
       this.setPhase("playing");
     } else if (this.phase === "paused" && this.touch) {
       this.setPhase("playing");
@@ -712,6 +720,9 @@ export class Game {
       shooter.fireCooldown = 0.25;
       return false;
     }
+    shooter.lastShotTime = this.now;
+    // Firing gives you away: spawn protection ends.
+    if (shooter.isPlayer && this.net) this.net.graceEndsAt = 0;
     gun.mag--;
     shooter.fireCooldown = gun.stats.fireInterval;
     shooter.recoil = 1;
@@ -793,7 +804,7 @@ export class Game {
     const head = victim.visual.headWorld();
     const headshot = end.distanceTo(head) < 0.26;
     const dist = end.distanceTo(muzzle);
-    const falloff = stats.id === "kar98k" ? 1 : Math.max(0.6, 1 - Math.max(0, dist - 50) / 300);
+    const falloff = rangeFalloff(stats, dist);
     const dmg = Math.min(MAX_HIT_DAMAGE, stats.damage * (headshot ? stats.headMultiplier : 1) * falloff);
     const killed = victim.damage(dmg, shooter, this.now);
     shooter.damageDealt += dmg;
@@ -899,9 +910,17 @@ export class Game {
       this.camera.lookAt(...this.debugCam.target);
       this.me.visual.setVisible(true);
     }
+    // Behind the results screen the world only needs a few frames a second; on phones
+    // that leaves the main thread free so its buttons respond straight away.
+    if (this.touch && (this.phase === "dead" || this.phase === "won")) {
+      this.idleRender += realDt;
+      if (this.idleRender < 1 / 12) return;
+      this.idleRender = 0;
+    }
     this.renderer.render(this.scene, this.camera);
   };
   private lastT = 0;
+  private idleRender = 0;
 
   /**
    * Dynamic resolution: if frames run slow, render fewer pixels; when there's
@@ -981,7 +1000,9 @@ export class Game {
       now: this.now,
       fire: this.fire,
       peaceful: this.net ? performance.now() / 1000 < this.net.peaceEndsAt : this.now - this.startTime < 30,
+      hunters: new Map(),
     };
+    for (const b of this.bots) if (b.me.alive && b.target) world.hunters.set(b.target, (world.hunters.get(b.target) ?? 0) + 1);
     for (const b of this.bots) b.update(dt, world);
     if (this.net) this.netTick(dt);
     this.physics.world.timestep = dt;
@@ -1059,7 +1080,7 @@ export class Game {
       slots: me
         ? me.slots.map((s, i) =>
             s
-              ? { slot: i + 1, name: s.stats.name, mag: s.mag, magSize: s.stats.magSize, reserve: me.reserve[s.stats.ammo], ammo: s.stats.ammo, active: me.active === i, scope: s.scope ? SCOPES[s.scope].name : null }
+              ? { slot: i + 1, name: s.stats.name, mag: s.mag, magSize: s.stats.magSize, reserve: me.reserve[s.stats.ammo], ammo: s.stats.ammo, active: me.active === i, scope: s.scope ? SCOPES[s.scope].name : null, range: s.stats.range }
               : null,
           )
         : [null, null, null],
@@ -1100,7 +1121,7 @@ export class Game {
         this.net?.result?.survived ??
         Math.round((this.phase === "dead" || this.phase === "won" ? this.deathTime : this.now) - this.startTime),
       peaceful: this.net
-        ? Math.max(0, Math.ceil(this.net.peaceEndsAt - performance.now() / 1000))
+        ? Math.max(0, Math.ceil(Math.max(this.net.peaceEndsAt, this.net.graceEndsAt) - performance.now() / 1000))
         : Math.max(0, Math.ceil(30 - (this.now - this.startTime))),
       online: !!this.net,
       total: this.net ? this.net.start.roster.length : this.combatants.length,

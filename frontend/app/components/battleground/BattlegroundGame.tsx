@@ -137,14 +137,16 @@ export default function BattlegroundGame() {
     gameRef.current?.setSensitivity(0.0022 * sensitivity);
   }, [sensitivity]);
 
-  // Poll HUD state ~20 times a second.
+  // Poll HUD state ~20 times a second while playing; menus and results need far less
+  // (re-rendering them 20×/s on a busy phone made their buttons feel unresponsive).
   useEffect(() => {
     if (screen !== "match") return;
     let raf = 0;
     let last = 0;
+    const every = phase === "playing" ? 50 : 300;
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
-      if (t - last < 50) return;
+      if (t - last < every) return;
       last = t;
       const g = gameRef.current;
       if (g && phase !== "loading") setHud(g.getHud());
@@ -189,7 +191,7 @@ export default function BattlegroundGame() {
     clientRef.current = null;
   };
 
-  /** Join matchmaking; the server starts the match when it's full or after a minute. */
+  /** Join matchmaking; the server starts the match when it's full or after 30 seconds. */
   const findMatch = async () => {
     closeClient();
     disposeGame();
@@ -371,7 +373,7 @@ export default function BattlegroundGame() {
                 </div>
                 <div className="bg-bar"><div style={{ width: `${(players / (queueInfo?.max ?? 25)) * 100}%` }} /></div>
                 <p className="bg-sub">
-                  30 soldiers per match: {players} {players === 1 ? "player" : "players"} + {30 - players} bots. Starts when 25 players join, or in a minute.
+                  30 soldiers per match: {players} {players === 1 ? "player" : "players"} + {30 - players} bots. Starts when 25 players join, or in 30 seconds.
                 </p>
               </>
             )}

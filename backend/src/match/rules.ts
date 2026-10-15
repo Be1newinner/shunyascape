@@ -7,10 +7,28 @@ export const MAX_HUMANS = 25;
 export const MIN_BOTS = 5;
 export const MATCH_SIZE = MAX_HUMANS + MIN_BOTS; // 30
 /** How long matchmaking waits for players (`MATCH_QUEUE_MS` overrides it for testing). */
-export const QUEUE_WAIT_MS = Number(process.env.MATCH_QUEUE_MS) || 60_000;
+export const QUEUE_WAIT_MS = Number(process.env.MATCH_QUEUE_MS) || 30_000;
 /** Matches the server runs at once; more players wait in line (`MAX_MATCHES` overrides it). */
 export const MAX_MATCHES = Number(process.env.MAX_MATCHES) || 2;
 export const PEACE_SECONDS = 30;
+/**
+ * Spawn protection: bots ignore a player until this long after they actually
+ * start playing (they may still be loading when the match begins), or until
+ * they fire. A player who never starts is fair game after `IDLE_GRACE_SECONDS`.
+ */
+export const SPAWN_GRACE_SECONDS = 15;
+export const IDLE_GRACE_SECONDS = 75;
+/**
+ * How close a player has to be before a bot notices them (it still needs to
+ * see them). Snipers look further. Crouching and lying down shrink it.
+ */
+export const BOT_NOTICE_RANGE = 55;
+export const BOT_NOTICE_RANGE_SNIPER = 95;
+export const NOTICE_STANCE = { s: 1, c: 0.7, p: 0.4 } as const;
+/** Bots hear gunfire this close and come for the shooter, even without seeing them. */
+export const BOT_HEARING_RANGE = 45;
+/** At most this many bots hunt the same player at once (more join only if shot). */
+export const MAX_HUNTERS = 3;
 /** A match lasts at most this long (`MATCH_SECONDS` overrides it for testing). */
 export const MATCH_SECONDS = Number(process.env.MATCH_SECONDS) || 600;
 /** Bonus XP for still being alive when time runs out. */
@@ -23,14 +41,25 @@ export const MAP_HALF = 320;
 
 export type WeaponId = "m416" | "kar98k" | "p92";
 
+/**
+ * `range`: the furthest a round travels (it stops there, hitting nothing).
+ * Damage fades from `falloff` metres down to 60% at `range`.
+ */
 export const WEAPONS: Record<WeaponId, {
-  damage: number; head: number; interval: number; range: number;
+  damage: number; head: number; interval: number; range: number; falloff: number;
   mag: number; reload: number; burst: [number, number]; auto: boolean;
 }> = {
-  m416: { damage: 12, head: 1.55, interval: 0.086, range: 300, mag: 30, reload: 2.1, burst: [3, 7], auto: true },
-  kar98k: { damage: 18, head: 1.1, interval: 1.9, range: 600, mag: 5, reload: 3.2, burst: [1, 1], auto: false },
-  p92: { damage: 9, head: 1.6, interval: 0.14, range: 120, mag: 15, reload: 1.6, burst: [2, 5], auto: false },
+  m416: { damage: 12, head: 1.55, interval: 0.086, range: 220, falloff: 60, mag: 30, reload: 2.1, burst: [3, 7], auto: true },
+  kar98k: { damage: 18, head: 1.1, interval: 1.9, range: 500, falloff: 500, mag: 5, reload: 3.2, burst: [1, 1], auto: false },
+  p92: { damage: 9, head: 1.6, interval: 0.14, range: 70, falloff: 25, mag: 15, reload: 1.6, burst: [2, 5], auto: false },
 };
+
+/** Damage multiplier at `dist` metres: full up to the gun's falloff distance, 60% at its range. */
+export function rangeFalloff(w: WeaponId, dist: number) {
+  const s = WEAPONS[w];
+  if (dist <= s.falloff) return 1;
+  return Math.max(0.6, 1 - (0.4 * (dist - s.falloff)) / Math.max(1, s.range - s.falloff));
+}
 
 /** Soldier heights by stance (feet to top of head), as on the client. */
 export const STANCE_HEIGHT = { s: 1.8, c: 1.25, p: 0.62 } as const;

@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, Mail, Lock, User, ArrowRight, Loader2, KeyRound } from "lucide-react";
+import GoogleSignInButton from "./GoogleSignInButton";
 
 interface AuthModalProps {
   onClose: () => void;
@@ -175,6 +176,19 @@ export default function AuthModal({ onClose }: AuthModalProps) {
         {success && (
           <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-sm text-center font-medium animate-fade-in">
             {success}
+          </div>
+        )}
+
+        {(mode === "login" || mode === "register") && (
+          <div className="mb-4">
+            <GoogleSignInButton
+              text={mode === "register" ? "signup_with" : "continue_with"}
+              onSignedIn={() => router.push("/world")}
+              onError={(message) => {
+                setSuccess("");
+                setError(message);
+              }}
+            />
           </div>
         )}
 

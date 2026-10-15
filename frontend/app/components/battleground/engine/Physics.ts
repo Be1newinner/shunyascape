@@ -25,6 +25,8 @@ export interface RayHit {
 /** Thin wrapper around a Rapier world used only for queries and kinematic characters. */
 export class Physics {
   world!: RAPIER.World;
+  /** Every static box / cylinder added, so the world can be exported for the game server's bots. */
+  readonly statics: { boxes: number[][]; cylinders: number[][] } = { boxes: [], cylinders: [] };
   rapier: Rapier = RAPIER;
   private ray!: RAPIER.Ray;
 
@@ -45,11 +47,13 @@ export class Physics {
       .setTranslation(x, y, z)
       .setRotation(yawQuat(yaw))
       .setCollisionGroups(WORLD_GROUPS);
+    this.statics.boxes.push([x, y, z, hx, hy, hz, yaw]);
     return this.world.createCollider(desc);
   }
 
   addCylinder(x: number, y: number, z: number, halfHeight: number, radius: number) {
     const desc = RAPIER.ColliderDesc.cylinder(halfHeight, radius).setTranslation(x, y, z).setCollisionGroups(WORLD_GROUPS);
+    this.statics.cylinders.push([x, y, z, halfHeight, radius]);
     return this.world.createCollider(desc);
   }
 

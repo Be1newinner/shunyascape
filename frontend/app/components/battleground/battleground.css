@@ -835,3 +835,35 @@ kbd {
   .bg-start { padding: 14px 30px; font-size: 20px; }
   .bg-mode span { display: none; }
 }
+
+/* ---------- matchmaking ---------- */
+.bg-queue { text-align: center; }
+.bg-queue .bg-cta { margin-top: 12px; }
+.bg-queue-ring {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  margin: 22px auto 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(var(--accent) 0 25%, hsla(0, 0%, 100%, 0.08) 25% 100%);
+  animation: bg-spin 1.6s linear infinite;
+}
+.bg-queue-ring::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: hsl(218 34% 9%);
+}
+.bg-queue-ring span {
+  position: relative;
+  z-index: 1;
+  font: 700 30px var(--hud-font);
+  animation: bg-spin 1.6s linear infinite reverse;
+}
+@keyframes bg-spin { to { transform: rotate(360deg); } }
+.bg-queue-count { display: flex; justify-content: center; align-items: baseline; gap: 8px; }
+.bg-queue-count b { font-size: 34px; }
+.bg-queue-count span { color: var(--ink-dim); }

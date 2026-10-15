@@ -3,6 +3,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";
 import "dotenv/config";
+import http from "http";
 
 import { connectDB } from "./config/db";
 import User from "./models/User";
@@ -10,7 +11,9 @@ import { hashPassword, verifyPassword, signToken } from "./utils/auth";
 import { authMiddleware, requireAuth, requireAdmin, AuthenticatedRequest } from "./middlewares/auth";
 import { sendOtpEmail } from "./utils/mailer";
 import { googleClientId, verifyGoogleIdToken } from "./utils/google";
-import { OUTFITS, MIN_MATCH_GAP_MS, levelFor, matchXp, parseMatch } from "./game/profile";
+import { OUTFITS, levelFor, matchXp } from "./game/profile";
+import { attachMatchServer } from "./match/socket";
+import type { HumanResult } from "./match/Match";
 
 const app = express();
 const PORT = process.env.PORT || 8005;
@@ -531,52 +534,46 @@ app.patch(
   },
 );
 
-// POST /api/matches — record a finished match (placement, kills, damage, time survived)
-app.post(
-  "/api/matches",
+// GET /api/match/ticket — short-lived pass for the game server's WebSocket
+app.get(
+  "/api/match/ticket",
   requireAuth as express.RequestHandler,
-  async (req: AuthenticatedRequest, res: express.Response) => {
-    try {
-      const match = parseMatch(req.body);
-      if (!match) {
-        res.status(400).json({ error: "Invalid match result" });
-        return;
-      }
-      await connectDB();
-      const user = req.user;
-      const now = Date.now();
-      if (user.lastMatchAt && now - new Date(user.lastMatchAt).getTime() < MIN_MATCH_GAP_MS) {
-        res.status(429).json({ error: "Match reported too soon after the previous one" });
-        return;
-      }
-      const xp = matchXp(match);
-      const best = user.stats?.bestPlacement;
-      await User.updateOne(
-        { _id: user._id },
-        {
-          $inc: {
-            "stats.matches": 1,
-            "stats.wins": match.placement === 1 ? 1 : 0,
-            "stats.kills": match.kills,
-            "stats.damage": match.damage,
-            "stats.top10": match.placement <= 10 ? 1 : 0,
-            "stats.timePlayed": match.survived,
-            "stats.xp": xp,
-          },
-          $set: {
-            lastMatchAt: new Date(now),
-            "stats.bestPlacement": best ? Math.min(best, match.placement) : match.placement,
-          },
-        },
-      );
-      const updated = await User.findById(user._id);
-      res.status(200).json({ xpGained: xp, profile: profileOf(updated) });
-    } catch (error) {
-      console.error("Match report error:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
+  (req: AuthenticatedRequest, res: express.Response) => {
+    const u = req.user;
+    const ticket = signToken({ kind: "match", userId: u._id.toString(), name: u.name, outfit: u.outfit ?? "classic" }, "90s");
+    res.status(200).json({ ticket });
   },
 );
+
+/** The game server reports each human's result; stats are written here, never by clients. */
+async function recordHumanResult(userId: string, match: HumanResult) {
+  try {
+    await connectDB();
+    const user = await User.findById(userId);
+    if (!user) return;
+    const best = user.stats?.bestPlacement;
+    await User.updateOne(
+      { _id: userId },
+      {
+        $inc: {
+          "stats.matches": 1,
+          "stats.wins": match.placement === 1 ? 1 : 0,
+          "stats.kills": match.kills,
+          "stats.damage": match.damage,
+          "stats.top10": match.placement <= 10 ? 1 : 0,
+          "stats.timePlayed": match.survived,
+          "stats.xp": matchXp(match),
+        },
+        $set: {
+          lastMatchAt: new Date(),
+          "stats.bestPlacement": best ? Math.min(best, match.placement) : match.placement,
+        },
+      },
+    );
+  } catch (error) {
+    console.error("Failed to record match result:", error);
+  }
+}
 
 // GET /api/admin/users — every account with its email, admins only
 app.get(
@@ -668,10 +665,13 @@ app.post(
   },
 );
 
+const server = http.createServer(app);
+attachMatchServer(server, recordHumanResult);
+
 connectDB()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`API server running on port ${PORT}`);
+    server.listen(PORT, () => {
+      console.log(`API + game server running on port ${PORT}`);
     });
   })
   .catch((err) => {

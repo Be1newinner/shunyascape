@@ -1,0 +1,370 @@
+import { BotSim, type Target } from "./BotSim";
+import {
+  BOT_NAMES, MATCH_SIZE, MAX_HEALTH, MAX_HIT_DAMAGE, PEACE_SECONDS, ServerZone, WEAPONS, isWeapon, mulberry32, type WeaponId,
+} from "./rules";
+
+/** A connected human, as the match sees them. */
+export interface Peer {
+  userId: string;
+  name: string;
+  outfit: string;
+  send(msg: object): void;
+  match: Match | null;
+}
+
+export interface HumanResult {
+  placement: number;
+  kills: number;
+  damage: number;
+  survived: number;
+}
+
+interface Participant {
+  id: string;
+  name: string;
+  outfit: string;
+  bot: boolean;
+  alive: boolean;
+  hp: number;
+  kills: number;
+  damage: number;
+  /** Last movement state a human reported (bots come from the simulation). */
+  state: unknown[] | null;
+  stateAt: number;
+  pos: [number, number, number] | null;
+  /** Shots allowed per weapon: a token bucket refilled at the weapon's fire rate. */
+  ammoBucket: Map<string, { tokens: number; at: number }>;
+  diedAt: number;
+  /** Result already recorded (so it's never written twice). */
+  finished: boolean;
+}
+
+const SNAPSHOT_MS = 66;
+const BOT_TICK_MS = 50;
+/** A human who stops sending (tab hidden, lag, left) stands still after this long. */
+const STALE_MS = 600;
+const vec3 = (v: unknown): [number, number, number] | null =>
+  Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === "number" && Number.isFinite(n) && Math.abs(n) < 2000)
+    ? [v[0], v[1], v[2]]
+    : null;
+
+/**
+ * One live battleground. The server owns health, damage, kills, the zone,
+ * loot claims, results and the bots; clients only send their own movement
+ * and shots. No player is special: bots run here whatever anyone does, and a
+ * player who switches tabs or leaves stays in the world until killed.
+ */
+export class Match {
+  readonly id: string;
+  readonly seed: number;
+  private participants = new Map<string, Participant>();
+  private peers = new Map<string, Peer>();
+  private zone: ServerZone;
+  private bots: BotSim;
+  private startedAt = Date.now();
+  private takenLoot = new Set<string>();
+  private dropCounter = 0;
+  private timers: NodeJS.Timeout[] = [];
+  private over = false;
+  private closed = false;
+
+  constructor(
+    humans: Peer[],
+    private onHumanResult: (userId: string, result: HumanResult) => void,
+    private onClosed: (m: Match) => void,
+  ) {
+    this.id = Math.random().toString(36).slice(2, 10);
+    this.seed = Math.floor(Math.random() * 2 ** 31);
+    this.zone = new ServerZone(this.seed);
+    const add = (id: string, name: string, outfit: string, bot: boolean) =>
+      this.participants.set(id, {
+        id, name, outfit, bot, alive: true, hp: MAX_HEALTH, kills: 0, damage: 0,
+        state: null, stateAt: 0, pos: null, ammoBucket: new Map(), diedAt: 0, finished: false,
+      });
+    for (const p of humans) {
+      add(p.userId, p.name, p.outfit, false);
+      this.peers.set(p.userId, p);
+      p.match = this;
+    }
+    // Bots fill every seat the humans didn't take: always 30 soldiers in total.
+    const rng = mulberry32(this.seed);
+    const names = [...BOT_NAMES].sort(() => rng() - 0.5);
+    const botIds: string[] = [];
+    for (let i = 0; i < MATCH_SIZE - humans.length; i++) {
+      const id = `bot:${i}`;
+      add(id, names[i % names.length], "", true);
+      botIds.push(id);
+    }
+    this.bots = new BotSim(
+      {
+        zone: this.zone,
+        humans: () => this.targets(),
+        peaceful: () => (Date.now() - this.startedAt) / 1000 < PEACE_SECONDS,
+        shot: (botId, w, o, e, hit) => this.botShot(botId, w, o, e, hit),
+      },
+      this.seed,
+      botIds,
+    );
+    for (const id of botIds) this.participants.get(id)!.pos = this.bots.position(id);
+  }
+
+  get humanCount() {
+    return this.peers.size;
+  }
+
+  /** Humans as the bots see them (connected or not: everyone in the world is fair game). */
+  private targets(): Target[] {
+    const out: Target[] = [];
+    for (const p of this.participants.values()) {
+      if (p.bot || !p.alive || !p.pos) continue;
+      const st = p.state ?? [];
+      const stance = st[5] === "c" ? "c" : st[5] === "p" ? "p" : "s";
+      const stale = Date.now() - p.stateAt > STALE_MS;
+      out.push({
+        id: p.id, alive: true, pos: p.pos, stance,
+        vx: stale ? 0 : Number(st[7]) || 0, vz: stale ? 0 : Number(st[8]) || 0,
+      });
+    }
+    return out;
+  }
+
+  private roster() {
+    return [...this.participants.values()].map((p) => ({ id: p.id, name: p.name, outfit: p.outfit, bot: p.bot }));
+  }
+
+  private aliveCount() {
+    let n = 0;
+    for (const p of this.participants.values()) if (p.alive) n++;
+    return n;
+  }
+
+  private broadcast(msg: object, except?: string) {
+    for (const [id, peer] of this.peers) if (id !== except) peer.send(msg);
+  }
+
+  start() {
+    this.startedAt = Date.now();
+    const roster = this.roster();
+    for (const peer of this.peers.values()) {
+      peer.send({ t: "start", match: this.id, seed: this.seed, you: peer.userId, host: null, roster, peace: PEACE_SECONDS });
+    }
+    let last = Date.now();
+    this.timers.push(setInterval(() => {
+      const now = Date.now();
+      const dt = Math.min(0.2, (now - last) / 1000);
+      last = now;
+      this.botTick(dt);
+    }, BOT_TICK_MS));
+    this.timers.push(setInterval(() => this.snapshot(), SNAPSHOT_MS));
+    this.timers.push(setInterval(() => this.zoneTick(1), 1000));
+  }
+
+  private botTick(dt: number) {
+    if (this.over) return;
+    this.bots.update(dt);
+    for (const p of this.participants.values()) if (p.bot && p.alive) p.pos = this.bots.position(p.id);
+  }
+
+  /** Everyone's latest movement, ~15 times a second. */
+  private snapshot() {
+    const now = Date.now();
+    const s: unknown[] = [];
+    for (const p of this.participants.values()) {
+      if (!p.alive) continue;
+      if (p.bot) {
+        const st = this.bots.state(p.id);
+        if (st) s.push([p.id, ...st]);
+      } else if (p.state) {
+        const st = [...p.state];
+        // Not heard from lately (tab hidden, lag, gone): standing still where they were.
+        if (now - p.stateAt > STALE_MS) {
+          st[6] = (Number(st[6]) || 0) & 4;
+          st[7] = 0;
+          st[8] = 0;
+        }
+        s.push([p.id, ...st]);
+      }
+    }
+    this.broadcast({ t: "snap", s, alive: this.aliveCount() });
+  }
+
+  private zoneTick(dt: number) {
+    if (this.over) return;
+    this.zone.update(dt);
+    this.broadcast({ t: "zone", ...this.zone.state() });
+    for (const p of this.participants.values()) {
+      if (!p.alive || !p.pos) continue;
+      if (!this.zone.contains(p.pos[0], p.pos[2])) this.applyDamage(p, this.zone.dps, null, false, "Blue zone");
+    }
+  }
+
+  handle(peer: Peer, msg: Record<string, unknown>) {
+    if (this.over) return;
+    const me = this.participants.get(peer.userId);
+    if (!me) return;
+    switch (msg.t) {
+      case "s": {
+        if (!me.alive || !Array.isArray(msg.d)) return;
+        const d = msg.d as unknown[];
+        const pos = vec3(d.slice(0, 3));
+        if (!pos || d.length > 16) return;
+        me.state = d;
+        me.stateAt = Date.now();
+        me.pos = pos;
+        break;
+      }
+      case "shot":
+        this.humanShot(peer, me, msg);
+        break;
+      case "pick": {
+        const id = String(msg.id ?? "");
+        if (!me.alive || !id || id.length > 32) return;
+        if (this.takenLoot.has(id)) {
+          peer.send({ t: "pick-denied", id });
+          return;
+        }
+        this.takenLoot.add(id);
+        this.broadcast({ t: "taken", id, by: me.id });
+        break;
+      }
+      case "drop": {
+        // Gear a player puts on the ground (swapped guns, their kit when they die).
+        const pos = vec3(msg.pos);
+        if (!pos || typeof msg.item !== "object" || msg.item === null) return;
+        if (JSON.stringify(msg.item).length > 200) return;
+        this.spawnLoot(msg.item, pos);
+        break;
+      }
+    }
+  }
+
+  private spawnLoot(item: unknown, pos: [number, number, number]) {
+    this.broadcast({ t: "spawn", id: `d${++this.dropCounter}`, item, pos });
+  }
+
+  /** Fire-rate check with a little slack for network bunching. */
+  private allowShot(p: Participant, w: WeaponId) {
+    const stats = WEAPONS[w];
+    const now = Date.now();
+    const bucket = p.ammoBucket.get(w) ?? { tokens: 3, at: now };
+    bucket.tokens = Math.min(3, bucket.tokens + (now - bucket.at) / 1000 / (stats.interval * 0.85));
+    bucket.at = now;
+    p.ammoBucket.set(w, bucket);
+    if (bucket.tokens < 1) return false;
+    bucket.tokens -= 1;
+    return true;
+  }
+
+  private humanShot(peer: Peer, shooter: Participant, msg: Record<string, unknown>) {
+    if (!shooter.alive || String(msg.by ?? "") !== shooter.id) return;
+    const w = msg.w;
+    if (!isWeapon(w)) return;
+    const o = vec3(msg.o);
+    const e = vec3(msg.e);
+    if (!o || !e || !this.allowShot(shooter, w)) return;
+    const hit = msg.hit as { id?: unknown; head?: unknown } | undefined;
+    this.broadcast({ t: "fx", by: shooter.id, w, o, e, h: hit ? 1 : 0 }, peer.userId);
+    if (!hit || typeof hit.id !== "string") return;
+    const target = this.participants.get(hit.id);
+    if (!target || !target.alive || target === shooter || !target.pos) return;
+    // The claimed impact point has to be on the target, within the gun's range.
+    const [tx, ty, tz] = target.pos;
+    if (Math.hypot(e[0] - tx, e[2] - tz) > 3 || e[1] < ty - 0.8 || e[1] > ty + 2.6) return;
+    if (Math.hypot(o[0] - tx, o[1] - ty, o[2] - tz) > WEAPONS[w].range + 15) return;
+    const head = hit.head === true;
+    if (target.bot) this.bots.wasHit(target.id, shooter.id);
+    this.applyDamage(target, Math.min(MAX_HIT_DAMAGE, WEAPONS[w].damage * (head ? WEAPONS[w].head : 1)), shooter, head, w);
+  }
+
+  private botShot(botId: string, w: WeaponId, o: number[], e: number[], hit: { id: string; head: boolean } | null) {
+    const bot = this.participants.get(botId);
+    if (!bot || !bot.alive) return;
+    const r = (n: number) => Math.round(n * 100) / 100;
+    this.broadcast({ t: "fx", by: botId, w, o: o.map(r), e: e.map(r), h: hit ? 1 : 0 });
+    if (!hit) return;
+    const target = this.participants.get(hit.id);
+    if (!target || target.bot || !target.alive) return;
+    this.applyDamage(target, Math.min(MAX_HIT_DAMAGE, WEAPONS[w].damage * (hit.head ? WEAPONS[w].head : 1)), bot, hit.head, w);
+  }
+
+  private applyDamage(target: Participant, dmg: number, by: Participant | null, head: boolean, weapon: string) {
+    if (!target.alive) return;
+    target.hp = Math.max(0, target.hp - dmg);
+    if (by) by.damage += dmg;
+    this.broadcast({ t: "hp", id: target.id, hp: Math.round(target.hp * 10) / 10, by: by?.id ?? null, head });
+    if (target.hp <= 0) this.kill(target, by, weapon, head);
+  }
+
+  private kill(victim: Participant, killer: Participant | null, weapon: string, head: boolean) {
+    victim.alive = false;
+    victim.diedAt = Date.now();
+    if (killer) killer.kills++;
+    const placement = this.aliveCount() + 1;
+    this.broadcast({ t: "kill", victim: victim.id, killer: killer?.id ?? null, w: weapon, head, alive: this.aliveCount() });
+    if (victim.bot) {
+      // A dead bot's kit goes on the ground for anyone to loot.
+      const kit = this.bots.loadout(victim.id);
+      const pos = this.bots.position(victim.id);
+      this.bots.kill(victim.id);
+      if (kit && pos) {
+        const ammo = kit.weapon === "m416" ? "5.56mm" : kit.weapon === "kar98k" ? "7.62mm" : "9mm";
+        this.spawnLoot({ kind: "weapon", weapon: kit.weapon, mag: kit.mag, scope: kit.scope }, [pos[0] + 0.8, pos[1] + 0.02, pos[2]]);
+        this.spawnLoot({ kind: "ammo", ammo, amount: Math.round(WEAPONS[kit.weapon].mag * 1.5) }, [pos[0] + 0.5, pos[1] + 0.02, pos[2] + 0.6]);
+        if (Math.random() < 0.35) this.spawnLoot({ kind: "medkit" }, [pos[0] - 0.6, pos[1] + 0.02, pos[2] + 0.5]);
+      }
+    } else {
+      this.finishHuman(victim, placement);
+    }
+    this.checkEnd();
+  }
+
+  private finishHuman(p: Participant, placement: number) {
+    if (p.finished) return;
+    p.finished = true;
+    const result: HumanResult = {
+      placement,
+      kills: p.kills,
+      damage: Math.round(p.damage),
+      survived: Math.round(((p.diedAt || Date.now()) - this.startedAt) / 1000),
+    };
+    this.peers.get(p.id)?.send({ t: "result", ...result });
+    this.onHumanResult(p.id, result);
+  }
+
+  private checkEnd() {
+    if (this.over) return;
+    const alive = [...this.participants.values()].filter((p) => p.alive);
+    const watching = [...this.peers.keys()].some((id) => this.participants.get(id)?.alive);
+    // Over when one soldier is left, or no connected player is still in it.
+    if (alive.length > 1 && watching) return;
+    this.over = true;
+    if (alive.length === 1 && !alive[0].bot) this.finishHuman(alive[0], 1);
+    else {
+      // Players who left but were never killed share the best place still open.
+      for (const p of alive) if (!p.bot) this.finishHuman(p, alive.length);
+    }
+    this.broadcast({ t: "end", winner: alive.length === 1 ? alive[0].id : null });
+    // Leave a moment for the result screens, then free the room.
+    setTimeout(() => this.close(), 15_000);
+  }
+
+  /** A player disconnected or left: their soldier stays in the world until someone kills it. */
+  leave(peer: Peer) {
+    this.peers.delete(peer.userId);
+    peer.match = null;
+    if (this.peers.size === 0 && this.over) this.close();
+    else this.checkEnd();
+  }
+
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.over = true;
+    for (const t of this.timers) clearInterval(t);
+    this.timers = [];
+    for (const p of this.peers.values()) p.match = null;
+    this.peers.clear();
+    this.bots.dispose();
+    this.onClosed(this);
+  }
+}

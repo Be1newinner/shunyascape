@@ -3,8 +3,8 @@
 ShunyaScape is a browser battle royale (`/battleground`). The earlier city-builder game, its WebSocket sync, NPC simulation, economy and city admin pages were removed.
 
 ## 1. Standalone TypeScript Express Backend
-* Dedicated Express server on port `8005` (`backend/src/index.ts`), configured with `dotenv` and type-checked with TypeScript.
-* Handles accounts and sessions (register, OTP verification, login, Google sign-in, logout, password reset, profile), the battleground profile (outfit, career stats, match results) and the admin player list.
+* Dedicated Express server on port `8005` (`backend/src/index.ts`), configured with `dotenv` and type-checked with TypeScript. The same port serves the game server's WebSocket at `/ws`.
+* Handles accounts and sessions (register, OTP verification, login, Google sign-in, logout, password reset, profile), the battleground profile (outfit, career stats), match tickets, online matches and the admin player list.
 
 ## 2. Secure Email OTP Authentication
 * Mandatory email One-Time Password (OTP) verification using `nodemailer`; OTP codes use `crypto.randomInt`.
@@ -43,14 +43,16 @@ ShunyaScape is a browser battle royale (`/battleground`). The earlier city-build
 * Signing in sends players to `/battleground`.
 
 ## 8. Battleground (`/battleground`)
-* Sign-in required (`GET /api/auth/me`; otherwise back to the landing page). Single-player, third-person battle royale against 24 AI soldiers. Code in `frontend/app/components/battleground/` (engine in `engine/`), assets in `frontend/public/battleground/` (about 12 MB, credits in `CREDITS.md`).
+* Sign-in required (`GET /api/auth/me`; otherwise back to the landing page). Third-person battle royale: online matches of 30 soldiers (see section 10), or offline practice against bots when the game server can't be reached. Code in `frontend/app/components/battleground/` (engine in `engine/`), assets in `frontend/public/battleground/` (about 12 MB, credits in `CREDITS.md`).
 * Rendered with three.js `WebGPURenderer` (falls back to WebGL 2; `?renderer=webgl` forces it). Physics and character movement use Rapier (`@dimforge/rapier3d-compat`).
 * World: 640 m heightmap terrain with grass/dirt/road/triplanar-rock texturing, nine towns of enterable procedural houses (doors, windows, stairs), roads, EZ-Tree trees with near/far detail levels (far leaves alpha-sharpened so they don't fade), wind-animated grass tufts, Poly Haven props as cover, analytic sky with image-based lighting and sun shadows.
 * Controls: mouse look (pointer lock), WASD move, Space jump, Shift sprint, left click shoot, right click aim/scope, U reload, I pick up, J crouch, K prone, O or mouse wheel switch weapon, L med kit, 1–3 weapon slots.
-* Weapons: M416 (auto), Kar98k (bolt action), P92 pistol. Three slots (two primaries + pistol), magazines, reserve ammo per calibre, reload, recoil, spread, headshots. Short bullet tracers (always for bots' shots, occasionally for yours).
+* Weapons: M416 (auto), Kar98k (bolt action), P92 pistol. Three slots (two primaries + pistol), magazines, reserve ammo per calibre, reload, recoil, spread, headshots. No single hit does more than 19 damage (`MAX_HIT_DAMAGE`), so everyone survives at least 5 hits; it takes 6–12 depending on gun and headshots.
+* Shooting feel: muzzle flash with light and smoke, ejected brass, short bullet tracers (always for enemy fire, sometimes for yours), sparks on hard surfaces, dust plumes and debris on the ground, directional blood, bullet holes that stay for 25 s, impact sounds, the crack of near misses, a camera jolt when you're hit, and soldiers falling away from the killing shot.
+* Movement: quick acceleration and braking, walk/run animations played at the body's real speed (no foot sliding), a forward lean, slight head bob and wider FOV when sprinting.
 * Scopes: Red Dot, 2×, 4× and 6× scopes are loot. They mount on the M416 and Kar98k (better scopes replace worse ones; spares go to the backpack and mount on the next gun). Each scope sets its own zoom; magnified scopes show a scope overlay. The Kar98k starts on iron sights.
 * Loot: guns, scopes, ammo and med kits in houses and next to crates. Walking over ammo, med kits, scopes — and guns while a matching slot is free — picks them up; I picks up or swaps the nearest gun or scope, even with ammo lying closer. Swapped guns are dropped and their scope goes to the backpack. Dead soldiers drop their gear.
-* Bots fight only the player (their bullets pass through other bots) and hold fire for the first 30 seconds. When they spot you they turn, run toward you until in range for their gun, then stop (sometimes crouch) and fire in bursts; if shot from out of sight they head toward the shooter.
+* Bots fight only humans (their bullets pass through other bots) and hold fire for the first 30 seconds. When they spot a player they turn, run toward them until in range for their gun, then stop (sometimes crouch) and fire in bursts; if shot from out of sight they head toward the shooter.
 * Shrinking blue zone (six phases) with increasing damage. HUD: compass, minimap with zone circles, alive/kill counters, kill feed, health, weapon slots with ammo and scope, pickup toasts, hit markers, damage direction, reload/heal progress. Result screen: placement, kills, damage, survival time; back to lobby or play again.
 * Graphics presets (low / medium / high) and mouse sensitivity are saved in local storage.
 
@@ -58,5 +60,13 @@ ShunyaScape is a browser battle royale (`/battleground`). The earlier city-build
 * The battleground opens on a BGMI-style lobby (`Lobby.tsx`, 3D stage in `engine/LobbyScene.ts`): your soldier on a lit platform (drag to turn), player card with level and XP bar, career stats (matches, wins, kills, K/D, top-10 rate, best placement, average damage, time played) and the last match's XP.
 * Wardrobe: eight outfits that tint the soldier; the choice is saved and worn in every match.
 * Settings panel: graphics preset, mouse sensitivity and the controls list. **Start** launches a match.
-* API: `GET /api/profile`, `PATCH /api/profile/outfit`, `POST /api/matches` (placement, kills, damage, time survived; validated and rate-limited to one report per 20 s). XP: 20 per kill + placement bonus + 100 for a win + survival time; levels need 15% more XP each (`backend/src/game/profile.ts`).
-* Match results are reported by the client, so stats can be faked by a determined player; fine for a single-player mode, revisit before any leaderboards.
+* API: `GET /api/profile`, `PATCH /api/profile/outfit`. Stats come only from online matches and are written by the game server (practice matches don't count). XP: 20 per kill + placement bonus + 100 for a win + survival time; levels need 15% more XP each (`backend/src/game/profile.ts`).
+
+## 10. Online Matches & Matchmaking
+* **Start** joins matchmaking (`backend/src/match/`). A match has 30 soldiers: up to 25 players, with bots filling the rest (always at least 5). It starts as soon as 25 players are in, or 60 seconds after the first player queued (`MATCH_QUEUE_MS` overrides the wait). The queue screen shows players found, the countdown and the player/bot split; you can cancel.
+* Connection: the client gets a 90-second ticket from `GET /api/match/ticket` and opens `NEXT_PUBLIC_GAME_SERVER_URL` (default `ws(s)://<host>:8005/ws`), so it works when the API and site are on different domains. One game connection per account; a new tab replaces the old one.
+* Server authority: health, damage (from the server's own weapon table and the 19-damage cap), kills, placement, the zone (same schedule, seeded per match) and zone damage, loot claims (first come, first served) and results. Shots are checked for fire rate, range and that the hit point is on the target. Bots never damage bots.
+* Clients send their movement and pose ~15 times a second; the server relays a snapshot of everyone at 15 Hz and other soldiers are drawn 120 ms behind real time, blended between snapshots. Everyone derives the same map, loot and spawn points from the match seed.
+* Bots run on one player's machine (the host) and are relayed like players; if the host leaves, another player takes over from the bots' last positions.
+* Dropped gear (swapped guns, a dead soldier's kit) goes through the server so every player sees the same piles.
+* Leaving or disconnecting counts as being eliminated. A match ends when one soldier is left or no players remain; each player's result is saved to their stats by the server.

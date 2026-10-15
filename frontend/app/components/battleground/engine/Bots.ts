@@ -92,11 +92,22 @@ export class BotBrain {
 
     if (this.thinkTimer <= 0) {
       this.thinkTimer = 0.25 + this.rng() * 0.1;
-      // Bots only hunt the player.
+      // Bots only hunt humans: the nearest one they can actually see.
       let best: Combatant | null = null;
-      const player = w.combatants.find((c) => c.isPlayer && c.alive);
       const maxD = range > 400 ? 220 : 140;
-      if (player && player.position.distanceTo(me.position) < maxD && this.canSee(w, player, maxD)) best = player;
+      const humans = w.combatants
+        .filter((c) => !c.isBot && c.alive)
+        .map((c) => ({ c, d: c.position.distanceTo(me.position) }))
+        .filter((e) => e.d < maxD)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 3);
+      // Whoever just shot us gets priority.
+      const attacker = me.lastDamageFrom;
+      if (attacker && !attacker.isBot && attacker.alive && w.now - me.lastDamageTime < 4 && this.canSee(w, attacker, maxD * 1.3)) best = attacker;
+      for (const { c } of humans) {
+        if (best) break;
+        if (this.canSee(w, c, maxD)) best = c;
+      }
       if (best && !w.peaceful) {
         if (this.target !== best) {
           this.reaction = (range > 400 ? 1.1 : 0.7) + (1 - this.skill) * 0.9 + this.rng() * 0.4;
@@ -108,10 +119,10 @@ export class BotBrain {
         this.lastSeenTime = w.now;
       } else if (this.state === "engage") {
         this.state = "chase";
-      } else if (player && me.lastDamageFrom === player && w.now - me.lastDamageTime < 1 && !w.peaceful) {
+      } else if (attacker && !attacker.isBot && w.now - me.lastDamageTime < 1 && !w.peaceful) {
         // Shot from somewhere unseen: head toward the shooter.
         this.state = "chase";
-        this.lastSeen.copy(player.position);
+        this.lastSeen.copy(attacker.position);
         this.lastSeenTime = w.now;
       }
       if (this.state === "chase" && w.now - this.lastSeenTime > 9) {

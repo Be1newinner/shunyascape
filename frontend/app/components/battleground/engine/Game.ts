@@ -17,6 +17,9 @@ import { Terrain } from "./Terrain";
 import { Vegetation } from "./Vegetation";
 import { WeaponFactory } from "./Weapons";
 import { Zone } from "./Zone";
+import { decodeState, encodeState, type MatchClient, type MatchStart, type ServerMessage } from "./MatchClient";
+import { outfitTint } from "./outfits";
+import type { LootItem } from "./Loot";
 
 export type GamePhase = "loading" | "ready" | "playing" | "paused" | "dead" | "won";
 
@@ -66,6 +69,8 @@ export interface HudState {
   damageDealt: number;
   survived: number;
   peaceful: number;
+  online: boolean;
+  total: number;
 }
 
 /** The battleground: owns the renderer, world, combatants and the frame loop. */
@@ -121,11 +126,36 @@ export class Game {
 
   private playerName = "You";
   private playerTint: string | undefined;
+  /** Online match state; null in offline practice. */
+  private net: {
+    client: MatchClient;
+    start: MatchStart;
+    byId: Map<string, Combatant>;
+    sendAcc: number;
+    alive: number;
+    peaceEndsAt: number;
+    pendingPicks: Set<string>;
+    unsubscribe: () => void;
+    result: { placement: number; kills: number; damage: number; survived: number } | null;
+  } | null = null;
 
-  async init(quality: Quality, player: { name?: string; tint?: string } = {}) {
+  async init(quality: Quality, player: { name?: string; tint?: string } = {}, online?: { client: MatchClient; start: MatchStart }) {
     this.quality = QUALITY[quality];
     if (player.name) this.playerName = player.name;
     this.playerTint = player.tint;
+    if (online) {
+      this.net = {
+        client: online.client,
+        start: online.start,
+        byId: new Map(),
+        sendAcc: 0,
+        alive: online.start.roster.length,
+        peaceEndsAt: performance.now() / 1000 + online.start.peace,
+        pendingPicks: new Set(),
+        unsubscribe: () => {},
+        result: null,
+      };
+    }
     const q = this.quality;
     // `?renderer=webgl` forces the WebGL 2 backend (WebGPU is used when available).
     const forceWebGL = new URLSearchParams(window.location.search).get("renderer") === "webgl";
@@ -170,7 +200,9 @@ export class Game {
     this.scene.add(this.effects.group);
     this.scene.add(this.zone.mesh);
 
-    this.spawnCombatants();
+    if (this.net) this.spawnOnline();
+    else this.spawnCombatants();
+    if (this.net) this.net.unsubscribe = this.net.client.on(this.onServer);
     this.input = new Input(this.renderer.domElement);
     this.input.onLockChange = (locked) => {
       if (this.phase === "playing" && !locked) this.setPhase("paused");
@@ -372,7 +404,7 @@ export class Game {
     const site = this.map.sites[1 + Math.floor(rng() * (this.map.sites.length - 1))];
     const [px, pz] = this.map.randomOpenPoint(rng, site.x, site.z, site.radius + 12);
     const spawn = new THREE.Vector3(px, this.terrain.heightAt(px, pz) + 0.05, pz);
-    this.me = new Combatant(0, this.playerName, true, this.physics, this.weapons, soldier, spawn, this.playerTint);
+    this.me = new Combatant("me", this.playerName, true, this.physics, this.weapons, soldier, spawn, this.playerTint);
     this.me.aimYaw = Math.atan2(site.x - px, site.z - pz);
     this.me.give("p92");
     this.me.reserve["9mm"] = 30;
@@ -389,7 +421,8 @@ export class Game {
         if (Math.hypot(x - px, z - pz) > 70) break;
       }
       const pos = new THREE.Vector3(x, this.terrain.heightAt(x, z) + 0.05, z);
-      const bot = new Combatant(i + 1, names[i % names.length], false, this.physics, this.weapons, soldier, pos, pick(rng, tints));
+      const bot = new Combatant(`bot:${i}`, names[i % names.length], false, this.physics, this.weapons, soldier, pos, pick(rng, tints));
+      bot.markBot();
       const weapon = pick(rng, ["m416", "m416", "m416", "kar98k", "p92"] as WeaponId[]);
       if (weapon !== "p92") bot.give("p92");
       bot.give(weapon, undefined, weapon === "kar98k" ? "4x" : weapon === "m416" && rng() < 0.5 ? pick(rng, ["reddot", "2x"] as ScopeId[]) : null);
@@ -397,6 +430,210 @@ export class Game {
       this.addCombatant(bot);
       this.bots.push(new BotBrain(bot, i * 7919 + 13));
     }
+  }
+
+  /** Online match: everyone from the server roster, at spawn points every client agrees on. */
+  private spawnOnline() {
+    const net = this.net!;
+    const { roster, seed, you } = net.start;
+    const soldier = this.assets.get("soldier");
+    const points = this.map.spawnPoints(seed, roster.length);
+    // Bot loadouts come from the seed so every client builds the same soldiers.
+    const rng = mulberry32(seed ^ 0xb075);
+    const tints = ["#ffffff", "#d9d2b8", "#b9c7a8", "#c7c2cf", "#a9b4c2", "#e0c9a6"];
+    roster.forEach((r, i) => {
+      const [x, z] = points[i];
+      const pos = new THREE.Vector3(x, this.terrain.heightAt(x, z) + 0.05, z);
+      const isMe = r.id === you;
+      const tint = r.bot ? pick(rng, tints) : isMe ? this.playerTint : outfitTint(r.outfit);
+      const c = new Combatant(r.id, isMe ? this.playerName : r.name, isMe, this.physics, this.weapons, soldier, pos, tint);
+      if (r.bot) {
+        c.markBot();
+        const weapon = pick(rng, ["m416", "m416", "m416", "kar98k", "p92"] as WeaponId[]);
+        const scope = weapon === "kar98k" ? "4x" : weapon === "m416" && rng() < 0.5 ? pick(rng, ["reddot", "2x"] as ScopeId[]) : null;
+        if (weapon !== "p92") c.give("p92");
+        c.give(weapon, undefined, scope);
+      }
+      c.aimYaw = rng() * Math.PI * 2;
+      if (isMe) {
+        c.give("p92");
+        c.reserve["9mm"] = 30;
+        c.medkits = 1;
+        this.me = c;
+      }
+      // Everyone else, bots included, is simulated by the game server.
+      c.remote = !isMe;
+      this.addCombatant(c);
+      net.byId.set(r.id, c);
+    });
+  }
+
+  private onServer = (msg: ServerMessage) => {
+    const net = this.net;
+    if (!net || this.disposed) return;
+    const t = performance.now() / 1000;
+    switch (msg.t) {
+      case "snap":
+        net.alive = msg.alive;
+        for (const row of msg.s) {
+          const c = net.byId.get(row[0] as string);
+          if (!c || !c.remote) continue;
+          const st = decodeState(row.slice(1));
+          if (st) c.pushNetState(st, t);
+        }
+        break;
+      case "zone":
+        this.zone.sync(msg);
+        break;
+      case "fx": {
+        const shooter = net.byId.get(msg.by);
+        if (shooter && shooter.remote) this.remoteShot(shooter, msg.w, msg.o, msg.e, !!msg.h);
+        break;
+      }
+      case "hp": {
+        const c = net.byId.get(msg.id);
+        if (!c) break;
+        const before = c.health;
+        c.health = msg.hp;
+        const by = msg.by ? net.byId.get(msg.by) : null;
+        if (by) {
+          c.lastDamageFrom = by;
+          c.lastDamageTime = this.now;
+          if (msg.by !== net.start.you && c !== this.me) c.visual.hit();
+        }
+        if (c === this.me && msg.hp < before) {
+          if (by) {
+            const rel = by.position.clone().sub(c.position);
+            this.damageDirs.push({ angle: Math.atan2(rel.x, rel.z), time: this.now });
+          }
+          this.audio.hurt();
+          this.player.onHurt();
+          this.me.visual.hit();
+        }
+        break;
+      }
+      case "kill": {
+        net.alive = msg.alive;
+        const victim = net.byId.get(msg.victim);
+        if (!victim) break;
+        const killer = msg.killer ? net.byId.get(msg.killer) ?? null : null;
+        const weapon = msg.w === "left" ? "Left the match" : msg.w in WEAPONS ? WEAPONS[msg.w as WeaponId].name : msg.w;
+        this.markDead(victim, killer, weapon, msg.head);
+        break;
+      }
+      case "taken": {
+        const e = this.loot.items.get(msg.id);
+        const mine = msg.by === net.start.you && net.pendingPicks.delete(msg.id);
+        if (e && mine) this.pickup(e);
+        else this.loot.remove(msg.id);
+        break;
+      }
+      case "pick-denied":
+        net.pendingPicks.delete(msg.id);
+        break;
+      case "spawn":
+        this.loot.spawn(msg.item, new THREE.Vector3(msg.pos[0], msg.pos[1], msg.pos[2]), msg.id);
+        break;
+      case "result":
+        net.result = msg;
+        this.deathTime = this.now;
+        this.input?.exitLock();
+        this.setPhase(msg.placement === 1 ? "won" : "dead");
+        break;
+      case "end":
+        if (msg.winner === net.start.you && this.phase !== "won") {
+          this.deathTime = this.now;
+          this.input?.exitLock();
+          this.setPhase("won");
+        }
+        break;
+    }
+  };
+
+  /** Online death: animation, kill feed and (for us or our bots) dropping the gear. */
+  private markDead(victim: Combatant, killer: Combatant | null, weapon: string, headshot: boolean) {
+    if (!victim.alive) return;
+    victim.health = 0;
+    victim.alive = false;
+    victim.collider.setCollisionGroups(0);
+    const dir = killer ? victim.position.clone().sub(killer.position).setY(0).normalize() : undefined;
+    victim.visual.die(dir);
+    if (killer) killer.kills++;
+    this.pushKillFeed(victim, killer, weapon, headshot);
+    if (killer === this.me) {
+      this.hitMarker = { time: this.now, kind: "kill" };
+      this.audio.hitMarker(true);
+    }
+    if (victim === this.me) {
+      // Our kit goes on the ground through the server; dead bots' kits are dropped by the server itself.
+      this.dropGear(victim);
+      this.deathTime = this.now;
+      this.input?.exitLock();
+      if (this.phase === "playing" || this.phase === "paused") this.setPhase("dead");
+    }
+  }
+
+  /** Remote soldier fired: flash, tracer, sound and impact where the server says it landed. */
+  private remoteShot(shooter: Combatant, w: WeaponId, o: number[], e: number[], hitBody: boolean) {
+    const muzzle = shooter.visual.muzzleWorld();
+    const end = new THREE.Vector3(e[0], e[1], e[2]);
+    const origin = new THREE.Vector3(o[0], o[1], o[2]);
+    const dir = end.clone().sub(muzzle).normalize();
+    const camDist = muzzle.distanceTo(this.camera.position);
+    if (camDist < 400) {
+      this.effects.muzzleFlash(muzzle, w === "p92" ? 0.25 : 0.4, camDist < 60, dir);
+      this.effects.tracer(muzzle, end);
+    }
+    const rel = muzzle.clone().sub(this.camera.position);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    this.audio.shot(w, rel.length(), rel.normalize().dot(right));
+    if (this.me.alive) {
+      const head = this.me.position.clone().setY(this.me.position.y + this.me.eyeHeight);
+      const seg = end.clone().sub(origin);
+      const tt = Math.max(0, Math.min(1, head.clone().sub(origin).dot(seg) / Math.max(seg.lengthSq(), 1e-6)));
+      const closest = origin.clone().addScaledVector(seg, tt).distanceTo(head);
+      if (closest < 2.5 && closest > 0.4) this.audio.whiz();
+    }
+    if (end.distanceTo(this.camera.position) > 150) return;
+    if (hitBody) {
+      this.effects.impact(end, dir.clone().negate(), "blood", dir);
+      return;
+    }
+    // Find out what it hit here, for the right kind of impact.
+    const back = end.clone().addScaledVector(dir, -0.3);
+    const hit = this.physics.castRay(back, dir, 0.6, LAYER.WORLD);
+    if (hit) {
+      const isGround = hit.collider.shape.type === this.physics.rapier.ShapeType.TriMesh;
+      this.effects.impact(end, hit.normal, isGround ? "dirt" : "hard");
+    }
+  }
+
+  /** Online: gear goes on the ground through the server so everyone sees the same pile. */
+  private dropGear(c: Combatant) {
+    const p = c.position;
+    const drop = (item: LootItem, dx: number, dz: number) =>
+      this.net!.client.send({ t: "drop", item, pos: [p.x + dx, p.y + 0.02, p.z + dz] });
+    c.slots.forEach((g, i) => {
+      if (!g) return;
+      const ox = Math.cos(i * 2.1) * 0.8;
+      const oz = Math.sin(i * 2.1) * 0.8;
+      drop({ kind: "weapon", weapon: g.stats.id, mag: g.mag, scope: g.scope }, ox, oz);
+      drop({ kind: "ammo", ammo: g.stats.ammo, amount: c.isBot ? Math.round(g.stats.magSize * 1.5) : c.reserve[g.stats.ammo] }, ox + 0.4, oz + 0.4);
+    });
+    if (c.medkits > 0 || (c.isBot && Math.random() < 0.35)) drop({ kind: "medkit" }, -0.6, 0.5);
+  }
+
+  private pushKillFeed(victim: Combatant, killer: Combatant | null, weapon: string, headshot: boolean) {
+    this.killFeed.push({
+      id: ++this.killId,
+      killer: killer?.name ?? (weapon === "Left the match" ? "" : "Zone"),
+      victim: victim.name,
+      weapon,
+      headshot,
+      byPlayer: killer === this.me,
+      time: this.now,
+    });
+    if (this.killFeed.length > 6) this.killFeed.shift();
   }
 
   private addCombatant(c: Combatant) {
@@ -423,8 +660,8 @@ export class Game {
     const stats = gun.stats;
     const muzzle = shooter.visual.muzzleWorld();
 
-    // Bots only fight the player: their bullets pass through other bots.
-    const targets = shooter.isPlayer ? LAYER.WORLD | LAYER.BOT : LAYER.WORLD | LAYER.PLAYER;
+    // Humans can hit anyone; bots only fight humans, so their bullets pass through other bots.
+    const targets = shooter.isBot ? LAYER.WORLD | LAYER.PLAYER : LAYER.WORLD | LAYER.BOT | LAYER.PLAYER;
     let hit = this.physics.castRay(origin, dir, stats.range, targets, shooter.collider);
     let end = hit ? new THREE.Vector3().copy(hit.point) : origin.clone().addScaledVector(dir, stats.range);
     // The bullet leaves the muzzle: make sure nothing is between the muzzle and the aim point.
@@ -466,8 +703,27 @@ export class Game {
       this.audio.shot(stats.id, rel.length(), rel.normalize().dot(right));
     }
 
+    const victim = hit ? this.byCollider.get(hit.collider.handle) : undefined;
+    if (this.net) {
+      // The server decides damage; tell it what we hit (and let others see the shot).
+      const v = victim && victim.alive && victim !== shooter ? victim : null;
+      const headshot = v ? end.distanceTo(v.visual.headWorld()) < 0.26 : false;
+      this.net.client.send({
+        t: "shot", by: shooter.id, w: stats.id,
+        o: [origin.x, origin.y, origin.z].map((n) => Math.round(n * 100) / 100),
+        e: [end.x, end.y, end.z].map((n) => Math.round(n * 100) / 100),
+        ...(v ? { hit: { id: v.id, head: headshot } } : {}),
+      });
+      if (v) {
+        this.effects.impact(end, { x: -dir.x, y: -dir.y + 0.3, z: -dir.z }, "blood", dir);
+        if (shooter.isPlayer) {
+          this.hitMarker = { time: this.now, kind: headshot ? "head" : "hit" };
+          this.audio.hitMarker(false);
+        }
+        return true;
+      }
+    }
     if (!hit) return true;
-    const victim = this.byCollider.get(hit.collider.handle);
     if (!victim) {
       const isGround = hit.collider.shape.type === this.physics.rapier.ShapeType.TriMesh;
       this.effects.impact(end, hit.normal, isGround ? "dirt" : "hard");
@@ -501,16 +757,7 @@ export class Game {
 
   private onKill(victim: Combatant, killer: Combatant | null, weapon: string, headshot: boolean) {
     if (killer) killer.kills++;
-    this.killFeed.push({
-      id: ++this.killId,
-      killer: killer?.name ?? "Zone",
-      victim: victim.name,
-      weapon,
-      headshot,
-      byPlayer: !!killer?.isPlayer,
-      time: this.now,
-    });
-    if (this.killFeed.length > 6) this.killFeed.shift();
+    this.pushKillFeed(victim, killer, weapon, headshot);
     // Drop their gear as a loot pile.
     const p = victim.position.clone();
     victim.slots.forEach((g, i) => {
@@ -532,7 +779,19 @@ export class Game {
   }
 
   private aliveCount() {
+    if (this.net) return this.net.alive;
     return this.combatants.reduce((n, c) => n + (c.alive ? 1 : 0), 0);
+  }
+
+  /** Online, loot is claimed through the server first; offline it's ours right away. */
+  private requestPickup(e: LootEntity) {
+    if (!this.net) {
+      this.pickup(e);
+      return;
+    }
+    if (this.net.pendingPicks.has(e.id)) return;
+    this.net.pendingPicks.add(e.id);
+    this.net.client.send({ t: "pick", id: e.id });
   }
 
   private pickup(e: LootEntity) {
@@ -552,7 +811,8 @@ export class Game {
         // The old gun is dropped; its scope goes into the backpack, like in BGMI.
         const old = me.slots[swapSlot]!;
         if (old.scope) me.scopeBag.push(old.scope);
-        this.loot.spawn({ kind: "weapon", weapon: old.stats.id, mag: old.mag }, here);
+        if (this.net) this.net.client.send({ t: "drop", item: { kind: "weapon", weapon: old.stats.id, mag: old.mag }, pos: [here.x, here.y, here.z] });
+        else this.loot.spawn({ kind: "weapon", weapon: old.stats.id, mag: old.mag }, here);
       }
       me.give(it.weapon, it.mag, it.scope ?? null);
     }
@@ -585,6 +845,15 @@ export class Game {
   private lastT = 0;
 
   private idleCamera(dt: number) {
+    if (this.net) {
+      // The match keeps going while you're on the menu: keep everyone else moving.
+      this.now += dt;
+      this.netTick(dt);
+      this.physics.world.timestep = dt;
+      this.physics.step();
+      this.zone.update(dt);
+      this.effects.update(dt);
+    }
     this.combatants.forEach((c) => c.updateVisual(dt, c.isPlayer ? 1 : 0));
     this.player.updateCamera(dt);
     this.followSun();
@@ -614,11 +883,11 @@ export class Game {
       if (actions.includes("reload") && me.reloadLeft > 0 && me.gun) this.audio.reload(me.gun.stats.reloadTime);
       // Walking over ammo, med kits and scopes picks them up, and guns too while a slot is free.
       const auto = this.loot.nearest(me.position, 1.4, (e) => e.item.kind !== "weapon" || this.hasRoomFor(e.item.weapon));
-      if (auto) this.pickup(auto);
+      if (auto) this.requestPickup(auto);
       // I picks up (or swaps for) the nearest gun or scope, even with ammo lying closer.
       if (actions.includes("pickup")) {
         const near = this.loot.nearest(me.position, 2.6, (e) => e.item.kind === "weapon" || e.item.kind === "scope") ?? this.loot.nearest(me.position, 2.6);
-        if (near) this.pickup(near);
+        if (near) this.requestPickup(near);
       }
     } else if (!me.alive) {
       me.move(dt, 0, 0, false);
@@ -631,16 +900,17 @@ export class Game {
       combatants: this.combatants,
       now: this.now,
       fire: this.fire,
-      peaceful: this.now - this.startTime < 30,
+      peaceful: this.net ? performance.now() / 1000 < this.net.peaceEndsAt : this.now - this.startTime < 30,
     };
     for (const b of this.bots) b.update(dt, world);
+    if (this.net) this.netTick(dt);
     this.physics.world.timestep = dt;
     this.physics.step();
 
-    // Zone.
+    // Zone (online, the server applies zone damage).
     this.zone.update(dt);
     this.zoneTick += dt;
-    if (this.zoneTick >= 1) {
+    if (this.zoneTick >= 1 && !this.net) {
       this.zoneTick -= 1;
       for (const c of this.combatants) {
         if (c.alive && !this.zone.contains(c.position.x, c.position.z)) {
@@ -661,6 +931,17 @@ export class Game {
     this.vegetation.update(dt, this.camera.position);
     this.effects.update(dt);
     this.damageDirs = this.damageDirs.filter((d) => this.now - d.time < 1.6);
+  }
+
+  /** Online upkeep: play back everyone else and report our soldier ~15 times a second. */
+  private netTick(dt: number) {
+    const net = this.net!;
+    const now = performance.now() / 1000;
+    for (const c of this.combatants) if (c.remote) c.applyNetBuffer(now);
+    net.sendAcc += dt;
+    if (net.sendAcc < 0.066) return;
+    net.sendAcc = 0;
+    if (this.me.alive) net.client.send({ t: "s", d: encodeState(this.me.netState()) });
   }
 
   /** Keep the shadow camera centred on the view, snapped to texels to avoid shimmer. */
@@ -694,7 +975,7 @@ export class Game {
       health: me?.health ?? 0,
       maxHealth: PLAYER_MAX_HEALTH,
       alive: this.aliveCount(),
-      kills: me?.kills ?? 0,
+      kills: this.net?.result?.kills ?? me?.kills ?? 0,
       slots: me
         ? me.slots.map((s, i) =>
             s
@@ -731,10 +1012,16 @@ export class Game {
       backend: this.backend,
       fps: Math.round(this.fps),
       now: this.now,
-      placement: this.aliveCount() + (me?.alive ? 0 : 1),
-      damageDealt: Math.round(me?.damageDealt ?? 0),
-      survived: Math.round((this.phase === "dead" || this.phase === "won" ? this.deathTime : this.now) - this.startTime),
-      peaceful: Math.max(0, Math.ceil(30 - (this.now - this.startTime))),
+      placement: this.net?.result?.placement ?? this.aliveCount() + (me?.alive ? 0 : 1),
+      damageDealt: Math.round(this.net?.result?.damage ?? me?.damageDealt ?? 0),
+      survived:
+        this.net?.result?.survived ??
+        Math.round((this.phase === "dead" || this.phase === "won" ? this.deathTime : this.now) - this.startTime),
+      peaceful: this.net
+        ? Math.max(0, Math.ceil(this.net.peaceEndsAt - performance.now() / 1000))
+        : Math.max(0, Math.ceil(30 - (this.now - this.startTime))),
+      online: !!this.net,
+      total: this.net ? this.net.start.roster.length : this.combatants.length,
     };
   }
 
@@ -791,8 +1078,43 @@ export class Game {
     return c.toDataURL("image/jpeg", 0.85);
   }
 
+  /**
+   * Collision world for the game server's bots: terrain heights plus every
+   * static box and cylinder. When map generation changes, regenerate
+   * `backend/src/match/world.json`: start a practice match in a dev build and
+   * run `copy(JSON.stringify(__bg.exportCollisionWorld()))` in the console.
+   */
+  exportCollisionWorld() {
+    const r = (n: number) => Math.round(n * 100) / 100;
+    const n = this.terrain.segments + 1;
+    // Heights in 5 cm steps as little-endian int16, base64.
+    const q = new Int16Array(n * n);
+    for (let i = 0; i < q.length; i++) q[i] = Math.round(this.terrain.heights[i] * 20);
+    const bytes = new Uint8Array(q.buffer);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    // Open ground for bots to roam to.
+    const rng = mulberry32(8080);
+    const open: number[][] = [];
+    for (let i = 0; i < 2500; i++) {
+      const [x, z] = this.map.randomOpenPoint(rng, 0, 0, MAP_HALF - 45);
+      open.push([r(x), r(z)]);
+    }
+    return {
+      version: 1,
+      mapSize: MAP_SIZE,
+      segments: this.terrain.segments,
+      heights: btoa(bin),
+      boxes: this.physics.statics.boxes.map((b) => b.map(r)),
+      cylinders: this.physics.statics.cylinders.map((c) => c.map(r)),
+      sites: this.map.sites.map((s) => ({ name: s.name, x: s.x, z: s.z, radius: s.radius })),
+      open,
+    };
+  }
+
   dispose() {
     this.disposed = true;
+    this.net?.unsubscribe();
     this.renderer?.setAnimationLoop(null);
     this.resizeObserver?.disconnect();
     this.input?.dispose();

@@ -199,6 +199,31 @@ export class MapLayout {
     return [cx, cz];
   }
 
+  /**
+   * Spawn points for a match: spread across towns and their outskirts, at
+   * least 30 m apart. Every client derives the same list from the seed.
+   */
+  spawnPoints(seed: number, count: number): Array<[number, number]> {
+    const rng = mulberry32(seed ^ 0x51a7);
+    const out: Array<[number, number]> = [];
+    for (let i = 0; i < count; i++) {
+      let best: [number, number] = [0, 0];
+      let bestGap = -1;
+      for (let tries = 0; tries < 25; tries++) {
+        const site = this.sites[Math.floor(rng() * this.sites.length)];
+        const p = this.randomOpenPoint(rng, site.x, site.z, site.radius + 40);
+        const gap = out.reduce((m, q) => Math.min(m, Math.hypot(q[0] - p[0], q[1] - p[1])), Infinity);
+        if (gap > bestGap) {
+          best = p;
+          bestGap = gap;
+        }
+        if (gap >= 30) break;
+      }
+      out.push(best);
+    }
+    return out;
+  }
+
   insideLot(x: number, z: number, margin = 0): boolean {
     for (const l of this.lots) {
       const dx = x - l.x;

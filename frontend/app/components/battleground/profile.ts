@@ -46,11 +46,3 @@ export function saveOutfit(outfit: string) {
     body: JSON.stringify({ outfit }),
   }).then((d) => d.profile);
 }
-
-export function reportMatch(result: { placement: number; kills: number; damage: number; survived: number }) {
-  return api<{ profile: Profile; xpGained: number }>("/api/matches", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(result),
-  });
-}

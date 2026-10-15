@@ -7,7 +7,8 @@ import type { Game, GamePhase, HudState } from "./engine/Game";
 import { outfitTint } from "./engine/outfits";
 import Hud from "./Hud";
 import Lobby from "./Lobby";
-import { fetchProfile, reportMatch, saveOutfit, type Profile } from "./profile";
+import type { MatchClient, MatchStart } from "./engine/MatchClient";
+import { fetchProfile, saveOutfit, type Profile } from "./profile";
 import "./battleground.css";
 
 const SENS_KEY = "bg.sensitivity";
@@ -36,7 +37,11 @@ export default function BattlegroundGame() {
   // Client-only component (loaded with ssr: false), so storage is readable on first render.
   const [quality, setQuality] = useState<Quality>(() => readPref<Quality>(QUALITY_KEY, "medium"));
   const [sensitivity, setSensitivity] = useState(() => Number(readPref(SENS_KEY, "1")) || 1);
-  const [screen, setScreen] = useState<"lobby" | "match">("lobby");
+  const [screen, setScreen] = useState<"lobby" | "queue" | "match">("lobby");
+  const clientRef = useRef<MatchClient | null>(null);
+  const [online, setOnline] = useState<{ client: MatchClient; start: MatchStart } | null>(null);
+  const [queueInfo, setQueueInfo] = useState<{ players: number; max: number; startsIn: number } | null>(null);
+  const [netError, setNetError] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [outfit, setOutfit] = useState("classic");
   const [lastMatch, setLastMatch] = useState<{ placement: number; kills: number; xpGained: number } | null>(null);
@@ -94,7 +99,7 @@ export default function BattlegroundGame() {
         gameRef.current = game;
         // Handy for poking at the engine from the dev console.
         if (process.env.NODE_ENV !== "production") (window as unknown as { __bg?: Game }).__bg = game;
-        await game.init(quality, { name: profile?.name, tint: outfitTint(outfit) });
+        await game.init(quality, { name: profile?.name, tint: outfitTint(outfit) }, online ?? undefined);
         if (cancelled) return;
         game.setSensitivity(0.0022 * sensitivity);
         setMinimap(game.minimap);
@@ -132,35 +137,94 @@ export default function BattlegroundGame() {
     return () => cancelAnimationFrame(raf);
   }, [screen, phase]);
 
-  // Record the match once it ends.
+  // Online results are recorded by the game server; refresh the lobby numbers when a match ends.
   useEffect(() => {
     if ((phase !== "dead" && phase !== "won") || reportedRound.current === round) return;
     const g = gameRef.current;
     if (!g) return;
     reportedRound.current = round;
+    if (!online) return; // practice matches don't count
     const h = g.getHud();
-    const result = { placement: h.placement, kills: h.kills, damage: h.damageDealt, survived: Math.max(0, h.survived) };
-    reportMatch(result)
-      .then(({ profile: p, xpGained }) => {
-        setProfile(p);
-        setLastMatch({ placement: result.placement, kills: result.kills, xpGained });
-      })
-      .catch((e) => console.warn("[bg] match report", e));
+    const before = profile?.stats.xp ?? 0;
+    setTimeout(() => {
+      fetchProfile()
+        .then((p) => {
+          setProfile(p);
+          setLastMatch({ placement: h.placement, kills: h.kills, xpGained: Math.max(0, p.stats.xp - before) });
+        })
+        .catch((e) => console.warn("[bg] profile", e));
+    }, 1500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, round]);
 
   const play = useCallback(() => gameRef.current?.play(), []);
 
-  const startMatch = () => {
+  const closeClient = () => {
+    clientRef.current?.close();
+    clientRef.current = null;
+  };
+
+  /** Join matchmaking; the server starts the match when it's full or after a minute. */
+  const findMatch = async () => {
+    closeClient();
+    gameRef.current?.dispose();
+    gameRef.current = null;
+    setHud(null);
+    setOnline(null);
+    setNetError(null);
+    setQueueInfo(null);
+    setScreen("queue");
+    try {
+      const { MatchClient } = await import("./engine/MatchClient");
+      const client = new MatchClient();
+      clientRef.current = client;
+      client.on((msg) => {
+        if (msg.t === "queue") setQueueInfo({ players: msg.players, max: msg.max, startsIn: msg.startsIn });
+        if (msg.t === "start") {
+          setOnline({ client, start: msg });
+          setScreen("match");
+          setRound((r) => r + 1);
+        }
+      });
+      client.onClose = (code) => {
+        if (clientRef.current !== client) return;
+        setNetError(code === 4001 ? "The game was opened in another tab." : "Lost connection to the game server.");
+      };
+      await client.connect();
+      client.queue();
+    } catch (e) {
+      setNetError(e instanceof Error ? e.message : "Couldn't reach the game server");
+    }
+  };
+
+  const cancelQueue = () => {
+    clientRef.current?.cancel();
+    closeClient();
+    setScreen("lobby");
+  };
+
+  /** Offline match against bots (when the game server is unavailable). Doesn't count toward stats. */
+  const practice = () => {
+    closeClient();
+    setOnline(null);
+    setNetError(null);
     setScreen("match");
     setRound((r) => r + 1);
   };
 
   const backToLobby = () => {
+    // Leaving a live online match counts as being eliminated.
+    clientRef.current?.leave();
+    closeClient();
+    setOnline(null);
     gameRef.current?.dispose();
     gameRef.current = null;
     setHud(null);
+    setNetError(null);
     setScreen("lobby");
   };
+
+  useEffect(() => () => clientRef.current?.close(), []);
 
   const changeOutfit = (id: string) => {
     setOutfit(id);
@@ -200,9 +264,48 @@ export default function BattlegroundGame() {
             setSensitivity(v);
             writePref(SENS_KEY, String(v));
           }}
-          onStart={startMatch}
+          onStart={findMatch}
           lastMatch={lastMatch}
         />
+      </div>
+    );
+  }
+
+  if (screen === "queue") {
+    const players = queueInfo?.players ?? 1;
+    return (
+      <div className="bg-root">
+        <div className="bg-overlay bg-menu">
+          <div className="bg-menu-card compact bg-queue">
+            {netError ? (
+              <>
+                <p className="bg-eyebrow">Matchmaking</p>
+                <h2 className="bg-title small">Game server unavailable</h2>
+                <p className="bg-sub">{netError}</p>
+                <button className="bg-cta" onClick={findMatch}>Try again</button>
+                <button className="bg-cta ghost" onClick={practice}>Practice offline vs bots</button>
+                <button className="bg-cta ghost" onClick={cancelQueue}>Back to lobby</button>
+              </>
+            ) : (
+              <>
+                <p className="bg-eyebrow">Classic · Solo</p>
+                <h2 className="bg-title small">Finding players</h2>
+                <div className="bg-queue-ring" aria-hidden="true">
+                  <span>{queueInfo ? `0:${String(queueInfo.startsIn).padStart(2, "0")}` : "…"}</span>
+                </div>
+                <div className="bg-queue-count">
+                  <b>{players}</b>
+                  <span>/ {queueInfo?.max ?? 25} players</span>
+                </div>
+                <div className="bg-bar"><div style={{ width: `${(players / (queueInfo?.max ?? 25)) * 100}%` }} /></div>
+                <p className="bg-sub">
+                  30 soldiers per match: {players} {players === 1 ? "player" : "players"} + {30 - players} bots. Starts when 25 players join, or in a minute.
+                </p>
+                <button className="bg-cta ghost" onClick={cancelQueue}>Cancel</button>
+              </>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -210,6 +313,16 @@ export default function BattlegroundGame() {
   return (
     <div className="bg-root">
       <div ref={mountRef} className="bg-canvas" />
+
+      {netError && phase !== "dead" && phase !== "won" && (
+        <div className="bg-overlay bg-result">
+          <div className="bg-result-card">
+            <p className="bg-eyebrow">Disconnected</p>
+            <p className="bg-sub">{netError}</p>
+            <button className="bg-cta" onClick={backToLobby}>Back to lobby</button>
+          </div>
+        </div>
+      )}
 
       {phase === "loading" && !error && (
         <div className="bg-overlay bg-loading">
@@ -253,7 +366,8 @@ export default function BattlegroundGame() {
         <div className="bg-overlay bg-result">
           <div className={`bg-result-card ${phase}`}>
             <p className="bg-eyebrow">{phase === "won" ? "Last one standing" : "Eliminated"}</p>
-            <h2 className="bg-place">#{hud.placement}<span>/25</span></h2>
+            <h2 className="bg-place">#{hud.placement}<span>/{hud.total}</span></h2>
+            {!hud.online && <p className="bg-sub">Practice match: not counted toward your stats.</p>}
             <div className="bg-stats">
               <div><b>{hud.kills}</b><span>Kills</span></div>
               <div><b>{hud.damageDealt}</b><span>Damage</span></div>
@@ -261,7 +375,7 @@ export default function BattlegroundGame() {
             </div>
             <div className="bg-result-actions">
               <button className="bg-cta ghost" onClick={backToLobby}>Lobby</button>
-              <button className="bg-cta" onClick={startMatch}>Play again</button>
+              <button className="bg-cta" onClick={online ? findMatch : practice}>Play again</button>
             </div>
           </div>
         </div>

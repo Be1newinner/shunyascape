@@ -12,7 +12,8 @@ export type LootItem =
   | { kind: "medkit" };
 
 export interface LootEntity {
-  id: number;
+  /** "L<n>" for map loot (same on every client), "d<n>" for drops the server numbers. */
+  id: string;
   item: LootItem;
   object: THREE.Object3D;
   position: THREE.Vector3;
@@ -28,7 +29,7 @@ export function lootLabel(item: LootItem) {
 /** Items lying around the map: guns, ammo boxes, med kits. */
 export class Loot {
   readonly group = new THREE.Group();
-  readonly items = new Map<number, LootEntity>();
+  readonly items = new Map<string, LootEntity>();
   private nextId = 1;
 
   constructor(
@@ -61,7 +62,7 @@ export class Loot {
     }
   }
 
-  spawn(item: LootItem, position: THREE.Vector3) {
+  spawn(item: LootItem, position: THREE.Vector3, id = `L${this.nextId++}`) {
     let object: THREE.Object3D;
     if (item.kind === "scope") {
       object = new THREE.Group();
@@ -84,12 +85,11 @@ export class Loot {
     object.position.copy(position);
     object.rotation.y = Math.random() * Math.PI * 2;
     this.group.add(object);
-    const id = this.nextId++;
     this.items.set(id, { id, item, object, position: position.clone() });
     return id;
   }
 
-  remove(id: number) {
+  remove(id: string) {
     const e = this.items.get(id);
     if (!e) return;
     this.group.remove(e.object);

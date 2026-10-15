@@ -4,6 +4,8 @@ import { CharacterVisual, type CharacterPose, type Stance } from "./Character";
 import { MEDKIT_HEAL_TIME, PLAYER_MAX_HEALTH, SCOPES, WEAPONS, type AmmoType, type ScopeId, type WeaponId } from "./config";
 import { groups, LAYER, type Physics } from "./Physics";
 import { makeGun, type Gun, type WeaponFactory } from "./Weapons";
+import type { NetState } from "./MatchClient";
+import { lerpAngle } from "./Character";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 const RADIUS = 0.3;
@@ -50,8 +52,14 @@ export class Combatant {
   readonly collider: RAPIER.Collider;
   private controller: RAPIER.KinematicCharacterController;
 
+  /** Bots are AI soldiers; humans are players (you, or someone else over the network). */
+  isBot = false;
+  /** Driven by network snapshots instead of local input or AI. */
+  remote = false;
+  private netBuffer: Array<{ t: number; s: NetState }> = [];
+
   constructor(
-    readonly id: number,
+    readonly id: string,
     readonly name: string,
     readonly isPlayer: boolean,
     private physics: Physics,
@@ -67,7 +75,8 @@ export class Combatant {
     this.body = physics.world.createRigidBody(
       R.RigidBodyDesc.kinematicPositionBased().setTranslation(spawn.x, spawn.y + hh + RADIUS, spawn.z),
     );
-    const membership = isPlayer ? LAYER.PLAYER : LAYER.BOT;
+    // Every soldier starts on the human layer; markBot() moves AI soldiers to theirs.
+    const membership = LAYER.PLAYER;
     this.collider = physics.world.createCollider(
       R.ColliderDesc.capsule(hh, RADIUS).setCollisionGroups(groups(membership, LAYER.WORLD | LAYER.PLAYER | LAYER.BOT)),
       this.body,
@@ -293,6 +302,82 @@ export class Combatant {
       return true;
     }
     return false;
+  }
+
+  /** Mark as an AI soldier: bots live on their own collision layer. */
+  markBot() {
+    this.isBot = true;
+    this.collider.setCollisionGroups(groups(LAYER.BOT, LAYER.WORLD | LAYER.PLAYER | LAYER.BOT));
+  }
+
+  /** What this soldier looks like right now, for the network. */
+  netState(): NetState {
+    const g = this.gun;
+    return {
+      x: this.position.x, y: this.position.y, z: this.position.z,
+      yaw: this.aimYaw, pitch: this.aimPitch, stance: this.stance,
+      sprint: this.sprinting, aim: this.aiming, grounded: this.grounded,
+      reload: this.reloadLeft > 0, heal: this.healLeft > 0,
+      vx: this.velocity.x, vz: this.velocity.z,
+      weapon: g?.stats.id ?? null, scope: g?.scope ?? null,
+    };
+  }
+
+  /** Queue a snapshot for a remote soldier (played back slightly in the past). */
+  pushNetState(s: NetState, t: number) {
+    this.netBuffer.push({ t, s });
+    if (this.netBuffer.length > 12) this.netBuffer.shift();
+  }
+
+  /**
+   * Remote soldiers are drawn ~120 ms behind real time, blended between the
+   * two snapshots around that moment so they move smoothly.
+   */
+  applyNetBuffer(now: number, delay = 0.12) {
+    const buf = this.netBuffer;
+    if (!buf.length || !this.alive) return;
+    const t = now - delay;
+    let a = buf[0];
+    let b = buf[buf.length - 1];
+    for (let i = 0; i < buf.length - 1; i++) {
+      if (buf[i].t <= t && buf[i + 1].t >= t) {
+        a = buf[i];
+        b = buf[i + 1];
+        break;
+      }
+    }
+    const span = b.t - a.t;
+    const k = span > 0 ? Math.min(1, Math.max(0, (t - a.t) / span)) : 1;
+    const s = k < 0.5 ? a.s : b.s;
+    this.position.set(a.s.x + (b.s.x - a.s.x) * k, a.s.y + (b.s.y - a.s.y) * k, a.s.z + (b.s.z - a.s.z) * k);
+    this.aimYaw = lerpAngle(a.s.yaw, b.s.yaw, k);
+    this.aimPitch = a.s.pitch + (b.s.pitch - a.s.pitch) * k;
+    this.velocity.set(a.s.vx + (b.s.vx - a.s.vx) * k, 0, a.s.vz + (b.s.vz - a.s.vz) * k);
+    this.sprinting = s.sprint;
+    this.aiming = s.aim;
+    this.grounded = s.grounded;
+    if (s.stance !== this.stance) {
+      this.stance = s.stance;
+      this.collider.setHalfHeight(this.halfHeight(s.stance));
+    }
+    // Reload / heal only drive the animation for remote soldiers.
+    this.reloadLeft = s.reload ? Math.max(this.reloadLeft, 0.5) : 0;
+    this.reloadTotal = Math.max(this.reloadTotal, 1);
+    this.healLeft = s.heal ? 1 : 0;
+    this.netEquip(s.weapon, s.scope);
+    const hh = this.halfHeight(this.stance);
+    this.body.setNextKinematicTranslation({ x: this.position.x, y: this.position.y + hh + RADIUS, z: this.position.z });
+  }
+
+  /** Show the gun a remote soldier says they're holding. */
+  private netEquip(weapon: NetState["weapon"], scope: NetState["scope"]) {
+    const g = this.gun;
+    if (!weapon) return;
+    if (g && g.stats.id === weapon && g.scope === scope) return;
+    const slot: SlotIndex = weapon === "p92" ? 2 : 0;
+    this.slots[slot] = makeGun(weapon, undefined, scope);
+    this.active = slot;
+    this.refreshWeaponModel();
   }
 
   dispose() {

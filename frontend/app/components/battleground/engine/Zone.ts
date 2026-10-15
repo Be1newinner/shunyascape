@@ -101,6 +101,31 @@ export class Zone {
     this.mesh.scale.set(r, 1, r);
   }
 
+  /** Take the server's zone (online matches); local updates just smooth between syncs. */
+  sync(z: { cx: number; cz: number; radius: number; nx: number; nz: number; nRadius: number; phase: number; shrinking: boolean; timer: number }) {
+    this.cx = z.cx;
+    this.cz = z.cz;
+    this.radius = z.radius;
+    this.nx = z.nx;
+    this.nz = z.nz;
+    this.nRadius = z.nRadius;
+    this.phase = z.phase - 1;
+    this.shrinking = z.shrinking;
+    this.timer = z.timer;
+    if (z.shrinking) {
+      // Resume interpolation from here toward the target circle.
+      const p = PHASES[this.phase];
+      if (p) {
+        const t = 1 - this.timer / p.shrink;
+        const k = t < 1 ? 1 / (1 - t) : 1;
+        this.fromX = this.nx + (this.cx - this.nx) * k;
+        this.fromZ = this.nz + (this.cz - this.nz) * k;
+        this.fromR = this.nRadius + (this.radius - this.nRadius) * k;
+      }
+    }
+    this.apply();
+  }
+
   contains(x: number, z: number, margin = 0) {
     return Math.hypot(x - this.cx, z - this.cz) <= this.radius - margin;
   }

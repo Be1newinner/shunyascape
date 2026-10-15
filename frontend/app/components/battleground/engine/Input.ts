@@ -1,4 +1,7 @@
-/** Keyboard + mouse state with pointer lock. Edge-triggered actions are queued. */
+/**
+ * Keyboard + mouse state with pointer lock, plus a touch mode fed by the
+ * on-screen controls. Edge-triggered actions are queued.
+ */
 
 export type Action =
   | "jump"
@@ -40,6 +43,13 @@ export class Input {
   aim = false;
   locked = false;
   onLockChange: (locked: boolean) => void = () => {};
+  /** On-screen controls drive input (phones and tablets). */
+  touch = false;
+  /** Joystick: x = right, y = forward, each -1..1. */
+  stickX = 0;
+  stickY = 0;
+  /** Joystick pushed past its rim: sprint. */
+  stickSprint = false;
 
   constructor(private element: HTMLElement) {
     window.addEventListener("keydown", this.onKeyDown);
@@ -71,6 +81,44 @@ export class Input {
 
   down(code: string) {
     return this.keys.has(code);
+  }
+
+  /** Movement intent: forward / right in -1..1, from keys or the joystick. */
+  moveAxis() {
+    const f = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0) + this.stickY;
+    const r = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0) + this.stickX;
+    return { f: Math.max(-1, Math.min(1, f)), r: Math.max(-1, Math.min(1, r)) };
+  }
+
+  get sprintHeld() {
+    return this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") || this.stickSprint;
+  }
+
+  // ---- on-screen controls ----
+
+  setStick(x: number, y: number, sprint: boolean) {
+    this.stickX = x;
+    this.stickY = y;
+    this.stickSprint = sprint;
+  }
+
+  /** Finger drag on the look area (screen pixels). */
+  look(dx: number, dy: number) {
+    this.mouseDX += dx;
+    this.mouseDY += dy;
+  }
+
+  setFire(on: boolean) {
+    if (on && !this.fire) this.firePressed = true;
+    this.fire = on;
+  }
+
+  toggleAim() {
+    this.aim = !this.aim;
+  }
+
+  press(action: Action) {
+    this.queue.push(action);
   }
 
   /** Drains queued one-shot actions. */
@@ -109,6 +157,7 @@ export class Input {
     this.keys.clear();
     this.fire = false;
     this.aim = false;
+    this.setStick(0, 0, false);
   };
 
   private onMouseDown = (e: MouseEvent) => {

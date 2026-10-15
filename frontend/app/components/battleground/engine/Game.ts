@@ -71,6 +71,8 @@ export interface HudState {
   peaceful: number;
   online: boolean;
   total: number;
+  resolution: number;
+  touch: boolean;
 }
 
 /** The battleground: owns the renderer, world, combatants and the frame loop. */
@@ -139,7 +141,17 @@ export class Game {
     result: { placement: number; kills: number; damage: number; survived: number } | null;
   } | null = null;
 
-  async init(quality: Quality, player: { name?: string; tint?: string } = {}, online?: { client: MatchClient; start: MatchStart }) {
+  /** Rendering resolution right now (lowered automatically when frames run slow). */
+  private pixelRatio = 1;
+  private frameTimes: number[] = [];
+  private touch = false;
+
+  async init(
+    quality: Quality,
+    player: { name?: string; tint?: string; touch?: boolean } = {},
+    online?: { client: MatchClient; start: MatchStart },
+  ) {
+    this.touch = !!player.touch;
     this.quality = QUALITY[quality];
     if (player.name) this.playerName = player.name;
     this.playerTint = player.tint;
@@ -162,7 +174,8 @@ export class Game {
     this.renderer = new THREE.WebGPURenderer({ antialias: q.antialias, powerPreference: "high-performance", forceWebGL });
     await this.renderer.init();
     this.backend = (this.renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? "WebGPU" : "WebGL 2";
-    this.renderer.setPixelRatio(q.pixelRatio);
+    this.pixelRatio = q.pixelRatio;
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.8;
     this.renderer.shadowMap.enabled = q.shadows;
@@ -204,6 +217,7 @@ export class Game {
     else this.spawnCombatants();
     if (this.net) this.net.unsubscribe = this.net.client.on(this.onServer);
     this.input = new Input(this.renderer.domElement);
+    this.input.touch = this.touch;
     this.input.onLockChange = (locked) => {
       if (this.phase === "playing" && !locked) this.setPhase("paused");
       else if (this.phase === "paused" && locked) this.setPhase("playing");
@@ -227,11 +241,35 @@ export class Game {
   /** Start / resume from a click (needs a user gesture for pointer lock + audio). */
   play() {
     this.audio.resume();
-    this.input.requestLock();
+    if (this.touch) {
+      // No pointer lock on touch screens: go fullscreen, landscape, and play.
+      const el = document.documentElement;
+      if (!document.fullscreenElement) el.requestFullscreen?.({ navigationUI: "hide" }).catch(() => {});
+      const orientation = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
+      orientation?.lock?.("landscape").catch(() => {});
+    } else {
+      this.input.requestLock();
+    }
     if (this.phase === "ready") {
       this.startTime = this.now;
       this.setPhase("playing");
+    } else if (this.phase === "paused" && this.touch) {
+      this.setPhase("playing");
     }
+  }
+
+  /** Pause button on touch screens (with a mouse, Esc releases the pointer instead). */
+  pause() {
+    if (this.phase === "playing") {
+      this.input.setFire(false);
+      this.input.setStick(0, 0, false);
+      this.setPhase("paused");
+    }
+  }
+
+  /** The on-screen controls feed this. */
+  get controls() {
+    return this.input;
   }
 
   setSensitivity(v: number) {
@@ -833,6 +871,7 @@ export class Game {
     const realDt = this.lastT ? Math.min(0.05, t - this.lastT) : 1 / 60;
     this.lastT = t;
     this.fps = this.fps * 0.95 + (1 / Math.max(realDt, 1e-3)) * 0.05;
+    this.adaptResolution(realDt);
     if (this.phase === "playing" || this.phase === "dead" || this.phase === "won") this.update(realDt);
     else if (this.phase === "ready" || this.phase === "paused") this.idleCamera(realDt);
     if (this.debugCam) {
@@ -843,6 +882,27 @@ export class Game {
     this.renderer.render(this.scene, this.camera);
   };
   private lastT = 0;
+
+  /**
+   * Dynamic resolution: if frames run slow, render fewer pixels; when there's
+   * headroom, climb back toward the preset's resolution.
+   */
+  private adaptResolution(dt: number) {
+    this.frameTimes.push(dt);
+    if (this.frameTimes.length < 45) return;
+    const sorted = [...this.frameTimes].sort((a, b) => a - b);
+    const typical = sorted[Math.floor(sorted.length * 0.7)];
+    this.frameTimes = [];
+    const max = this.quality.pixelRatio;
+    let next = this.pixelRatio;
+    if (typical > 1 / 40) next = Math.max(0.5, this.pixelRatio - 0.1);
+    else if (typical < 1 / 57) next = Math.min(max, this.pixelRatio + 0.05);
+    if (Math.abs(next - this.pixelRatio) > 0.001) {
+      this.pixelRatio = next;
+      this.renderer.setPixelRatio(next);
+      this.resize();
+    }
+  }
 
   private idleCamera(dt: number) {
     if (this.net) {
@@ -924,7 +984,7 @@ export class Game {
       const d = c.position.distanceTo(this.camera.position);
       c.visual.root.visible = d < this.quality.fogFar;
       if (!c.visual.root.visible) continue;
-      c.updateVisual(dt, c.isPlayer || d < 70 ? 1 : 0);
+      c.updateVisual(dt, c.isPlayer || d < this.quality.detailDistance ? 1 : 0);
     }
     this.player.updateCamera(dt);
     this.followSun();
@@ -1010,6 +1070,8 @@ export class Game {
       stance: me?.stance ?? "stand",
       sprinting: !!me?.sprinting,
       backend: this.backend,
+      resolution: Math.round(this.pixelRatio * 100),
+      touch: this.touch,
       fps: Math.round(this.fps),
       now: this.now,
       placement: this.net?.result?.placement ?? this.aliveCount() + (me?.alive ? 0 : 1),

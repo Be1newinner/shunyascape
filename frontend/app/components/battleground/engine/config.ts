@@ -10,7 +10,7 @@ export const PLAYER_MAX_HEALTH = 100;
 /** No single bullet takes more than this, so anyone survives at least 5 hits. */
 export const MAX_HIT_DAMAGE = 19;
 
-export type Quality = "low" | "medium" | "high";
+export type Quality = "mobile" | "low" | "medium" | "high";
 
 export interface QualityPreset {
   pixelRatio: number;
@@ -21,13 +21,23 @@ export interface QualityPreset {
   treeLodDistance: number;
   fogFar: number;
   antialias: boolean;
+  /** Soldiers closer than this get full animation (hand IK etc). */
+  detailDistance: number;
 }
 
 export const QUALITY: Record<Quality, QualityPreset> = {
-  low: { pixelRatio: 0.75, shadowMapSize: 1024, shadows: false, grassPerChunk: 380, grassRadius: 3, treeLodDistance: 45, fogFar: 380, antialias: false },
-  medium: { pixelRatio: 1, shadowMapSize: 2048, shadows: true, grassPerChunk: 700, grassRadius: 3, treeLodDistance: 70, fogFar: 520, antialias: true },
-  high: { pixelRatio: Math.min(2, typeof window !== "undefined" ? window.devicePixelRatio : 1), shadowMapSize: 4096, shadows: true, grassPerChunk: 1000, grassRadius: 4, treeLodDistance: 110, fogFar: 700, antialias: true },
+  // Phones: no shadows, short view distance, sparse grass; resolution adapts to keep the frame rate up.
+  mobile: { pixelRatio: Math.min(1.25, typeof window !== "undefined" ? window.devicePixelRatio : 1), shadowMapSize: 1024, shadows: false, grassPerChunk: 180, grassRadius: 2, treeLodDistance: 32, fogFar: 280, antialias: false, detailDistance: 35 },
+  low: { pixelRatio: 0.75, shadowMapSize: 1024, shadows: false, grassPerChunk: 380, grassRadius: 3, treeLodDistance: 45, fogFar: 380, antialias: false, detailDistance: 50 },
+  medium: { pixelRatio: 1, shadowMapSize: 2048, shadows: true, grassPerChunk: 700, grassRadius: 3, treeLodDistance: 70, fogFar: 520, antialias: true, detailDistance: 70 },
+  high: { pixelRatio: Math.min(2, typeof window !== "undefined" ? window.devicePixelRatio : 1), shadowMapSize: 4096, shadows: true, grassPerChunk: 1000, grassRadius: 4, treeLodDistance: 110, fogFar: 700, antialias: true, detailDistance: 90 },
 };
+
+/** Phones and tablets: touch is the main input. */
+export function isTouchDevice() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(pointer: coarse)").matches || navigator.maxTouchPoints > 1;
+}
 
 export type AmmoType = "5.56mm" | "7.62mm" | "9mm";
 export type WeaponId = "m416" | "kar98k" | "p92";

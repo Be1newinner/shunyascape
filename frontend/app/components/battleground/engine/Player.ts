@@ -16,6 +16,7 @@ export class PlayerController {
   yaw = 0;
   pitch = 0;
   sensitivity = 0.0022;
+  touchScale = 2.2;
   adsBlend = 0;
   /** Extra camera kick that recovers on its own. */
   private kick = 0;
@@ -52,8 +53,10 @@ export class PlayerController {
     if (!me.alive) return { fire: false, actions: [] };
 
     const fovScale = this.camera.fov / HIP_FOV;
-    this.yaw -= dx * this.sensitivity * fovScale;
-    this.pitch = clamp(this.pitch - dy * this.sensitivity * fovScale, -1.35, 1.25);
+    // Finger drags cover fewer pixels than mouse moves, so they turn faster.
+    const sens = this.sensitivity * (this.input.touch ? this.touchScale : 1);
+    this.yaw -= dx * sens * fovScale;
+    this.pitch = clamp(this.pitch - dy * sens * fovScale, -1.35, 1.25);
     this.kick = lerp(this.kick, 0, 1 - Math.exp(-dt * 9));
 
     for (const a of actions) {
@@ -68,16 +71,17 @@ export class PlayerController {
 
     // Movement relative to the camera yaw.
     const k = this.input;
-    const f = (k.down("KeyW") ? 1 : 0) - (k.down("KeyS") ? 1 : 0);
-    const r = (k.down("KeyD") ? 1 : 0) - (k.down("KeyA") ? 1 : 0);
+    const { f, r } = k.moveAxis();
     const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
     const wish = fwd.multiplyScalar(f).addScaledVector(right, r);
-    const moving = wish.lengthSq() > 0;
-    if (moving) wish.normalize();
+    // Keys are all-or-nothing; a half-pushed joystick walks.
+    const push = Math.min(1, wish.length());
+    const moving = push > 0.05;
+    if (moving) wish.normalize().multiplyScalar(Math.max(push, 0.35));
 
     me.aiming = this.input.aim && me.healLeft <= 0 && !!me.gun;
-    me.sprinting = k.down("ShiftLeft") && f > 0 && !me.aiming && me.stance !== "prone" && !me.busy;
+    me.sprinting = k.sprintHeld && f > 0.3 && !me.aiming && me.stance !== "prone" && !me.busy;
     if (me.sprinting && me.stance === "crouch") me.setStance("stand");
     let speed = 4.6;
     if (me.sprinting) speed = 6.3;

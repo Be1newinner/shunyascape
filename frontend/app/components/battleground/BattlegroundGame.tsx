@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CONTROLS, type Quality } from "./engine/config";
+import { CONTROLS, isTouchDevice, type Quality } from "./engine/config";
 import type { Game, GamePhase, HudState } from "./engine/Game";
 import { outfitTint } from "./engine/outfits";
 import Hud from "./Hud";
 import Lobby from "./Lobby";
+import TouchControls from "./TouchControls";
 import type { MatchClient, MatchStart } from "./engine/MatchClient";
 import { fetchProfile, saveOutfit, type Profile } from "./profile";
 import "./battleground.css";
@@ -34,8 +35,12 @@ export default function BattlegroundGame() {
   const router = useRouter();
   const mountRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Game | null>(null);
+  /** The running game, for rendering the on-screen controls. */
+  const [liveGame, setLiveGame] = useState<Game | null>(null);
   // Client-only component (loaded with ssr: false), so storage is readable on first render.
-  const [quality, setQuality] = useState<Quality>(() => readPref<Quality>(QUALITY_KEY, "medium"));
+  // Touch screens get on-screen controls and the phone graphics preset by default.
+  const [touch] = useState(() => isTouchDevice());
+  const [quality, setQuality] = useState<Quality>(() => readPref<Quality>(QUALITY_KEY, isTouchDevice() ? "mobile" : "medium"));
   const [sensitivity, setSensitivity] = useState(() => Number(readPref(SENS_KEY, "1")) || 1);
   const [screen, setScreen] = useState<"lobby" | "queue" | "match">("lobby");
   const clientRef = useRef<MatchClient | null>(null);
@@ -99,10 +104,11 @@ export default function BattlegroundGame() {
         gameRef.current = game;
         // Handy for poking at the engine from the dev console.
         if (process.env.NODE_ENV !== "production") (window as unknown as { __bg?: Game }).__bg = game;
-        await game.init(quality, { name: profile?.name, tint: outfitTint(outfit) }, online ?? undefined);
+        await game.init(quality, { name: profile?.name, tint: outfitTint(outfit), touch }, online ?? undefined);
         if (cancelled) return;
         game.setSensitivity(0.0022 * sensitivity);
         setMinimap(game.minimap);
+        setLiveGame(game);
       } catch (e) {
         console.error(e);
         setError(e instanceof Error ? e.message : String(e));
@@ -112,6 +118,7 @@ export default function BattlegroundGame() {
       cancelled = true;
       game?.dispose();
       gameRef.current = null;
+      setLiveGame(null);
     };
     // Settings and outfit are read when a match boots; sensitivity is applied live below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -235,7 +242,7 @@ export default function BattlegroundGame() {
 
   if (sessionExpired) {
     return (
-      <div className="bg-root">
+      <div className={`bg-root ${touch ? "touch" : ""}`}>
         <div className="bg-overlay bg-menu">
           <div className="bg-menu-card compact">
             <h2 className="bg-title small">Session expired</h2>
@@ -249,7 +256,7 @@ export default function BattlegroundGame() {
 
   if (screen === "lobby") {
     return (
-      <div className="bg-root">
+      <div className={`bg-root ${touch ? "touch" : ""}`}>
         <Lobby
           profile={profile}
           outfit={outfit}
@@ -266,6 +273,7 @@ export default function BattlegroundGame() {
           }}
           onStart={findMatch}
           lastMatch={lastMatch}
+          touch={touch}
         />
       </div>
     );
@@ -274,7 +282,7 @@ export default function BattlegroundGame() {
   if (screen === "queue") {
     const players = queueInfo?.players ?? 1;
     return (
-      <div className="bg-root">
+      <div className={`bg-root ${touch ? "touch" : ""}`}>
         <div className="bg-overlay bg-menu">
           <div className="bg-menu-card compact bg-queue">
             {netError ? (
@@ -311,7 +319,7 @@ export default function BattlegroundGame() {
   }
 
   return (
-    <div className="bg-root">
+    <div className={`bg-root ${touch ? "touch" : ""}`}>
       <div ref={mountRef} className="bg-canvas" />
 
       {netError && phase !== "dead" && phase !== "won" && (
@@ -345,14 +353,24 @@ export default function BattlegroundGame() {
         </div>
       )}
 
-      {hud && phase !== "loading" && <Hud hud={hud} minimap={minimap} />}
+      {hud && phase !== "loading" && (
+        <Hud hud={hud} minimap={minimap} onSlot={touch && liveGame ? (i) => liveGame.controls.press(`slot${i + 1}` as "slot1") : undefined} />
+      )}
+      {touch && hud && phase === "playing" && liveGame && (
+        <TouchControls controls={liveGame.controls} hud={hud} onPause={() => liveGame.pause()} />
+      )}
+      {touch && <div className="bg-rotate">Turn your phone sideways to play</div>}
 
       {(phase === "ready" || phase === "paused") && (
         <div className="bg-overlay bg-click" onClick={play}>
           <div className="bg-menu-card compact">
             <h2 className="bg-title small">{phase === "ready" ? "Ready to drop" : "Paused"}</h2>
-            <p className="bg-sub">Click to {phase === "ready" ? "start" : "resume"}. Press Esc to free the mouse.</p>
-            <ControlsList />
+            <p className="bg-sub">
+              {touch
+                ? `Tap to ${phase === "ready" ? "start" : "resume"}. Left thumb moves, drag on the right to look.`
+                : `Click to ${phase === "ready" ? "start" : "resume"}. Press Esc to free the mouse.`}
+            </p>
+            {!touch && <ControlsList />}
             {phase === "paused" && (
               <button className="bg-cta ghost" onClick={(e) => { e.stopPropagation(); backToLobby(); }}>
                 Leave match

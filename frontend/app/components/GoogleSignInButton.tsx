@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { isNativeApp } from "../lib/nativeApp";
 
 // "Sign in with Google" via Google Identity Services. Google hands us a signed
 // ID token in a popup; the backend verifies it at POST /api/auth/google and
@@ -160,6 +161,8 @@ export default function GoogleSignInButton({
   }, [text]);
 
   if (state === "unavailable") return null;
+  // Google refuses sign-in inside embedded web views, so the mobile app uses email for now.
+  if (isNativeApp()) return null;
 
   return (
     <div className="flex flex-col items-center gap-2">

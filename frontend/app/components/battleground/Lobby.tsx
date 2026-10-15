@@ -17,6 +17,7 @@ interface Props {
   onSensitivity: (v: number) => void;
   onStart: () => void;
   lastMatch: { placement: number; kills: number; xpGained: number } | null;
+  touch?: boolean;
 }
 
 function fmtHours(seconds: number) {
@@ -26,7 +27,7 @@ function fmtHours(seconds: number) {
 
 /** BGMI-style home screen: your soldier, your record, the wardrobe and the Start button. */
 export default function Lobby(props: Props) {
-  const { profile, outfit, onOutfit, quality, onQuality, sensitivity, onSensitivity, onStart, lastMatch } = props;
+  const { profile, outfit, onOutfit, quality, onQuality, sensitivity, onSensitivity, onStart, lastMatch, touch } = props;
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<LobbyScene | null>(null);
   const [panel, setPanel] = useState<"none" | "wardrobe" | "settings">("none");
@@ -157,7 +158,7 @@ export default function Lobby(props: Props) {
                 <label>
                   <span>Graphics</span>
                   <div className="bg-seg">
-                    {(["low", "medium", "high"] as Quality[]).map((q) => (
+                    {((touch ? ["mobile", "low", "medium", "high"] : ["low", "medium", "high"]) as Quality[]).map((q) => (
                       <button key={q} className={q === quality ? "on" : ""} onClick={() => onQuality(q)}>
                         {q}
                       </button>
@@ -169,14 +170,14 @@ export default function Lobby(props: Props) {
                   <input type="range" min={0.3} max={3} step={0.05} value={sensitivity} onChange={(e) => onSensitivity(Number(e.target.value))} />
                 </label>
               </div>
-              <ul className="bg-controls">
+              {!touch && <ul className="bg-controls">
                 {CONTROLS.map((c) => (
                   <li key={c.action}>
                     <kbd>{c.keys}</kbd>
                     <span>{c.action}</span>
                   </li>
                 ))}
-              </ul>
+              </ul>}
             </>
           )}
         </aside>

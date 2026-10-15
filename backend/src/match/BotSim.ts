@@ -1,5 +1,5 @@
 import type RAPIER_T from "@dimforge/rapier3d-compat";
-import { BOT_GROUP, RAPIER, WORLD_GROUP, createWorld, heightAt, openPoints, sites } from "./World";
+import { BOT_GROUP, RAPIER, createWorld, heightAt, openPoints, sites } from "./World";
 import { EYE_HEIGHT, STANCE_HEIGHT, WEAPONS, mulberry32, type ServerZone, type WeaponId } from "./rules";
 
 /** A soldier the bots can see and shoot (a human, as the match knows them). */
@@ -172,7 +172,8 @@ export class BotSim {
   private castWorld(o: V3, dir: V3, max: number) {
     this.ray.origin = o;
     this.ray.dir = dir;
-    const hit = this.world.castRay(this.ray, max, true, undefined, WORLD_GROUP);
+    // Rays hit the static world only (never a bot's own capsule).
+    const hit = this.world.castRay(this.ray, max, true, undefined, MOVE_FILTER);
     return hit ? hit.timeOfImpact : null;
   }
 

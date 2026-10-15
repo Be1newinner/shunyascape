@@ -68,7 +68,7 @@ function Minimap({ hud, src }: { hud: HudState; src: string }) {
   );
 }
 
-export default function Hud({ hud, minimap }: { hud: HudState; minimap: string }) {
+export default function Hud({ hud, minimap, onSlot }: { hud: HudState; minimap: string; onSlot?: (index: number) => void }) {
   const hp = hud.health / hud.maxHealth;
   const active = hud.slots.find((s) => s?.active) ?? null;
   const hitAge = hud.hitMarker ? hud.now - hud.hitMarker.time : 99;
@@ -92,7 +92,7 @@ export default function Hud({ hud, minimap }: { hud: HudState; minimap: string }
           <div><span>Alive</span><b>{hud.alive}</b></div>
           <div><span>Kills</span><b>{hud.kills}</b></div>
         </div>
-        <div className="bg-tech">{hud.backend} · {hud.fps} fps</div>
+        <div className="bg-tech">{hud.backend} · {hud.fps} fps · {hud.resolution}%</div>
       </div>
 
       <div className="bg-killfeed">
@@ -139,7 +139,7 @@ export default function Hud({ hud, minimap }: { hud: HudState; minimap: string }
 
       {hud.pickup && <div className="bg-toast" key={hud.pickup.time}>+ {hud.pickup.text}</div>}
 
-      {hud.prompt && (
+      {hud.prompt && !hud.touch && (
         <div className="bg-prompt"><kbd>I</kbd>{hud.prompt}</div>
       )}
 
@@ -147,7 +147,7 @@ export default function Hud({ hud, minimap }: { hud: HudState; minimap: string }
         <div className="bg-health">
           <div className="bg-health-meta">
             <span className="bg-stance">{hud.stance === "stand" ? (hud.sprinting ? "Sprint" : "Stand") : hud.stance === "crouch" ? "Crouch" : "Prone"}</span>
-            <span className="bg-meds"><kbd>L</kbd> Med kit ×{hud.medkits}</span>
+            <span className="bg-meds">{!hud.touch && <kbd>L</kbd>} Med kit ×{hud.medkits}</span>
           </div>
           <div className={`bg-health-bar ${lowHp ? "low" : ""}`}>
             <div style={{ width: `${hp * 100}%` }} />
@@ -164,7 +164,11 @@ export default function Hud({ hud, minimap }: { hud: HudState; minimap: string }
         )}
         <div className="bg-slots">
           {hud.slots.map((s, i) => (
-            <div key={i} className={`bg-slot ${s?.active ? "active" : ""} ${s ? "" : "empty"}`}>
+            <div
+              key={i}
+              className={`bg-slot ${s?.active ? "active" : ""} ${s ? "" : "empty"} ${onSlot ? "tappable" : ""}`}
+              onPointerDown={onSlot && s ? (e) => { e.stopPropagation(); onSlot(i); } : undefined}
+            >
               <kbd>{i + 1}</kbd>
               <div>
                 <b>{s ? s.name : i === 2 ? "Pistol" : "Empty"}</b>
@@ -174,7 +178,7 @@ export default function Hud({ hud, minimap }: { hud: HudState; minimap: string }
           ))}
         </div>
         {hud.spareScopes.length > 0 && <div className="bg-hint">Backpack: {hud.spareScopes.join(", ")}</div>}
-        <div className="bg-hint"><kbd>O</kbd> switch · <kbd>U</kbd> reload{hud.switching ? " · switching…" : ""}</div>
+        {!hud.touch && <div className="bg-hint"><kbd>O</kbd> switch · <kbd>U</kbd> reload{hud.switching ? " · switching…" : ""}</div>}
       </div>
     </div>
   );

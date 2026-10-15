@@ -49,7 +49,7 @@ export default function WorldPage() {
   }
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-slate-950">
+    <main className="game-root relative w-screen h-screen overflow-hidden bg-slate-950">
       <CitySimulator />
     </main>
   );

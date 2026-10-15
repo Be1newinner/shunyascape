@@ -82,3 +82,13 @@
 * Builder NPCs walk to new construction sites and build them (10%/s each); unattended sites still finish slowly. Finished houses get 1–2 new residents.
 * Clients receive `npc-paths` only when an NPC makes a new decision and animate the walk against the server clock; nothing is streamed per frame.
 * NPC chat lines reflect what the NPC is doing (going to work, lunch, errands, the park, building).
+
+## 14. Landing Page, SEO & GEO
+* The home page (`frontend/app/page.tsx`) is a server component and is prerendered as static HTML; only the motion effects (`components/landing/LandingEffects.tsx`) and the sign-in buttons (`PlayButton.tsx`) are client islands.
+* Game-style hero: a layered synthwave city (sky, sun, mountains, two skyline layers with lit windows and blinking beacons, traffic, a moving neon grid floor, floating HUD chips) with scroll and pointer parallax. Feature cards tilt toward the pointer; sections reveal on scroll; the final call to action has an animated gradient border. All motion is disabled under `prefers-reduced-motion`, and content stays visible without JavaScript.
+* SEO: title/description/keywords, canonical URL, Open Graph and Twitter cards, a generated 1200×630 share image (`app/opengraph-image.tsx`), `robots.txt` (blocks `/world`, `/admin`, `/api/`), `sitemap.xml`, semantic landmarks, one H1 and a proper heading outline.
+* Structured data (JSON-LD): `VideoGame`, `WebSite` and `FAQPage`.
+* GEO (answer engines): a citable "What is ShunyaScape?" definition, concrete facts (prices, controls, schedule), an FAQ mirrored in JSON-LD, and `public/llms.txt`. Facts live in `app/lib/site.ts` so the copy, metadata and structured data stay in sync.
+* Set `NEXT_PUBLIC_SITE_URL` (e.g. `https://your-domain`) so canonical links, the sitemap and social cards use absolute URLs.
+* Fonts: Outfit (display) and Inter (text) via `next/font`, self-hosted at build time.
+* Fix: the page body is scrollable again (it was locked with `overflow: hidden` for the game); the game page now locks scroll itself.

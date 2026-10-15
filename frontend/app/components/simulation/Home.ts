@@ -19,6 +19,16 @@ function cellWorldPos(
   ];
 }
 
+/**
+ * Deterministic pseudo-random value in [0, 1) for a cell, so a building looks
+ * the same for every player instead of being re-rolled on each client.
+ */
+function cellRandom(x: number, z: number, salt: number): number {
+  let h = Math.imul(x, 374761393) ^ Math.imul(z, 668265263) ^ Math.imul(salt, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 🏠 HOUSE  — uses Building_Small_1 (glTF) with procedural fallback
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,7 +40,7 @@ export function createHouseMesh(ctx: SimContext, x: number, z: number): THREE.Gr
 
   // ── Immediate procedural stand-in (shows instantly while glTF loads) ────────
   const wallColor = ['#dedede', '#f0c2a2', '#a0c4ff', '#ffd6a5', '#caffbf'][
-    Math.floor(Math.random() * 5)
+    Math.floor(cellRandom(x, z, 1) * 5)
   ];
   const wallsGeom = ctx.getGeometry('house_walls', () => new THREE.BoxGeometry(1.6, 1.2, 1.6));
   const wallsMat  = ctx.getMaterial(`walls_${wallColor}`, { color: wallColor, roughness: 0.85 });
@@ -77,7 +87,7 @@ export function createHouseMesh(ctx: SimContext, x: number, z: number): THREE.Gr
       }
 
       // Random Y rotation so not every house faces the same way
-      gltfGroup.rotation.y = (Math.floor(Math.random() * 4) * Math.PI) / 2;
+      gltfGroup.rotation.y = (Math.floor(cellRandom(x, z, 2) * 4) * Math.PI) / 2;
 
       group.add(gltfGroup);
       group.matrixAutoUpdate = false;
@@ -99,9 +109,9 @@ export function createSkyscraperMesh(ctx: SimContext, x: number, z: number): THR
   const [worldX, worldZ] = cellWorldPos(ctx, x, z);
   group.position.set(worldX, 0, worldZ);
 
-  const height     = 4.0 + Math.random() * 3.5;
-  const widthSize  = 1.6 + Math.random() * 0.4;
-  const glassColor = ['#3a86c8', '#1a365d', '#008080', '#2d3748'][Math.floor(Math.random() * 4)];
+  const height     = 4.0 + cellRandom(x, z, 3) * 3.5;
+  const widthSize  = 1.6 + cellRandom(x, z, 4) * 0.4;
+  const glassColor = ['#3a86c8', '#1a365d', '#008080', '#2d3748'][Math.floor(cellRandom(x, z, 5) * 4)];
 
   // ── Immediate procedural stand-in ──────────────────────────────────────────
   const towerGeom = new THREE.BoxGeometry(widthSize, height, widthSize);
@@ -153,7 +163,7 @@ export function createSkyscraperMesh(ctx: SimContext, x: number, z: number): THR
 
   // ── Async: swap in the real glTF building once loaded ─────────────────────
   // Alternate between Large and Medium for visual variety
-  const useLarge   = Math.random() > 0.5;
+  const useLarge   = cellRandom(x, z, 6) > 0.5;
   const gltfUrl    = useLarge ? CITY_KIT.BUILDING_LARGE : CITY_KIT.BUILDING_MEDIUM;
   // MegaKit buildings are ~5m; scale so they fill ~1.8–2.0 world units wide
   const gltfScale  = (ctx.cellSize / 5.0) * (useLarge ? 0.95 : 0.85);
@@ -163,7 +173,7 @@ export function createSkyscraperMesh(ctx: SimContext, x: number, z: number): THR
       while (group.children.length > 0) {
         group.remove(group.children[0]);
       }
-      gltfGroup.rotation.y = (Math.floor(Math.random() * 4) * Math.PI) / 2;
+      gltfGroup.rotation.y = (Math.floor(cellRandom(x, z, 7) * 4) * Math.PI) / 2;
       group.add(gltfGroup);
       group.matrixAutoUpdate = false;
       group.updateMatrix();

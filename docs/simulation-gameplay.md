@@ -3,7 +3,7 @@
 Welcome to **ShunyaScape**, a real-time, gamified 3D simulation and city-building web application. This document outlines the core gameplay loops, interactive features, progression economy, and the robust technical backend that powers the multiplayer experience.
 
 ## 1. Core Gameplay & Objectives
-Players spawn in a persistent 3D voxel-style city map (32x32 grid, 1024 cells) where they can navigate the world, interact with the environment, and collaborate (or just observe) with others. 
+Players spawn in a persistent 3D voxel-style city map (200x200 grid, generated from a shared seed) where they can navigate the world, interact with the environment, and collaborate (or just observe) with others. 
 
 The main objectives for players are:
 * **Explore**: Navigate the city, interact with citizens (NPCs), and discover specialized zones (e.g., Downtown, Residential Hub, Forestry, Waterfront).
@@ -51,7 +51,7 @@ ShunyaScape isn't just a client-side game; it is a fully persistent, real-time m
 ### Real-Time WebSocket Synchronization
 The simulation state is synchronized instantly across all connected clients via native WebSockets:
 * **Player Movement**: Live world coordinates (`player-moved`).
-* **NPC Synchronization**: Server-coordinated AI NPC movements (`npcs-updated`).
+* **NPC Simulation**: City NPCs follow daily routines on the server; clients animate their routes (`npc-paths`).
 * **Environment Settings**: Instant syncing of Time of Day, Play Speed, and Pause states.
 * **World Building**: Live grid cell updates when roads or buildings are placed or demolished.
 * **Auto-Reconnect**: Clients automatically reconnect gracefully if the server restarts.
@@ -68,7 +68,7 @@ Unauthenticated guest users can connect via WebSockets as spectators. They recei
 
 ### Bandwidth & Rendering Optimizations
 * **Animals & Weather**: Dogs, Cats, Birds, Cows, and Clouds are simulated entirely client-side as ambient animations to save network bandwidth. Only time and weather configuration variables are synced.
-* **NPC Interpolation**: Clients smoothly interpolate NPC positions between server updates.
+* **NPC Routes**: Clients receive each NPC route once and animate it against the server clock.
 
 ### Secure Authentication
 * **Email OTP Verification**: JWT token authentication is gated behind a mandatory `nodemailer` Email OTP verification.

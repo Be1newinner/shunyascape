@@ -41,15 +41,30 @@ export interface GridCell {
   id: string;
   scale?: number;
   ownerName?: string | null;
-  ownerEmail?: string | null;
+  ownerId?: string | null;
+  builderId?: string | null;
   price?: number;
   isPurchased?: boolean;
   boardSprite?: THREE.Sprite | null;
 }
 
+/** Server-simulated NPC movement (see backend/src/world/npcs.ts). */
+export interface NpcRoute {
+  /** Flat [x0, z0, x1, z1, ...] grid cells. */
+  path: number[];
+  /** Server epoch ms when the walk started. */
+  startedAt: number;
+  /** Cells per second. */
+  speed: number;
+  /** Fixed lateral offset in world units. */
+  offset: [number, number];
+  activity: string;
+  /** Goes inside (hidden) once the walk ends. */
+  indoors: boolean;
+}
+
 export interface HumanAgent {
   id: string;
-  dbUserId?: string;
   mesh: THREE.Group;
   x: number; // world x
   z: number; // world z
@@ -68,7 +83,12 @@ export interface HumanAgent {
   clothingColor: number;
   isPlayer?: boolean;
   playerName?: string;
-  playerEmail?: string;
+  /** User id for the local player and other players' avatars. */
+  playerId?: string;
+  /** Set for server-simulated city NPCs. */
+  npc?: NpcRoute;
+  /** Hidden because the NPC is inside a building. */
+  hidden?: boolean;
   upperBody?: THREE.Group;
   leftLegPivot?: THREE.Group;
   rightLegPivot?: THREE.Group;

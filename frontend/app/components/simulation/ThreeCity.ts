@@ -30,11 +30,12 @@ import {
 import {
   createRefinedHumanMesh,
   createNameTag,
-  dispatchWorkerTo,
-  loadAllDatabaseUsers,
-  addDatabaseUser,
+  syncRemotePlayers,
+  upsertRemotePlayer,
+  applyNpcSnapshots,
+  NpcSnapshot,
+  RemoteUser,
   updateHumans,
-  syncNpcsToDatabase,
   assignNpcCharacter,
   updateCharacterLOD,
   preloadCharacters,
@@ -56,6 +57,44 @@ import {
 } from "./SpecialBuildings";
 import { preloadGltfAssets, ALL_BUILDING_URLS } from "./GltfLoader";
 
+type PlaceableType = "road" | "tree" | "house" | "skyscraper" | "restaurant" | "clothshop" | "barbershop" | "policestation";
+
+/** Cell codes in the /api/world layout string (backend/src/world/layout.ts). */
+const LAYOUT_CODES: Record<string, PlaceableType | undefined> = {
+  r: "road",
+  t: "tree",
+  h: "house",
+  s: "skyscraper",
+  R: "restaurant",
+  c: "clothshop",
+  b: "barbershop",
+  p: "policestation",
+};
+
+/** A server cell that differs from the base layout. */
+export interface WorldCell {
+  x: number;
+  z: number;
+  type: GridCell["type"];
+  targetType: GridCell["targetType"];
+  constructionProgress: number;
+  height?: number;
+  scale?: number;
+  ownerName?: string | null;
+  ownerId?: string | null;
+  builderId?: string | null;
+  price?: number;
+  isPurchased?: boolean;
+}
+
+interface WorldPayload {
+  size: number;
+  cellSize: number;
+  seed: number;
+  layout: string;
+  cells: WorldCell[];
+}
+
 export class ThreeCity {
   // Three.js Core
   public container: HTMLDivElement;
@@ -72,6 +111,10 @@ export class ThreeCity {
   public selectedBuildScale = 1.0;
   public shunyaCoins = 100;
   private parkCells: Set<string> = new Set();
+  // Grid updates that arrive before the shared layout has been built
+  private worldLoaded = false;
+  private pendingGridCells: WorldCell[] = [];
+  private chirpInterval: ReturnType<typeof setInterval> | null = null;
 
   // Land Expansion
   public landExpansionManager: LandExpansionManager = new LandExpansionManager(200);
@@ -96,7 +139,8 @@ export class ThreeCity {
   public isAdmin = false;
   public unlockedPermits: string[] = [];
   public gridVersion = 0;
-  private npcSyncTimer = 1.0;
+  /** serverClock - Date.now(), from the `t` field of server messages. */
+  private serverTimeOffset = 0;
   private lastVisibleGx = -1;
   private lastVisibleGz = -1;
   private lastReportedZoomScale = 1.0;
@@ -153,7 +197,7 @@ export class ThreeCity {
     this.setGraphicsPreset(this.graphicsPreset);
 
     // Occasional bird chirp
-    setInterval(() => {
+    this.chirpInterval = setInterval(() => {
       if (
         !this.isDestroyed &&
         this.timeOfDay > 5 &&
@@ -166,6 +210,14 @@ export class ThreeCity {
   }
 
   public async loadCity(onProgress?: (progress: number, text: string) => void) {
+    // The server owns the city layout so every player sees the same world
+    const res = await fetch("/api/world");
+    if (!res.ok) throw new Error(`Failed to load the shared city (HTTP ${res.status})`);
+    const world: WorldPayload = await res.json();
+    if (world.size !== this.gridSize || world.layout.length !== world.size * world.size) {
+      throw new Error("Server world size does not match this client");
+    }
+
     // Kick off glTF downloads in parallel — models will be cached by the time
     // the city grid spawns buildings, minimising visible stand-in swap delay.
     preloadGltfAssets([...ALL_BUILDING_URLS]);
@@ -173,7 +225,10 @@ export class ThreeCity {
     // Preload the 5 most common character types (King + Suit + 3 NPC outfits)
     preloadCharacters([...PRELOAD_PRIORITY]);
 
-    await this.initGrid(onProgress);
+    await this.initGrid(world.layout, onProgress);
+    this.worldLoaded = true;
+    this.syncGrid([...world.cells, ...this.pendingGridCells]);
+    this.pendingGridCells = [];
     this.initRaycasting();
     this.collectibleManager = new CollectibleManager(this.getSimContext());
     this.animate();
@@ -258,7 +313,7 @@ export class ThreeCity {
         }
       }
       this.humans.forEach((h) => {
-        if (h.mesh) h.mesh.visible = true;
+        if (h.mesh) h.mesh.visible = !h.hidden;
       });
       this.vehicles.forEach((v) => {
         if (v.mesh) v.mesh.visible = true;
@@ -300,7 +355,7 @@ export class ThreeCity {
       }
       const gx = Math.floor((h.mesh.position.x + halfGrid) / this.cellSize);
       const gz = Math.floor((h.mesh.position.z + halfGrid) / this.cellSize);
-      h.mesh.visible = gx >= minX && gx <= maxX && gz >= minZ && gz <= maxZ;
+      h.mesh.visible = !h.hidden && gx >= minX && gx <= maxX && gz >= minZ && gz <= maxZ;
     });
 
     this.vehicles.forEach((v) => {
@@ -514,7 +569,7 @@ export class ThreeCity {
     this.riverSystem = createRiver(this.scene, halfGridWorld);
   }
 
-  private async initGrid(onProgress?: (progress: number, text: string) => void) {
+  private async initGrid(layout: string, onProgress?: (progress: number, text: string) => void) {
     const report = async (progress: number, text: string) => {
       if (onProgress) {
         onProgress(progress, text);
@@ -541,10 +596,6 @@ export class ThreeCity {
       }
     }
 
-    const gs  = this.gridSize;       // 200
-    const ctr = Math.floor(gs / 2);  // 100
-    const pr  = 9;                   // park half-radius (matches CentralPark.ts)
-
     await report(20, "Cultivating Central Park...");
     // Park
     this.parkCells = getParkCells(this.gridSize);
@@ -557,174 +608,20 @@ export class ThreeCity {
     });
     createCentralPark(this.getSimContext());
 
-    // Helper: place only on empty non-park cells
-    const isAvail = (x: number, z: number) =>
-      x >= 2 && z >= 2 && x < gs - 2 && z < gs - 2 &&
-      !this.parkCells.has(`${x}_${z}`) &&
-      this.grid[x]?.[z]?.type === 'empty';
-
-    const place = (x: number, z: number, type: "road"|"house"|"skyscraper"|"restaurant"|"clothshop"|"barbershop"|"policestation"|"tree") => {
-      if (isAvail(x, z)) this.spawnInstantItem(x, z, type);
-    };
-
     this.isInitializing = true;
 
-    await report(30, "Laying down avenue grid and road network...");
-    // ROAD NETWORK: Avenue grid every 20 cells
-    const AVE = 20;
-    for (let r = AVE; r < gs - 2; r += AVE) {
-      for (let i = 2; i < gs - 2; i++) {
-        place(r, i, "road");
-        place(i, r, "road");
+    await report(40, "Building the shared city...");
+    // Layout string from /api/world: one character per cell, index = x * size + z
+    for (let x = 0; x < this.gridSize; x++) {
+      for (let z = 0; z < this.gridSize; z++) {
+        const type = LAYOUT_CODES[layout[x * this.gridSize + z]];
+        if (type && !this.parkCells.has(`${x}_${z}`)) this.spawnInstantItem(x, z, type);
       }
-    }
-    // Main cross spine
-    for (let i = 2; i < gs - 2; i++) {
-      place(ctr, i, "road");
-      place(i, ctr, "road");
-    }
-    // Park ring road
-    for (let x = ctr - pr - 1; x <= ctr + pr; x++) {
-      place(x, ctr - pr - 1, "road");
-      place(x, ctr + pr,     "road");
-    }
-    for (let z = ctr - pr - 1; z <= ctr + pr; z++) {
-      place(ctr - pr - 1, z, "road");
-      place(ctr + pr,     z, "road");
-    }
-    // Perimeter border road
-    for (let i = 3; i < gs - 3; i++) {
-      place(3,      i,      "road");
-      place(gs - 4, i,      "road");
-      place(i,      3,      "road");
-      place(i,      gs - 4, "road");
-    }
-
-    // Fill helper: fill a block region with building type at given density
-    const fillBlock = (
-      x1: number, z1: number, x2: number, z2: number,
-      type: "house"|"skyscraper"|"restaurant"|"clothshop"|"barbershop"|"policestation"|"tree",
-      density = 0.6
-    ) => {
-      for (let x = x1; x <= x2; x++) {
-        for (let z = z1; z <= z2; z++) {
-          if (Math.random() < density) place(x, z, type);
-        }
-      }
-    };
-
-    await report(45, "Constructing Downtown Skyscrapers...");
-    // DOWNTOWN: Skyscrapers ring the central park
-    fillBlock(ctr - pr - 8, ctr - pr - 8, ctr - pr - 2, ctr - pr - 2, "skyscraper", 0.7);
-    fillBlock(ctr + pr + 2, ctr - pr - 8, ctr + pr + 8, ctr - pr - 2, "skyscraper", 0.7);
-    fillBlock(ctr - pr - 8, ctr + pr + 2, ctr - pr - 2, ctr + pr + 8, "skyscraper", 0.7);
-    fillBlock(ctr + pr + 2, ctr + pr + 2, ctr + pr + 8, ctr + pr + 8, "skyscraper", 0.7);
-
-    await report(60, "Configuring default shops and stores...");
-    // COMMERCIAL STRIP: shops lining both sides of the main central avenues
-    const shopTypes: Array<"restaurant"|"clothshop"|"barbershop"|"policestation"> =
-      ["restaurant", "clothshop", "barbershop", "policestation"];
-    let si = 0;
-    for (let x = AVE + 2; x < gs - AVE - 2; x += 5) {
-      if (Math.abs(x - ctr) <= pr + 12) continue;
-      place(x, ctr - 2, shopTypes[si % 4]);
-      place(x, ctr + 2, shopTypes[(si + 2) % 4]);
-      si++;
-    }
-    si = 0;
-    for (let z = AVE + 2; z < gs - AVE - 2; z += 5) {
-      if (Math.abs(z - ctr) <= pr + 12) continue;
-      place(ctr - 2, z, shopTypes[(si + 1) % 4]);
-      place(ctr + 2, z, shopTypes[(si + 3) % 4]);
-      si++;
-    }
-
-    // SW MIXED (houses + occasional shops)
-    await report(75, "Developing residential neighborhoods...");
-    // NW RESIDENTIAL: dense housing on block perimeters, trees in interiors
-    for (let bx = 4; bx < ctr - pr - 12; bx += AVE) {
-      for (let bz = 4; bz < ctr - pr - 12; bz += AVE) {
-        fillBlock(bx + 1, bz + 1, bx + AVE - 2, bz + 3,             "house", 0.85);
-        fillBlock(bx + 1, bz + AVE - 4, bx + AVE - 2, bz + AVE - 2, "house", 0.85);
-        fillBlock(bx + 1, bz + 4, bx + 3, bz + AVE - 5,             "house", 0.85);
-        fillBlock(bx + AVE - 4, bz + 4, bx + AVE - 2, bz + AVE - 5, "house", 0.85);
-        fillBlock(bx + 4, bz + 4, bx + AVE - 5, bz + AVE - 5,       "tree",  0.35);
-      }
-    }
-
-    // NE RESIDENTIAL
-    for (let bx = ctr + pr + 12; bx < gs - 6; bx += AVE) {
-      for (let bz = 4; bz < ctr - pr - 12; bz += AVE) {
-        fillBlock(bx + 1, bz + 1, bx + AVE - 2, bz + 3,             "house", 0.85);
-        fillBlock(bx + 1, bz + AVE - 4, bx + AVE - 2, bz + AVE - 2, "house", 0.85);
-        fillBlock(bx + 1, bz + 4, bx + 3, bz + AVE - 5,             "house", 0.85);
-        fillBlock(bx + AVE - 4, bz + 4, bx + AVE - 2, bz + AVE - 5, "house", 0.85);
-        fillBlock(bx + 4, bz + 4, bx + AVE - 5, bz + AVE - 5,       "tree",  0.35);
-      }
-    }
-
-    // SW MIXED (houses + occasional shops)
-    for (let bx = 4; bx < ctr - pr - 12; bx += AVE) {
-      for (let bz = ctr + pr + 12; bz < gs - 6; bz += AVE) {
-        fillBlock(bx + 1, bz + 1, bx + AVE - 2, bz + 3,             "house", 0.8);
-        fillBlock(bx + 1, bz + AVE - 4, bx + AVE - 2, bz + AVE - 2, "house", 0.8);
-        fillBlock(bx + 1, bz + 4, bx + 3, bz + AVE - 5,             "house", 0.8);
-        fillBlock(bx + AVE - 4, bz + 4, bx + AVE - 2, bz + AVE - 5, "house", 0.8);
-        if (Math.random() < 0.4) place(bx + 1, bz + 1, "barbershop");
-        if (Math.random() < 0.3) place(bx + AVE - 3, bz + 1, "restaurant");
-        fillBlock(bx + 4, bz + 4, bx + AVE - 5, bz + AVE - 5,       "tree",  0.3);
-      }
-    }
-
-    // SE COMMERCIAL (skyscrapers + shops)
-    for (let bx = ctr + pr + 12; bx < gs - 6; bx += AVE) {
-      for (let bz = ctr + pr + 12; bz < gs - 6; bz += AVE) {
-        fillBlock(bx + 1, bz + 1, bx + AVE - 2, bz + AVE - 2, "skyscraper", 0.45);
-        if (Math.random() < 0.5) place(bx + 1, bz + 1, "clothshop");
-        if (Math.random() < 0.5) place(bx + AVE - 3, bz + AVE - 3, "policestation");
-        fillBlock(bx + 5, bz + 5, bx + AVE - 6, bz + AVE - 6, "tree", 0.2);
-      }
-    }
-
-    // GUARANTEED SHOP CORNERS at 8 positions across the map
-    const shopCorners = [
-      [AVE + 2, AVE + 2],         [gs - AVE - 5, AVE + 2],
-      [AVE + 2, gs - AVE - 5],    [gs - AVE - 5, gs - AVE - 5],
-      [ctr - 30, AVE + 2],        [ctr + 28, AVE + 2],
-      [ctr - 30, gs - AVE - 5],   [ctr + 28, gs - AVE - 5],
-    ];
-    const dedShops: Array<"restaurant"|"clothshop"|"barbershop"|"policestation"> =
-      ["restaurant", "clothshop", "barbershop", "policestation",
-       "restaurant", "clothshop", "barbershop", "policestation"];
-    shopCorners.forEach(([sx, sz], i) => {
-      place(sx,     sz,     dedShops[i]);
-      place(sx + 2, sz,     dedShops[(i + 1) % 4]);
-      place(sx,     sz + 2, dedShops[(i + 2) % 4]);
-    });
-
-    await report(85, "Planting trees and green boulevards...");
-    // TREE BOULEVARDS alongside each avenue
-    for (let r = AVE; r < gs - 2; r += AVE) {
-      for (let i = 4; i < gs - 4; i += 3) {
-        place(r - 1, i, "tree");
-        place(r + 1, i, "tree");
-        place(i, r - 1, "tree");
-        place(i, r + 1, "tree");
-      }
-    }
-
-    // SCATTER extra trees in remaining empty patches
-    for (let i = 0; i < 200; i++) {
-      const tx = 4 + Math.floor(Math.random() * (gs - 8));
-      const tz = 4 + Math.floor(Math.random() * (gs - 8));
-      place(tx, tz, "tree");
+      if (x % 50 === 49) await report(40 + Math.round((x / this.gridSize) * 50), "Building the shared city...");
     }
 
     await report(95, "Spawning city population & wildlife...");
-    // 200 NPCs (increased from 70)
-    for (let i = 0; i < 200; i++) {
-      this.spawnHumanAtRandomHouse();
-    }
+    // City NPCs are simulated on the server and arrive over the WebSocket
 
     // Animals: 10 dogs + 10 cows + 15 cats + colorful parrots
     this._spawnSpecificAnimals('dog', 10);
@@ -951,24 +848,15 @@ export class ThreeCity {
       return;
     }
 
-    if (!this.isAdmin && finalCost > 0) {
-      window.dispatchEvent(new CustomEvent("shunya-coins-spent", { 
-        detail: { coins: finalCost } 
-      }));
-    }
+    // The server deducts the construction cost when it accepts the grid update
 
+    // Optimistic owner info; the server's grid-updated reply is authoritative
     const isStoreType = ["restaurant", "clothshop", "barbershop", "policestation"].includes(type);
-    if (isStoreType) {
-      cell.ownerName = this.player?.playerName || "System";
-      cell.ownerEmail = this.player?.playerEmail || "";
-      cell.isPurchased = true;
-      cell.price = finalCost;
-    } else {
-      cell.ownerName = null;
-      cell.ownerEmail = null;
-      cell.isPurchased = false;
-      cell.price = 0;
-    }
+    cell.ownerId = isStoreType ? this.player?.playerId ?? null : null;
+    cell.ownerName = isStoreType ? this.player?.playerName ?? null : null;
+    cell.builderId = this.player?.playerId ?? null;
+    cell.isPurchased = isStoreType;
+    cell.price = isStoreType ? finalCost : 0;
 
     cell.type = "construction";
     cell.targetType = type;
@@ -991,7 +879,7 @@ export class ThreeCity {
     this.audio.playPop();
     this.spawnParticle(x, z, "#eebb33", 8);
 
-    dispatchWorkerTo(this.getSimContext(), this.humans, x, z);
+    // A builder NPC is dispatched by the server
     this.updateStats();
 
     if (this.player) {
@@ -1007,10 +895,6 @@ export class ThreeCity {
               constructionProgress: 0,
               height: cell.height,
               scale: selectedScale,
-              ownerName: cell.ownerName,
-              ownerEmail: cell.ownerEmail,
-              price: cell.price,
-              isPurchased: cell.isPurchased
             },
           }),
         );
@@ -1026,10 +910,6 @@ export class ThreeCity {
             constructionProgress: 0,
             height: cell.height,
             scale: selectedScale,
-            ownerName: cell.ownerName,
-            ownerEmail: cell.ownerEmail,
-            price: cell.price,
-            isPurchased: cell.isPurchased
           }),
         })
           .then((res) => {
@@ -1198,187 +1078,65 @@ export class ThreeCity {
     requestAnimationFrame(update);
   }
 
+  /** Ask the server to finish a construction site (player job helper). */
   public completeConstruction(x: number, z: number) {
-    const cell = this.grid[x][z];
-    if (cell.type !== "construction") return;
+    const cell = this.grid[x]?.[z];
+    if (!cell || cell.type !== "construction" || !this.player) return;
 
-    if (cell.mesh) {
-      this.scene.remove(cell.mesh);
+    const payload = {
+      x,
+      z,
+      type: cell.targetType,
+      targetType: cell.targetType,
+      constructionProgress: 100,
+      height: cell.height,
+      scale: cell.scale,
+    };
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "grid-update", cell: payload }));
+    } else {
+      fetch("/api/grid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then((res) => {
+          if (res.status === 401) {
+            window.dispatchEvent(new CustomEvent("auth-unauthorized"));
+          }
+        })
+        .catch((err) => console.error("Failed to save grid completion:", err));
     }
+  }
 
-    const type = cell.targetType as "road" | "tree" | "house" | "skyscraper" | "restaurant" | "clothshop" | "barbershop" | "policestation";
-
-    cell.type = type;
-    cell.constructionProgress = 100;
-    this.gridVersion++;
-
-    const mesh = this.createMeshForType(type, x, z);
-    cell.mesh = mesh;
-    this.scene.add(mesh);
-
-    // Render store board
-    this.updateStoreBoard(x, z);
-
+  /**
+   * Effects for a construction site the server just finished: grow the new
+   * building in, and credit the build to the player who ordered it.
+   */
+  private playCompletion(cell: GridCell, mesh: THREE.Group) {
+    const finalScale = (this.cellSize / 3.0) * (cell.scale || 1.0);
     mesh.scale.set(0.01, 0.01, 0.01);
-    const cellScale = cell.scale || 1.0;
-    const finalScale = (this.cellSize / 3.0) * cellScale;
     this.animateGrow(mesh, finalScale, 500);
 
-    this.audio.playPop();
-    this.spawnParticle(x, z, "#5cd65c", 12);
+    if (this.player) {
+      const dist = Math.hypot(
+        mesh.position.x - this.player.mesh.position.x,
+        mesh.position.z - this.player.mesh.position.z,
+      );
+      if (dist < 30) this.audio.playPop();
+    }
+    this.spawnParticle(cell.x, cell.z, "#5cd65c", 12);
 
-    if (type === "road") {
-      this.recalculateRoadConnections();
-      if (Math.random() < 0.25) {
-        spawnVehicleOnRoad(
-          this.getSimContext(),
-          this.vehicles,
-          this.humans,
-          x,
-          z,
-        );
-      }
-    } else if (type === "house") {
-      const spawns = 1 + Math.floor(Math.random() * 2);
-      for (let s = 0; s < spawns; s++) {
-        this.spawnHumanAtRandomHouse();
-      }
+    if (cell.type === "road" && Math.random() < 0.25) {
+      spawnVehicleOnRoad(this.getSimContext(), this.vehicles, this.humans, cell.x, cell.z);
     }
 
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("shunya-build-completed", { detail: { type } }));
-      if (type === "tree") {
+    if (cell.builderId && cell.builderId === this.player?.playerId && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shunya-build-completed", { detail: { type: cell.type } }));
+      if (cell.type === "tree") {
         window.dispatchEvent(new CustomEvent("shunya-tree-planted"));
       }
     }
-
-    this.updateStats();
-
-    if (this.player) {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(
-          JSON.stringify({
-            type: "grid-update",
-            cell: {
-              x,
-              z,
-              type,
-              targetType: type,
-              constructionProgress: 100,
-              height: cell.height,
-              scale: cell.scale,
-              ownerName: cell.ownerName,
-              ownerEmail: cell.ownerEmail,
-              price: cell.price,
-              isPurchased: cell.isPurchased
-            },
-          }),
-        );
-      } else {
-        fetch("/api/grid", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            x,
-            z,
-            type,
-            targetType: type,
-            constructionProgress: 100,
-            height: cell.height,
-            scale: cell.scale,
-            ownerName: cell.ownerName,
-            ownerEmail: cell.ownerEmail,
-            price: cell.price,
-            isPurchased: cell.isPurchased
-          }),
-        })
-          .then((res) => {
-            if (res.status === 401) {
-              window.dispatchEvent(new CustomEvent("auth-unauthorized"));
-            }
-          })
-          .catch((err) => console.error("Failed to save grid completion:", err));
-      }
-    }
-    this.updateCellVisibility(this.lastVisibleGx, this.lastVisibleGz);
-  }
-
-  private spawnHumanAtRandomHouse() {
-    const houses: { x: number; z: number }[] = [];
-    for (let x = 0; x < this.gridSize; x++) {
-      for (let z = 0; z < this.gridSize; z++) {
-        if (
-          this.grid[x][z].type === "house" &&
-          this.grid[x][z].constructionProgress === 100
-        ) {
-          houses.push({ x, z });
-        }
-      }
-    }
-
-    let spawnX = Math.floor(Math.random() * this.gridSize);
-    let spawnZ = Math.floor(Math.random() * this.gridSize);
-
-    if (houses.length > 0) {
-      const house = houses[Math.floor(Math.random() * houses.length)];
-      spawnX = house.x;
-      spawnZ = house.z;
-    }
-
-    const humanGroup = new THREE.Group();
-    const halfGrid = (this.gridSize * this.cellSize) / 2;
-    const worldX = spawnX * this.cellSize - halfGrid + this.cellSize / 2;
-    const worldZ = spawnZ * this.cellSize - halfGrid + this.cellSize / 2;
-    humanGroup.position.set(worldX, 0, worldZ);
-
-    const clothingColor = [
-      0x4287f5, 0xeb4034, 0x228b22, 0xe0c012, 0x8a2be2, 0xff69b4,
-    ][Math.floor(Math.random() * 6)];
-    const agent: Partial<HumanAgent> = {};
-    const mesh = createRefinedHumanMesh(
-      this.getSimContext(),
-      clothingColor,
-      false,
-      agent,
-    );
-    mesh.scale.set(this.cellSize / 3.0, this.cellSize / 3.0, this.cellSize / 3.0);
-    humanGroup.add(mesh);
-
-    this.scene.add(humanGroup);
-
-    const human: HumanAgent = {
-      id: `human_${Math.random().toString(36).substr(2, 9)}`,
-      mesh: humanGroup,
-      x: worldX,
-      z: worldZ,
-      targetX: worldX,
-      targetZ: worldZ,
-      state: "idle",
-      targetCellX: spawnX,
-      targetCellZ: spawnZ,
-      path: [],
-      pathIndex: 0,
-      speed: 1.5 + Math.random() * 0.8,
-      bounceTimer: Math.random() * 10,
-      workTimer: 0,
-      jobCellX: null,
-      jobCellZ: null,
-      clothingColor,
-      isPlayer: false,
-      upperBody: agent.upperBody,
-      leftLegPivot: agent.leftLegPivot,
-      rightLegPivot: agent.rightLegPivot,
-      leftArmPivot: agent.leftArmPivot,
-      rightArmPivot: agent.rightArmPivot,
-      actionState: "idle",
-      actionTimer: 0,
-      jumpVelocity: 0,
-    };
-
-    // Assign glTF character (outfit loaded lazily when player gets close)
-    assignNpcCharacter(human, false, false);
-
-    this.humans.push(human);
   }
 
   private playerLevel = 1;
@@ -1387,9 +1145,8 @@ export class ThreeCity {
     name: string,
     _x: number = 0,
     _z: number = 0,
-    email?: string,
     clothingColor?: number,
-    dbUserId?: string,
+    userId?: string,
     level: number = 1,
   ) {
     if (this.isDestroyed) return;
@@ -1440,7 +1197,6 @@ export class ThreeCity {
 
     const playerAgent: HumanAgent = {
       id: `player_${Math.random().toString(36).substr(2, 9)}`,
-      dbUserId,
       mesh: humanGroup,
       x: worldX,
       z: worldZ,
@@ -1459,7 +1215,7 @@ export class ThreeCity {
       clothingColor: col,
       isPlayer: true,
       playerName: name,
-      playerEmail: email ? email.toLowerCase().trim() : undefined,
+      playerId: userId,
       upperBody: agent.upperBody,
       leftLegPivot: agent.leftLegPivot,
       rightLegPivot: agent.rightLegPivot,
@@ -1729,29 +1485,27 @@ export class ThreeCity {
     return true;
   }
 
-  public loadAllDatabaseUsers(users: any[], currentPlayerEmail: string) {
+  /** Replace other players' avatars with the server's online list. */
+  public syncRemotePlayers(users: RemoteUser[], selfId: string | null) {
     if (this.isDestroyed) return;
-    loadAllDatabaseUsers(
-      this.getSimContext(),
-      this.humans,
-      users,
-      currentPlayerEmail,
-    );
+    syncRemotePlayers(this.getSimContext(), this.humans, users, selfId);
   }
 
-  public addDatabaseUser(user: any, currentPlayerEmail: string) {
+  public addRemotePlayer(user: RemoteUser, selfId: string | null) {
     if (this.isDestroyed) return;
-    addDatabaseUser(
-      this.getSimContext(),
-      this.humans,
-      user,
-      currentPlayerEmail,
-    );
+    upsertRemotePlayer(this.getSimContext(), this.humans, user, selfId);
+  }
+
+  /** Server NPC routes; also records the server clock offset from `t`. */
+  public applyNpcSnapshots(npcs: NpcSnapshot[], serverTime: number, replaceAll: boolean) {
+    if (this.isDestroyed) return;
+    this.serverTimeOffset = serverTime - Date.now();
+    applyNpcSnapshots(this.getSimContext(), this.humans, npcs, replaceAll);
   }
 
   public updateOtherPlayerPosition(userId: string, x: number, z: number) {
     if (this.isDestroyed) return;
-    if (this.player && (this.player.id === `db_user_${userId}` || this.player.dbUserId === userId)) return; // ignore self
+    if (this.player && this.player.playerId === userId) return; // ignore self
 
     const existing = this.humans.find(h => h.id === `db_user_${userId}`);
     if (existing) {
@@ -1783,14 +1537,22 @@ export class ThreeCity {
     }
   }
 
-  public syncGrid(cells: any[]) {
+  public syncGrid(cells: WorldCell[]) {
     if (this.isDestroyed) return;
+    if (!this.worldLoaded) {
+      this.pendingGridCells.push(...cells);
+      return;
+    }
 
     let hasGridChanges = false;
+    let roadsChanged = false;
     cells.forEach((c) => {
       if (c.x < 0 || c.x >= this.gridSize || c.z < 0 || c.z >= this.gridSize)
         return;
+      // Park cells are fixed scenery; the server never changes them
+      if (c.type === "park") return;
       const localCell = this.grid[c.x][c.z];
+      const wasRoad = localCell.type === "road";
 
       const needsUpdate =
         localCell.type !== c.type ||
@@ -1798,20 +1560,24 @@ export class ThreeCity {
         localCell.constructionProgress !== c.constructionProgress ||
         localCell.scale !== c.scale ||
         localCell.ownerName !== c.ownerName ||
-        localCell.ownerEmail !== c.ownerEmail ||
+        localCell.ownerId !== c.ownerId ||
+        localCell.builderId !== c.builderId ||
         localCell.price !== c.price ||
         localCell.isPurchased !== c.isPurchased;
 
       if (needsUpdate) {
         hasGridChanges = true;
         const typeOrScaleChanged = localCell.type !== c.type || localCell.scale !== c.scale;
+        const completed =
+          localCell.type === "construction" && c.type !== "construction" && c.type !== "empty";
 
         localCell.type = c.type;
         localCell.targetType = c.targetType;
         localCell.constructionProgress = c.constructionProgress;
         localCell.scale = c.scale !== undefined ? c.scale : 1.0;
         localCell.ownerName = c.ownerName !== undefined ? c.ownerName : null;
-        localCell.ownerEmail = c.ownerEmail !== undefined ? c.ownerEmail : null;
+        localCell.ownerId = c.ownerId ?? null;
+        localCell.builderId = c.builderId ?? null;
         localCell.price = c.price !== undefined ? c.price : 0;
         localCell.isPurchased = c.isPurchased !== undefined ? c.isPurchased : false;
 
@@ -1834,133 +1600,23 @@ export class ThreeCity {
             localCell.mesh = this.createMeshForType(c.type, c.x, c.z);
           }
           this.scene.add(localCell.mesh);
-          this.makeStatic(localCell.mesh);
+          // animateGrow freezes the mesh itself once the animation ends
+          if (completed) this.playCompletion(localCell, localCell.mesh);
+          else this.makeStatic(localCell.mesh);
         }
 
-        if (c.type === "road" || localCell.type === "road") {
-          this.recalculateRoadConnections();
-        }
+        if (c.type === "road" || wasRoad) roadsChanged = true;
 
         // Draw/update store boards
         this.updateStoreBoard(c.x, c.z);
       }
     });
+    if (roadsChanged) this.recalculateRoadConnections();
     if (hasGridChanges) {
       this.gridVersion++;
     }
     this.updateStats();
     this.updateCellVisibility(this.lastVisibleGx, this.lastVisibleGz);
-  }
-
-  public syncNpcs(npcs: any[], isAdmin: boolean) {
-    if (this.isDestroyed) return;
-
-    if (isAdmin) {
-      const localSystemNpcs = this.humans.filter(
-        (h) => !h.isPlayer && !h.playerEmail,
-      );
-      if (localSystemNpcs.length === 0 && npcs.length > 0) {
-        npcs.forEach((n) => {
-          this.spawnNpcFromData(n);
-        });
-      }
-      return;
-    }
-
-    const currentNpcIds = new Set(npcs.map((n) => n.npcId));
-
-    this.humans = this.humans.filter((h) => {
-      if (h.isPlayer || h.playerEmail) return true;
-      if (!currentNpcIds.has(h.id)) {
-        this.scene.remove(h.mesh);
-        return false;
-      }
-      return true;
-    });
-
-    npcs.forEach((n) => {
-      const existing = this.humans.find((h) => h.id === n.npcId);
-      if (existing) {
-        existing.targetX = n.targetX;
-        existing.targetZ = n.targetZ;
-        existing.state = n.state;
-
-        const dx = Math.abs(existing.mesh.position.x - n.x);
-        const dz = Math.abs(existing.mesh.position.z - n.z);
-        if (dx > 5.0 || dz > 5.0) {
-          existing.mesh.position.set(n.x, 0, n.z);
-          existing.x = n.x;
-          existing.z = n.z;
-        }
-      } else {
-        this.spawnNpcFromData(n);
-      }
-    });
-  }
-
-  private spawnNpcFromData(n: any) {
-    const humanGroup = new THREE.Group();
-    humanGroup.position.set(n.x, 0, n.z);
-
-    const agent: Partial<HumanAgent> = {};
-    const mesh = createRefinedHumanMesh(
-      this.getSimContext(),
-      n.clothingColor,
-      false,
-      agent,
-    );
-    mesh.scale.set(this.cellSize / 3.0, this.cellSize / 3.0, this.cellSize / 3.0);
-    humanGroup.add(mesh);
-
-    const nameTag = createNameTag(n.name);
-    humanGroup.add(nameTag);
-
-    this.scene.add(humanGroup);
-
-    const halfGrid = (this.gridSize * this.cellSize) / 2;
-    const cellX = Math.max(
-      0,
-      Math.min(this.gridSize - 1, Math.floor((n.x + halfGrid) / this.cellSize)),
-    );
-    const cellZ = Math.max(
-      0,
-      Math.min(this.gridSize - 1, Math.floor((n.z + halfGrid) / this.cellSize)),
-    );
-
-    const npc: HumanAgent = {
-      id: n.npcId,
-      mesh: humanGroup,
-      x: n.x,
-      z: n.z,
-      targetX: n.targetX,
-      targetZ: n.targetZ,
-      state: n.state as "idle" | "walking" | "working",
-      targetCellX: cellX,
-      targetCellZ: cellZ,
-      path: [],
-      pathIndex: 0,
-      speed: 1.5 + Math.random() * 0.8,
-      bounceTimer: Math.random() * 10,
-      workTimer: 0,
-      jobCellX: null,
-      jobCellZ: null,
-      clothingColor: n.clothingColor,
-      isPlayer: false,
-      upperBody: agent.upperBody,
-      leftLegPivot: agent.leftLegPivot,
-      rightLegPivot: agent.rightLegPivot,
-      leftArmPivot: agent.leftArmPivot,
-      rightArmPivot: agent.rightArmPivot,
-      actionState: "idle",
-      actionTimer: 0,
-      jumpVelocity: 0,
-      nameTag,
-    };
-
-    // Assign glTF character for system NPCs loaded from data
-    assignNpcCharacter(npc, false, false);
-
-    this.humans.push(npc);
   }
 
   public spawnParticle(
@@ -2202,6 +1858,7 @@ export class ThreeCity {
       this.keysPressed,
       delta,
       syncStates,
+      Date.now() + this.serverTimeOffset,
       this.fidoQuestOwnerId,
     );
     this.positionSyncTimer = syncStates.positionSyncTimer;
@@ -2209,17 +1866,6 @@ export class ThreeCity {
     // LOD-gated glTF character swap + AnimationMixer updates
     const playerPos = this.player ? this.player.mesh.position : null;
     this.humans.forEach((h) => updateCharacterLOD(h, playerPos, delta));
-
-    // Periodic NPC database sync (admin only)
-    if (this.isAdmin && this.player && this.player.playerEmail) {
-      this.npcSyncTimer -= delta;
-      if (this.npcSyncTimer <= 0) {
-        const hasWs = this.ws && this.ws.readyState === WebSocket.OPEN;
-        this.npcSyncTimer = hasWs ? 1.0 : 10.0;
-        syncNpcsToDatabase(this.getSimContext(), this.humans);
-      }
-    }
-
 
     // 3. Vehicles updates
     updateVehicles(this.getSimContext(), this.vehicles, this.grid, delta);
@@ -2464,7 +2110,9 @@ export class ThreeCity {
 
     if (gx < 0 || gx >= this.gridSize || gz < 0 || gz >= this.gridSize)
       return false;
-    const cell = this.grid[gx][gz];
+    // The grid is empty until the shared layout has downloaded
+    const cell = this.grid[gx]?.[gz];
+    if (!cell) return false;
     return (
       cell.type === "house" ||
       cell.type === "skyscraper" ||
@@ -2604,6 +2252,7 @@ export class ThreeCity {
 
   public destroy() {
     this.isDestroyed = true;
+    if (this.chirpInterval) clearInterval(this.chirpInterval);
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
     }

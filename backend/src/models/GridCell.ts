@@ -34,7 +34,11 @@ const GridCellSchema = new Schema({
     type: String,
     default: null
   },
-  ownerEmail: {
+  ownerId: {
+    type: String,
+    default: null
+  },
+  builderId: {
     type: String,
     default: null
   },

@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { SimContext, HumanAgent } from './Types';
-import { findPath } from './Pathfinding';
 import {
   loadCharacter,
   getNpcCharacterUrl,
@@ -362,7 +361,8 @@ export function assignNpcCharacter(h: HumanAgent, isPlayer: boolean, isDbUser: b
   } else if (isDbUser) {
     h.charUrl = CHARACTER.SUIT;
   } else {
-    h.npcIndex = _npcSpawnIndex++;
+    // Server NPCs get the same outfit on every client (derived from their id)
+    h.npcIndex = h.npc ? Number(h.id.replace(/\D/g, '')) || 0 : _npcSpawnIndex++;
     h.charUrl  = getNpcCharacterUrl(h.npcIndex);
   }
   h.gltfLoaded = false;
@@ -438,228 +438,70 @@ export function updateCharacterLOD(
   }
 }
 
-export function wanderHuman(ctx: SimContext, h: HumanAgent) {
-
-  h.workTimer = 0;
-  const tx = Math.max(0, Math.min(ctx.gridSize - 1, h.targetCellX + Math.floor(Math.random() * 7) - 3));
-  const tz = Math.max(0, Math.min(ctx.gridSize - 1, h.targetCellZ + Math.floor(Math.random() * 7) - 3));
-
-  const path = findPath(ctx.grid, ctx.gridSize, h.targetCellX, h.targetCellZ, tx, tz);
-  if (path && path.length > 1) {
-    h.state = 'walking';
-    h.path = path;
-    h.pathIndex = 0;
-  }
+/** A player as the server describes them to others (no email). */
+export interface RemoteUser {
+  _id: string;
+  name: string;
+  x: number;
+  z: number;
+  clothingColor?: number;
+  level?: number;
 }
 
-export function dispatchWorkerTo(ctx: SimContext, humansList: HumanAgent[], cellX: number, cellZ: number) {
-  const idleHuman = humansList.find(h => h.state === 'idle' && !h.isPlayer && !h.playerEmail && !h.seatedInVehicleId);
-  if (idleHuman) {
-    idleHuman.state = 'walking';
-    idleHuman.jobCellX = cellX;
-    idleHuman.jobCellZ = cellZ;
-
-    const path = findPath(ctx.grid, ctx.gridSize, idleHuman.targetCellX, idleHuman.targetCellZ, cellX, cellZ);
-    if (path) {
-      idleHuman.path = path;
-      idleHuman.pathIndex = 0;
-    }
-  }
+/** Server NPC record (backend/src/world/npcs.ts NpcSnapshot). */
+export interface NpcSnapshot {
+  id: string;
+  name: string;
+  clothingColor: number;
+  offset: [number, number];
+  path: number[];
+  startedAt: number;
+  speed: number;
+  activity: string;
+  indoors: boolean;
 }
 
-export function loadAllDatabaseUsers(
+function cellToWorld(ctx: SimContext, cell: number): number {
+  const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
+  return cell * ctx.cellSize - halfGrid + ctx.cellSize / 2;
+}
+
+function worldToCell(ctx: SimContext, w: number): number {
+  const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
+  return Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((w + halfGrid) / ctx.cellSize)));
+}
+
+function createHumanAgent(
   ctx: SimContext,
-  humansList: HumanAgent[],
-  users: any[],
-  currentPlayerEmail: string
-) {
-  const emailLowerPlayer = currentPlayerEmail.toLowerCase().trim();
-
-  users.forEach(u => {
-    const emailLower = u.email.toLowerCase().trim();
-
-    // Skip player
-    if (emailLower === emailLowerPlayer) {
-      // Clean up any stale duplicate NPC avatar representing this player (e.g. from prior guest load or REST load before auth state resolved)
-      const npcIndex = humansList.findIndex(h => !h.isPlayer && h.playerEmail === emailLower);
-      if (npcIndex !== -1) {
-        const npc = humansList[npcIndex];
-        ctx.scene.remove(npc.mesh);
-        humansList.splice(npcIndex, 1);
-      }
-      return;
-    }
-
-    const existing = humansList.find(h => h.playerEmail === emailLower);
-    if (existing) {
-      // If already seated, skip manual update
-      if (existing.seatedInVehicleId) return;
-
-      const dx = Math.abs(existing.mesh.position.x - u.x);
-      const dz = Math.abs(existing.mesh.position.z - u.z);
-      if (dx > 8.0 || dz > 8.0) {
-        existing.mesh.position.set(u.x, 0, u.z);
-        existing.x = u.x;
-        existing.z = u.z;
-        existing.targetX = u.x;
-        existing.targetZ = u.z;
-        const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
-        const cx = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.x + halfGrid) / ctx.cellSize)));
-        const cz = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.z + halfGrid) / ctx.cellSize)));
-        ctx.spawnParticle(cx, cz, '#38bdf8', 6);
-      } else {
-        existing.targetX = u.x;
-        existing.targetZ = u.z;
-      }
-      return;
-    }
-
-    // Spawn user avatar NPC
-    const clothingColor = u.clothingColor || 0x4287f5;
-    const humanGroup = new THREE.Group();
-    humanGroup.position.set(u.x, 0, u.z);
-
-    const agent: Partial<HumanAgent> = {};
-    const mesh = createRefinedHumanMesh(ctx, clothingColor, false, agent);
-    humanGroup.add(mesh);
-
-    const nameTag = createNameTag(`[Lvl ${u.level || 1}] ${u.name}`);
-    humanGroup.add(nameTag);
-
-    ctx.scene.add(humanGroup);
-
-    const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
-    const cellX = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.x + halfGrid) / ctx.cellSize)));
-    const cellZ = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.z + halfGrid) / ctx.cellSize)));
-
-    const npcAgent: HumanAgent = {
-      id: `db_user_${u._id || Math.random().toString(36).substr(2, 9)}`,
-      mesh: humanGroup,
-      x: u.x,
-      z: u.z,
-      targetX: u.x,
-      targetZ: u.z,
-      state: 'idle',
-      targetCellX: cellX,
-      targetCellZ: cellZ,
-      path: [],
-      pathIndex: 0,
-      speed: 1.5 + Math.random() * 0.8,
-      bounceTimer: Math.random() * 10,
-      workTimer: 0,
-      jobCellX: null,
-      jobCellZ: null,
-      clothingColor,
-      isPlayer: false,
-      playerName: u.name,
-      playerEmail: emailLower,
-      upperBody: agent.upperBody,
-      leftLegPivot: agent.leftLegPivot,
-      rightLegPivot: agent.rightLegPivot,
-      leftArmPivot: agent.leftArmPivot,
-      rightArmPivot: agent.rightArmPivot,
-      actionState: 'idle',
-      actionTimer: 0,
-      jumpVelocity: 0,
-      nameTag,
-    };
-
-    // Assign Suit character for registered DB users
-    assignNpcCharacter(npcAgent, false, true);
-    humansList.push(npcAgent);
-  });
-
-  // Handle deleted user profiles
-  const dbEmails = new Set(users.map(u => u.email.toLowerCase().trim()));
-  humansList.forEach(h => {
-    if (h.isPlayer || !h.playerEmail || dbEmails.has(h.playerEmail)) {
-      return;
-    }
-    ctx.scene.remove(h.mesh);
-    const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
-    const cx = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((h.mesh.position.x + halfGrid) / ctx.cellSize)));
-    const cz = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((h.mesh.position.z + halfGrid) / ctx.cellSize)));
-    ctx.spawnParticle(cx, cz, '#ff4444', 10);
-  });
-
-  const updatedList = humansList.filter(h => h.isPlayer || !h.playerEmail || dbEmails.has(h.playerEmail));
-  humansList.length = 0;
-  humansList.push(...updatedList);
-}
-
-export function addDatabaseUser(
-  ctx: SimContext,
-  humansList: HumanAgent[],
-  u: any,
-  currentPlayerEmail: string
-) {
-  const emailLowerPlayer = currentPlayerEmail.toLowerCase().trim();
-  const emailLower = u.email.toLowerCase().trim();
-
-  // Skip player
-  if (emailLower === emailLowerPlayer) {
-    // Clean up any stale duplicate NPC avatar representing this player (e.g. from prior guest load or REST load before auth state resolved)
-    const npcIndex = humansList.findIndex(h => !h.isPlayer && h.playerEmail === emailLower);
-    if (npcIndex !== -1) {
-      const npc = humansList[npcIndex];
-      ctx.scene.remove(npc.mesh);
-      humansList.splice(npcIndex, 1);
-    }
-    return;
-  }
-
-  const existing = humansList.find(h => h.playerEmail === emailLower);
-  if (existing) {
-    // If already seated, skip manual update
-    if (existing.seatedInVehicleId) return;
-
-    const dx = Math.abs(existing.mesh.position.x - u.x);
-    const dz = Math.abs(existing.mesh.position.z - u.z);
-    if (dx > 8.0 || dz > 8.0) {
-      existing.mesh.position.set(u.x, 0, u.z);
-      existing.x = u.x;
-      existing.z = u.z;
-      existing.targetX = u.x;
-      existing.targetZ = u.z;
-      const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
-      const cx = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.x + halfGrid) / ctx.cellSize)));
-      const cz = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.z + halfGrid) / ctx.cellSize)));
-      ctx.spawnParticle(cx, cz, '#38bdf8', 6);
-    } else {
-      existing.targetX = u.x;
-      existing.targetZ = u.z;
-    }
-    return;
-  }
-
-  // Spawn user avatar NPC
-  const clothingColor = u.clothingColor || 0x4287f5;
+  id: string,
+  name: string,
+  tagText: string,
+  clothingColor: number,
+  x: number,
+  z: number,
+): HumanAgent {
   const humanGroup = new THREE.Group();
-  humanGroup.position.set(u.x, 0, u.z);
+  humanGroup.position.set(x, 0, z);
 
   const agent: Partial<HumanAgent> = {};
   const mesh = createRefinedHumanMesh(ctx, clothingColor, false, agent);
+  mesh.scale.set(ctx.cellSize / 3.0, ctx.cellSize / 3.0, ctx.cellSize / 3.0);
   humanGroup.add(mesh);
 
-  const nameTag = createNameTag(`[Lvl ${u.level || 1}] ${u.name}`);
+  const nameTag = createNameTag(tagText);
   humanGroup.add(nameTag);
-
   ctx.scene.add(humanGroup);
 
-  const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
-  const cellX = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.x + halfGrid) / ctx.cellSize)));
-  const cellZ = Math.max(0, Math.min(ctx.gridSize - 1, Math.floor((u.z + halfGrid) / ctx.cellSize)));
-
-  const npcAgent: HumanAgent = {
-    id: `db_user_${u._id || Math.random().toString(36).substr(2, 9)}`,
+  return {
+    id,
     mesh: humanGroup,
-    x: u.x,
-    z: u.z,
-    targetX: u.x,
-    targetZ: u.z,
+    x,
+    z,
+    targetX: x,
+    targetZ: z,
     state: 'idle',
-    targetCellX: cellX,
-    targetCellZ: cellZ,
+    targetCellX: worldToCell(ctx, x),
+    targetCellZ: worldToCell(ctx, z),
     path: [],
     pathIndex: 0,
     speed: 1.5 + Math.random() * 0.8,
@@ -669,8 +511,7 @@ export function addDatabaseUser(
     jobCellZ: null,
     clothingColor,
     isPlayer: false,
-    playerName: u.name,
-    playerEmail: emailLower,
+    playerName: name,
     upperBody: agent.upperBody,
     leftLegPivot: agent.leftLegPivot,
     rightLegPivot: agent.rightLegPivot,
@@ -681,10 +522,166 @@ export function addDatabaseUser(
     jumpVelocity: 0,
     nameTag,
   };
+}
 
-  // Assign Suit character for registered DB user
-  assignNpcCharacter(npcAgent, false, true);
-  humansList.push(npcAgent);
+/** Free a removed avatar's name tag texture (each one is a unique canvas). */
+function disposeAgent(ctx: SimContext, h: HumanAgent) {
+  ctx.scene.remove(h.mesh);
+  if (h.nameTag) {
+    h.nameTag.material.map?.dispose();
+    h.nameTag.material.dispose();
+  }
+}
+
+/** Spawn another player's avatar, or move it if it already exists. */
+export function upsertRemotePlayer(
+  ctx: SimContext,
+  humansList: HumanAgent[],
+  u: RemoteUser,
+  selfId: string | null,
+) {
+  if (selfId && u._id === selfId) return;
+
+  const existing = humansList.find(h => !h.isPlayer && h.playerId === u._id);
+  if (existing) {
+    if (existing.seatedInVehicleId) return;
+    const dx = Math.abs(existing.mesh.position.x - u.x);
+    const dz = Math.abs(existing.mesh.position.z - u.z);
+    existing.targetX = u.x;
+    existing.targetZ = u.z;
+    if (dx > 8.0 || dz > 8.0) {
+      existing.mesh.position.set(u.x, 0, u.z);
+      existing.x = u.x;
+      existing.z = u.z;
+      ctx.spawnParticle(worldToCell(ctx, u.x), worldToCell(ctx, u.z), '#38bdf8', 6);
+    }
+    return;
+  }
+
+  const agent = createHumanAgent(
+    ctx,
+    `db_user_${u._id}`,
+    u.name,
+    `[Lvl ${u.level || 1}] ${u.name}`,
+    u.clothingColor || 0x4287f5,
+    u.x,
+    u.z,
+  );
+  agent.playerId = u._id;
+  assignNpcCharacter(agent, false, true);
+  humansList.push(agent);
+}
+
+/** Replace the set of other players' avatars with the server's online list. */
+export function syncRemotePlayers(
+  ctx: SimContext,
+  humansList: HumanAgent[],
+  users: RemoteUser[],
+  selfId: string | null,
+) {
+  users.forEach(u => upsertRemotePlayer(ctx, humansList, u, selfId));
+
+  const online = new Set(users.map(u => u._id));
+  const kept = humansList.filter(h => {
+    if (h.isPlayer || !h.playerId || online.has(h.playerId)) return true;
+    disposeAgent(ctx, h);
+    ctx.spawnParticle(worldToCell(ctx, h.mesh.position.x), worldToCell(ctx, h.mesh.position.z), '#ff4444', 10);
+    return false;
+  });
+  humansList.length = 0;
+  humansList.push(...kept);
+}
+
+/**
+ * Apply server NPC routes. With `replaceAll`, NPCs missing from the list are
+ * removed (used for the initial snapshot).
+ */
+export function applyNpcSnapshots(
+  ctx: SimContext,
+  humansList: HumanAgent[],
+  npcs: NpcSnapshot[],
+  replaceAll: boolean,
+) {
+  const byId = new Map(humansList.filter(h => h.npc).map(h => [h.id, h]));
+
+  for (const n of npcs) {
+    const route = {
+      path: n.path,
+      startedAt: n.startedAt,
+      speed: n.speed,
+      offset: n.offset,
+      activity: n.activity,
+      indoors: n.indoors,
+    };
+    const existing = byId.get(n.id);
+    if (existing) {
+      existing.npc = route;
+      continue;
+    }
+    const x = cellToWorld(ctx, n.path[0]) + n.offset[0];
+    const z = cellToWorld(ctx, n.path[1]) + n.offset[1];
+    const agent = createHumanAgent(ctx, n.id, n.name, n.name, n.clothingColor, x, z);
+    agent.npc = route;
+    agent.speed = n.speed * ctx.cellSize;
+    assignNpcCharacter(agent, false, false);
+    humansList.push(agent);
+    byId.set(n.id, agent);
+  }
+
+  if (replaceAll) {
+    const live = new Set(npcs.map(n => n.id));
+    const kept = humansList.filter(h => {
+      if (!h.npc || live.has(h.id)) return true;
+      disposeAgent(ctx, h);
+      return false;
+    });
+    humansList.length = 0;
+    humansList.push(...kept);
+  }
+}
+
+/** Place a server NPC along its route at server time `serverNow`. */
+function followRoute(ctx: SimContext, h: HumanAgent, serverNow: number, delta: number) {
+  const r = h.npc!;
+  const lastIndex = r.path.length / 2 - 1;
+  const progress = Math.max(0, ((serverNow - r.startedAt) / 1000) * r.speed);
+
+  let cx: number;
+  let cz: number;
+  let dirX = 0;
+  let dirZ = 0;
+  if (progress >= lastIndex) {
+    cx = r.path[lastIndex * 2];
+    cz = r.path[lastIndex * 2 + 1];
+  } else {
+    const i = Math.floor(progress);
+    const f = progress - i;
+    const ax = r.path[i * 2], az = r.path[i * 2 + 1];
+    const bx = r.path[i * 2 + 2], bz = r.path[i * 2 + 3];
+    cx = ax + (bx - ax) * f;
+    cz = az + (bz - az) * f;
+    dirX = bx - ax;
+    dirZ = bz - az;
+  }
+
+  h.x = cellToWorld(ctx, cx) + r.offset[0];
+  h.z = cellToWorld(ctx, cz) + r.offset[1];
+  h.mesh.position.set(h.x, 0, h.z);
+
+  const moving = dirX !== 0 || dirZ !== 0;
+  if (moving) {
+    h.state = 'walking';
+    // Turn smoothly instead of snapping at every corner
+    let diff = Math.atan2(dirX, dirZ) - h.mesh.rotation.y;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    h.mesh.rotation.y += diff * Math.min(1, 10 * delta);
+  } else {
+    h.state = r.activity === 'build' ? 'working' : 'idle';
+  }
+
+  // Inside a building once the walk is over
+  h.hidden = !moving && r.indoors;
+  if (h.hidden) h.mesh.visible = false;
 }
 
 export function updateHumans(
@@ -697,6 +694,8 @@ export function updateHumans(
     lastSyncedPosition: THREE.Vector3;
     lastPlayerPosition: THREE.Vector3 | null;
   },
+  /** Server clock (ms) for following NPC routes. */
+  serverNow: number,
   fidoQuestOwnerId?: string | null
 ) {
   const halfGrid = (ctx.gridSize * ctx.cellSize) / 2;
@@ -861,7 +860,7 @@ export function updateHumans(
         const hasWs = ctx.ws && ctx.ws.readyState === WebSocket.OPEN;
         syncStates.positionSyncTimer = hasWs ? 0.1 : 10.0;
         const distSq = h.mesh.position.distanceToSquared(syncStates.lastSyncedPosition);
-        if (distSq > 0.005 && h.playerEmail) {
+        if (distSq > 0.005 && h.playerId) {
           syncStates.lastSyncedPosition.copy(h.mesh.position);
           if (hasWs && ctx.ws) {
             ctx.ws.send(
@@ -891,7 +890,7 @@ export function updateHumans(
           }
         }
       }
-    } else if (h.playerEmail) {
+    } else if (h.playerId) {
       // Other registered users
       const dirX = h.targetX - h.mesh.position.x;
       const dirZ = h.targetZ - h.mesh.position.z;
@@ -914,106 +913,9 @@ export function updateHumans(
       } else {
         h.state = 'idle';
       }
-    } else {
-      // System NPCs
-      if (ctx.isAdmin) {
-        if (h.state === 'walking' || h.state === 'working') {
-          if (h.path.length > 0 && h.pathIndex < h.path.length) {
-            const nextTargetCell = h.path[h.pathIndex];
-            const targetWorldX = (nextTargetCell.x * ctx.cellSize) - halfGrid + ctx.cellSize / 2;
-            const targetWorldZ = (nextTargetCell.z * ctx.cellSize) - halfGrid + ctx.cellSize / 2;
-
-            const dirX = targetWorldX - h.x;
-            const dirZ = targetWorldZ - h.z;
-            const dist = Math.sqrt(dirX * dirX + dirZ * dirZ);
-            const stepDist = h.speed * delta;
-
-            if (dist <= stepDist) {
-              h.x = targetWorldX;
-              h.z = targetWorldZ;
-              h.targetCellX = nextTargetCell.x;
-              h.targetCellZ = nextTargetCell.z;
-              h.pathIndex++;
-
-              if (h.pathIndex < h.path.length) {
-                const lookTarget = h.path[h.pathIndex];
-                const angle = Math.atan2(lookTarget.x - nextTargetCell.x, lookTarget.z - nextTargetCell.z);
-                h.mesh.rotation.y = angle;
-              }
-            } else {
-              h.x += (dirX / dist) * stepDist;
-              h.z += (dirZ / dist) * stepDist;
-              h.mesh.rotation.y = Math.atan2(dirX, dirZ);
-            }
-
-            h.mesh.position.set(h.x, 0, h.z);
-          } else {
-            // Finished path
-            if (h.jobCellX !== null && h.jobCellZ !== null) {
-              h.state = 'working';
-              h.workTimer += delta;
-
-              if (Math.random() < 0.18) {
-                ctx.spawnParticle(h.jobCellX, h.jobCellZ, '#ffaa00', 2);
-                ctx.audio.playBuild();
-              }
-
-              const cell = ctx.grid[h.jobCellX][h.jobCellZ];
-              if (cell.type === 'construction') {
-                cell.constructionProgress += 16 * delta;
-
-                if (cell.constructionProgress >= 100) {
-                  ctx.completeConstruction(h.jobCellX, h.jobCellZ);
-                  h.state = 'idle';
-                  h.jobCellX = null;
-                  h.jobCellZ = null;
-                  h.path = [];
-                }
-              } else {
-                h.state = 'idle';
-                h.jobCellX = null;
-                h.jobCellZ = null;
-                h.path = [];
-              }
-            } else {
-              h.state = 'idle';
-              h.workTimer += delta;
-
-              if (h.workTimer > 3.0 + Math.random() * 5.0) {
-                wanderHuman(ctx, h);
-              }
-            }
-          }
-        } else if (h.state === 'idle') {
-          h.workTimer += delta;
-          if (h.workTimer > 3.0 + Math.random() * 5.0) {
-            wanderHuman(ctx, h);
-          }
-        }
-      } else {
-        // Normal client: smooth-walk
-        const dirX = h.targetX - h.mesh.position.x;
-        const dirZ = h.targetZ - h.mesh.position.z;
-        const dist = Math.sqrt(dirX * dirX + dirZ * dirZ);
-
-        if (dist > 0.05) {
-          h.state = 'walking';
-          const stepDist = h.speed * delta;
-          if (dist <= stepDist) {
-            h.mesh.position.set(h.targetX, 0, h.targetZ);
-            h.x = h.targetX;
-            h.z = h.targetZ;
-            h.state = 'idle';
-          } else {
-            h.x += (dirX / dist) * stepDist;
-            h.z += (dirZ / dist) * stepDist;
-            h.mesh.position.set(h.x, 0, h.z);
-            h.mesh.rotation.y = Math.atan2(dirX, dirZ);
-          }
-        } else {
-          h.state = 'idle';
-        }
-      }
+    } else if (h.npc) {
+      // City NPCs: the server decides where they go, we animate the walk
+      followRoute(ctx, h, serverNow, delta);
     }
 
     // 3. Limb animations
@@ -1087,53 +989,4 @@ export function updateHumans(
       }
     }
   });
-}
-
-export async function syncNpcsToDatabase(ctx: SimContext, humansList: HumanAgent[]) {
-  if (!ctx.isAdmin) return;
-
-  // Find player details to act as credentials
-  const player = humansList.find(h => h.isPlayer);
-  if (!player || !player.playerEmail) return;
-
-  const npcsData = humansList
-    .filter(h => !h.isPlayer && !h.playerEmail)
-    .map(h => ({
-      npcId: h.id,
-      name: h.playerName || `NPC_${h.id.split('_')[1] || h.id}`,
-      x: h.mesh.position.x,
-      z: h.mesh.position.z,
-      targetX: h.state === 'walking' && h.path && h.pathIndex < h.path.length
-        ? (h.path[h.path.length - 1].x * ctx.cellSize) - ((ctx.gridSize * ctx.cellSize) / 2) + ctx.cellSize / 2
-        : h.targetX,
-      targetZ: h.state === 'walking' && h.path && h.pathIndex < h.path.length
-        ? (h.path[h.path.length - 1].z * ctx.cellSize) - ((ctx.gridSize * ctx.cellSize) / 2) + ctx.cellSize / 2
-        : h.targetZ,
-      state: h.state,
-      clothingColor: h.clothingColor
-    }));
-
-  if (ctx.ws && ctx.ws.readyState === WebSocket.OPEN) {
-    ctx.ws.send(
-      JSON.stringify({
-        type: "npc-sync",
-        npcs: npcsData,
-      }),
-    );
-  } else {
-    try {
-      const res = await fetch("/api/npcs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          npcs: npcsData,
-        }),
-      });
-      if (res.status === 401) {
-        window.dispatchEvent(new CustomEvent("auth-unauthorized"));
-      }
-    } catch (e) {
-      console.error("Failed to sync NPCs to database:", e);
-    }
-  }
 }

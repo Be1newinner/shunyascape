@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@dgreenheck/ez-tree": "^1.1.0",
+    "@dimforge/rapier3d-compat": "^0.21.0",
     "@types/three": "^0.184.1",
     "lucide-react": "^1.21.0",
     "mongoose": "^9.7.1",

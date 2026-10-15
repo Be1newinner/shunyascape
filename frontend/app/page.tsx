@@ -4,28 +4,26 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight,
-  Building2,
-  Coins,
+  Bot,
+  Crosshair,
   Gamepad2,
-  Globe,
-  HardHat,
+  Map,
+  Package,
+  ShieldPlus,
   Sparkles,
   Swords,
-  UserRound,
-  Users,
-  UtensilsCrossed,
+  Target,
+  Zap,
 } from "lucide-react";
-import CityScene from "./components/landing/CityScene";
 import LandingEffects from "./components/landing/LandingEffects";
-import LiveTicker from "./components/landing/LiveTicker";
 import Logo, { LogoMark } from "./components/landing/Logo";
 import PlayButton from "./components/landing/PlayButton";
 import SplitWords from "./components/landing/SplitWords";
 import {
+  ARSENAL,
   CONTROLS,
   DEFINITION,
   FAQ,
-  PERMITS,
   SITE_DESCRIPTION,
   SITE_NAME,
   SITE_TITLE,
@@ -42,99 +40,99 @@ export const metadata: Metadata = {
 
 const SCREENSHOTS = [
   {
-    src: "/images/landing/city-hud.webp",
-    alt: "ShunyaScape gameplay: Central Park with citizens walking the ring road, a downtown tower and the game HUD with level, coins, quests and minimap",
-    caption: "Central Park, 11:00 — quests, coins and the city map at a glance",
+    src: "/images/landing/bg-combat.webp",
+    alt: "ShunyaScape gameplay: third-person view of a soldier aiming an M416 across a grassy field toward a town, with the battle royale HUD showing ammo, weapon slots, minimap and players alive",
+    caption: "Over the shoulder, M416 up — the HUD tracks ammo, zone and who's left",
     tag: "Gameplay",
   },
   {
-    src: "/images/landing/city-day.webp",
-    alt: "Aerial view of ShunyaScape's shared city at midday: park paths, tree-lined streets and a downtown office block",
-    caption: "One shared 200×200 city for every player",
-    tag: "The city",
+    src: "/images/landing/bg-scope.webp",
+    alt: "Looking through a Kar98k 4× scope at an enemy soldier standing on a hillside",
+    caption: "Kar98k, 4× scope — one headshot is enough",
+    tag: "Sniping",
   },
   {
-    src: "/images/landing/city-evening.webp",
-    alt: "ShunyaScape in the evening: citizens heading home along the streets around Central Park",
-    caption: "Evening rush — citizens head home after work",
-    tag: "Living world",
+    src: "/images/landing/bg-town.webp",
+    alt: "A town of plaster and brick houses with trees, crates and a dirt road on the ShunyaScape battleground",
+    caption: "Houses you can walk into, shoot through and loot",
+    tag: "The map",
   },
 ] as const;
 
 const FEATURES = [
   {
-    icon: Globe,
-    title: "One shared, persistent city",
-    body: "No instances, no loading between zones. Every player walks the same 200×200 city in real time, and what you build stays built.",
+    icon: Map,
+    title: "A battleground that looks real",
+    body: "640 metres of towns, fields, forests and cliffs. Photo-scanned props, PBR ground, real-time shadows and grass that moves in the wind.",
     tone: "cyan",
     size: "wide",
   },
   {
-    icon: UserRound,
-    title: "Citizens with real routines",
-    body: "220+ citizens sleep, commute, lunch, shop and stroll on the shared day–night clock.",
+    icon: Bot,
+    title: "24 soldiers hunting you",
+    body: "AI soldiers roam, spot you, strafe, fire in bursts and reload — and every one of them is after you.",
     tone: "violet",
     size: "tall",
   },
   {
-    icon: Building2,
-    title: "Build with permits",
-    body: "Roads, trees, homes, shops and skyscrapers in four sizes. Builders walk over and raise them.",
+    icon: Package,
+    title: "Loot to survive",
+    body: "Guns in houses and by crates. Two primaries and a pistol, ammo per calibre, med kits.",
     tone: "gold",
     size: "normal",
   },
   {
-    icon: Coins,
-    title: "Earn your way up",
-    body: "Office shifts, repairs, construction help, crystals, crates and quests.",
+    icon: Crosshair,
+    title: "Gunplay that matters",
+    body: "Recoil, spread, red dot and 4× scope, headshots, reloads you have to time.",
     tone: "emerald",
     size: "normal",
   },
   {
-    icon: UtensilsCrossed,
-    title: "Survive the city",
-    body: "Hunger drops every in-game day. Eat out, dress up, get a fresh cut.",
+    icon: ShieldPlus,
+    title: "Outrun the zone",
+    body: "Six shrinking phases. Outside the circle you bleed health, faster every time.",
     tone: "rose",
     size: "normal",
   },
   {
-    icon: Users,
-    title: "Party up",
-    body: "Squads of up to 8 players. Meet in the park and grow your part of the skyline together.",
+    icon: Zap,
+    title: "Runs in your browser",
+    body: "WebGPU with a WebGL fallback, three graphics presets, about 12 MB to load.",
     tone: "sky",
     size: "normal",
   },
 ] as const;
 
-const DAY = [
-  { time: "06:30", title: "The city wakes up", body: "Lights flick on across the residential blocks as citizens get ready." },
-  { time: "08:00", title: "Rush hour", body: "Sidewalks fill as workers head to the towers and shopkeepers open up." },
-  { time: "12:30", title: "Lunch break", body: "Office workers pour into nearby restaurants — the busiest streets of the day." },
-  { time: "15:00", title: "Builders at work", body: "Hard hats walk to every new construction site and raise it piece by piece." },
-  { time: "18:00", title: "Evening errands", body: "Shops get busy and Central Park fills with people taking a walk." },
-  { time: "23:00", title: "Night owls", body: "Most of the city is home asleep. A few still wander the empty streets." },
+const MATCH = [
+  { time: "00:00", title: "Drop in", body: "You land on the edge of a town with a P92 and a med kit. Twenty-four soldiers are already on the map." },
+  { time: "00:30", title: "Ceasefire ends", body: "Thirty seconds to grab a rifle. After that, any soldier who sees you opens fire." },
+  { time: "01:15", title: "Zone one closes", body: "The blue wall starts moving. Loot on the way in, or run." },
+  { time: "03:00", title: "Mid-game", body: "Fewer soldiers, tighter circle. Hills and houses decide who sees whom first." },
+  { time: "06:00", title: "Final circles", body: "The zone hurts now. Crouch in the grass, wait for the shot, heal when you can." },
+  { time: "08:00", title: "Last one standing", body: "Clear the last soldier and the match is yours: #1 of 25." },
 ];
 
-const QUESTS = [
+const STEPS = [
   {
     level: "01",
     title: "Create a free account",
-    body: "Sign up with Google or email. No download, no credit card. You spawn in Central Park with 100 ShunyaCoins.",
-    reward: "+100 SC",
+    body: "Sign up with Google or email. No download, no credit card. Your first match loads right in the browser.",
+    reward: "Free",
     xp: 34,
   },
   {
     level: "02",
-    title: "Earn coins and XP",
-    body: "Collect crystals and crates, work shifts inside buildings, help citizens with quests and level up.",
-    reward: "Level up",
+    title: "Loot up fast",
+    body: "Run into the nearest house. Find an M416 or a Kar98k, the ammo next to it, and a med kit before the ceasefire ends.",
+    reward: "Armed",
     xp: 67,
   },
   {
     level: "03",
-    title: "Buy a permit and build",
-    body: "Start with a 50-coin Road Builder permit, then grow into homes, shops and skyscrapers.",
-    reward: "Your skyline",
+    title: "Survive to #1",
+    body: "Stay inside the zone, fight from cover, aim for the head. Be the last of 25 soldiers alive.",
+    reward: "#1",
     xp: 100,
   },
 ];
@@ -157,12 +155,12 @@ function JsonLd() {
           contentUrl: `${SITE_URL}${s.src}`,
           caption: s.alt,
         })),
-        genre: ["City builder", "Life simulation", "Sandbox", "Multiplayer"],
+        genre: ["Battle royale", "Third-person shooter", "Action"],
         gamePlatform: ["Web browser"],
         applicationCategory: "Game",
-        operatingSystem: "Any operating system with a WebGL-capable browser",
-        playMode: ["MultiPlayer", "SinglePlayer"],
-        numberOfPlayers: { "@type": "QuantitativeValue", minValue: 1 },
+        operatingSystem: "Any operating system with a WebGPU or WebGL 2 browser",
+        playMode: ["SinglePlayer"],
+        numberOfPlayers: { "@type": "QuantitativeValue", minValue: 1, maxValue: 1 },
         offers: { "@type": "Offer", price: "0", priceCurrency: "USD", availability: "https://schema.org/InStock" },
       },
       {
@@ -192,30 +190,6 @@ function JsonLd() {
   );
 }
 
-/** Small gold coin used as a price icon and as floating decoration. */
-function CoinIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
-      <circle cx="12" cy="12" r="10" fill="url(#ls-coin)" stroke="#8a5a00" strokeWidth="1.2" />
-      <circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff3c4" strokeOpacity=".7" strokeWidth="1.2" />
-      <path
-        d="M10.2 9.2c.4-.9 1.2-1.3 2.2-1.2 1.2.1 2 .8 1.9 1.7-.1 1.9-4.6 1.1-4.4 3.5.1 1.1 1.2 1.8 2.5 1.7 1-.1 1.8-.6 2.1-1.4M12 6.8v1.2m0 7.9v1.3"
-        fill="none"
-        stroke="#7a4b00"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-      <defs>
-        <linearGradient id="ls-coin" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#fff1a8" />
-          <stop offset=".55" stopColor="#ffc94d" />
-          <stop offset="1" stopColor="#e89a12" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
-}
-
 export default function Home() {
   return (
     <div className="ls-page">
@@ -235,7 +209,7 @@ export default function Home() {
           <nav aria-label="Main" className="ls-nav__links">
             <a href="#gameplay">Gameplay</a>
             <a href="#features">Features</a>
-            <a href="#living-city">Living city</a>
+            <a href="#match">A match</a>
             <a href="#how-to-play">How to play</a>
             <a href="#faq">FAQ</a>
           </nav>
@@ -251,19 +225,25 @@ export default function Home() {
       <main id="main">
         {/* ── Hero ─────────────────────────────────────────────────────────── */}
         <section className="ls-hero" aria-labelledby="hero-title">
-          <CityScene />
+          <div className="ls-scene" aria-hidden="true">
+            <div className="ls-layer ls-hero-shot" style={{ "--depth": 0.35 } as CSSProperties}>
+              <Image src="/images/landing/bg-hero.webp" alt="" fill priority sizes="100vw" className="ls-hero-shot__img" />
+            </div>
+            <div className="ls-hero-shade" />
+            <div className="ls-fade" />
+          </div>
           <div className="ls-container ls-hero__content">
             <p className="ls-eyebrow">
               <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-              Free multiplayer 3D city builder
+              Free 3D battle royale in your browser
             </p>
             <h1 id="hero-title" className="ls-hero__title">
-              Build a living city{" "}
-              <span className="ls-gradient-text">with friends.</span>
+              Drop in. Loot up.{" "}
+              <span className="ls-gradient-text">Be the last one standing.</span>
             </h1>
             <p className="ls-hero__lead">
-              ShunyaScape is a real-time 3D city you share with every player — right in your browser. Earn coins,
-              unlock building permits, raise skyscrapers and watch hundreds of citizens go about their day.
+              A realistic third-person battleground against 24 AI soldiers. Grab guns from houses and crates, outrun
+              the shrinking zone and fight your way to #1 — no download, just click and play.
             </p>
             <div className="ls-hero__ctas">
               <PlayButton className="ls-btn ls-btn--gold ls-btn--lg" magnetic>
@@ -271,7 +251,7 @@ export default function Home() {
                 Play free now
               </PlayButton>
               <a href="#gameplay" className="ls-btn ls-btn--ghost ls-btn--lg">
-                Watch the city
+                See the gameplay
               </a>
             </div>
             <ul className="ls-stats" aria-label="ShunyaScape at a glance">
@@ -284,8 +264,6 @@ export default function Home() {
             </ul>
           </div>
         </section>
-
-        <LiveTicker />
 
         {/* ── What is ─────────────────────────────────────────────────────── */}
         <section className="ls-section ls-what" aria-labelledby="what-title">
@@ -312,7 +290,7 @@ export default function Home() {
             <header className="ls-section__head" data-reveal="words">
               <p className="ls-kicker">Gameplay</p>
               <h2 id="gameplay-title" className="ls-h2">
-                <SplitWords text="Step into the city" />
+                <SplitWords text="Step onto the battleground" />
               </h2>
               <p className="ls-section__lead">Real screenshots from the game — no renders, no mock-ups.</p>
             </header>
@@ -339,10 +317,10 @@ export default function Home() {
               ))}
               <li className="ls-shot ls-shot--stat" data-reveal>
                 <div className="ls-shot__statbox">
-                  <strong>220+</strong>
-                  <span>citizens living their day, right now</span>
-                  <a href="#living-city" className="ls-text-link">
-                    See a day in the city <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  <strong>24</strong>
+                  <span>AI soldiers in every match, all hunting you</span>
+                  <a href="#match" className="ls-text-link">
+                    How a match plays out <ArrowRight className="h-4 w-4" aria-hidden="true" />
                   </a>
                 </div>
               </li>
@@ -356,7 +334,7 @@ export default function Home() {
             <header className="ls-section__head" data-reveal="words">
               <p className="ls-kicker">Features</p>
               <h2 id="features-title" className="ls-h2">
-                <SplitWords text="Everything happens in one shared world" />
+                <SplitWords text="Everything a battle royale needs" />
               </h2>
             </header>
             <ul className="ls-bento">
@@ -378,14 +356,14 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ── A day in the city: sticky scrollytelling ────────────────────── */}
-        <section id="living-city" className="ls-section ls-day ls-cut" aria-labelledby="day-title">
+        {/* ── A match: sticky scrollytelling ──────────────────────────────── */}
+        <section id="match" className="ls-section ls-day ls-cut" aria-labelledby="match-title">
           <div className="ls-container ls-day__grid" data-scrolly data-active="0">
             <div className="ls-day__sticky">
               <div className="ls-day__screen ls-frame">
                 <span className="ls-frame__corners" aria-hidden="true" />
                 <Image
-                  src="/images/landing/city-day.webp"
+                  src="/images/landing/bg-map.webp"
                   alt=""
                   width={1524}
                   height={638}
@@ -397,28 +375,28 @@ export default function Home() {
                   <path d="M30 140 C 90 140, 110 96, 170 92 S 260 60, 300 70 S 360 40, 372 24" pathLength={1} />
                 </svg>
                 <div className="ls-day__clock" aria-hidden="true">
-                  {DAY.map((d, i) => (
+                  {MATCH.map((d, i) => (
                     <span key={d.time} className="ls-day__time" data-i={i}>
                       {d.time}
                     </span>
                   ))}
                 </div>
-                <span className="ls-day__label">Maya&apos;s route today</span>
+                <span className="ls-day__label">Your route to #1</span>
               </div>
             </div>
             <div>
               <header className="ls-section__head" data-reveal="words">
-                <p className="ls-kicker">The living city</p>
-                <h2 id="day-title" className="ls-h2">
-                  <SplitWords text="A day in ShunyaScape" />
+                <p className="ls-kicker">A match</p>
+                <h2 id="match-title" className="ls-h2">
+                  <SplitWords text="Eight minutes, twenty-five soldiers" />
                 </h2>
                 <p className="ls-section__lead">
-                  Every citizen has a home, a job or a hobby, and their own schedule. One in-game day lasts eight real
-                  hours, so the city feels different every time you log in.
+                  Every match is a fresh drop: a new spawn, a new zone path, and soldiers who never stand in the same
+                  place twice.
                 </p>
               </header>
               <ol className="ls-steps-day">
-                {DAY.map((d, i) => (
+                {MATCH.map((d, i) => (
                   <li key={d.time} className="ls-step-day" data-step={i}>
                     <time className="ls-step-day__time">{d.time}</time>
                     <h3 className="ls-step-day__title">{d.title}</h3>
@@ -430,20 +408,20 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ── How to play: quests, controls, item shop ────────────────────── */}
+        {/* ── How to play: steps, controls, arsenal ───────────────────────── */}
         <section id="how-to-play" className="ls-section" aria-labelledby="play-title">
           <div className="ls-container">
             <header className="ls-section__head" data-reveal="words">
               <p className="ls-kicker">How to play</p>
               <h2 id="play-title" className="ls-h2">
-                <SplitWords text="Your first three quests" />
+                <SplitWords text="Your first match" />
               </h2>
             </header>
             <ol className="ls-quests">
-              {QUESTS.map((q) => (
+              {STEPS.map((q) => (
                 <li key={q.level} className="ls-quest" data-reveal data-spotlight>
                   <div className="ls-quest__top">
-                    <span className="ls-quest__level">Lv. {q.level}</span>
+                    <span className="ls-quest__level">Step {q.level}</span>
                     <span className="ls-quest__reward">{q.reward}</span>
                   </div>
                   <h3 className="ls-quest__title">{q.title}</h3>
@@ -478,19 +456,16 @@ export default function Home() {
               <div className="ls-panel ls-frame ls-shop" data-reveal>
                 <span className="ls-frame__corners" aria-hidden="true" />
                 <h3 className="ls-panel__title">
-                  <HardHat className="h-5 w-5" aria-hidden="true" /> Permit shop
+                  <Target className="h-5 w-5" aria-hidden="true" /> Arsenal
                 </h3>
-                <p className="ls-shop__note">One-time unlocks, paid in ShunyaCoins earned in game.</p>
+                <p className="ls-shop__note">Everything is looted on the map — nothing to buy.</p>
                 <ul className="ls-items">
-                  {PERMITS.map((p) => (
+                  {ARSENAL.map((p) => (
                     <li key={p.name} className={`ls-item ls-item--${p.rarity}`}>
                       <span className="ls-item__rarity">{RARITY_LABEL[p.rarity]}</span>
                       <span className="ls-item__name">{p.name}</span>
-                      <span className="ls-item__desc">{p.unlocks}</span>
-                      <span className="ls-item__price">
-                        <CoinIcon className="ls-item__coin" />
-                        {p.cost} <abbr title="ShunyaCoins">SC</abbr>
-                      </span>
+                      <span className="ls-item__desc">{p.detail}</span>
+                      <span className="ls-item__price">{p.stat}</span>
                     </li>
                   ))}
                 </ul>
@@ -531,17 +506,14 @@ export default function Home() {
               <div className="ls-cta__word" aria-hidden="true">
                 Play
               </div>
-              {[0, 1, 2, 3, 4].map((i) => (
-                <CoinIcon key={i} className={`ls-float-coin ls-float-coin--${i}`} />
-              ))}
               <LogoMark className="ls-cta__mark" />
               <h2 id="cta-title" className="ls-h2 ls-cta__title">
-                Your plot of the skyline is waiting.
+                Twenty-four soldiers are waiting.
               </h2>
-              <p className="ls-section__lead">Join the city in under a minute. It&apos;s free, and it runs right here.</p>
+              <p className="ls-section__lead">Your first match is a minute away. It&apos;s free, and it runs right here.</p>
               <PlayButton className="ls-btn ls-btn--gold ls-btn--xl" magnetic>
                 <Swords className="h-5 w-5" aria-hidden="true" />
-                Start building
+                Drop in
               </PlayButton>
             </div>
           </div>
@@ -554,14 +526,14 @@ export default function Home() {
           <nav aria-label="Footer" className="ls-footer__links">
             <a href="#gameplay">Gameplay</a>
             <a href="#features">Features</a>
-            <a href="#living-city">Living city</a>
+            <a href="#match">A match</a>
             <a href="#how-to-play">How to play</a>
             <a href="#faq">FAQ</a>
             <a href="https://github.com/Be1newinner/shunyascape" rel="noopener">
               Open source on GitHub
             </a>
           </nav>
-          <p className="ls-footer__copy">© {new Date().getFullYear()} ShunyaScape. A free multiplayer city builder.</p>
+          <p className="ls-footer__copy">© {new Date().getFullYear()} ShunyaScape. A free browser battle royale.</p>
         </div>
       </footer>
     </div>

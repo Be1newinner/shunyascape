@@ -1,0 +1,181 @@
+"use client";
+
+import { MAP_HALF, MAP_SIZE } from "./engine/config";
+import type { HudState } from "./engine/Game";
+
+const MINI = 190; // px
+const MINI_METRES = 220;
+
+function fmtTime(s: number) {
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function Compass({ heading }: { heading: number }) {
+  const labels: Record<number, string> = { 0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW" };
+  const ticks = [];
+  const span = 100; // degrees visible
+  for (let d = Math.ceil((heading - span / 2) / 15) * 15; d <= heading + span / 2; d += 15) {
+    const deg = ((d % 360) + 360) % 360;
+    const x = ((d - heading) / span) * 100 + 50;
+    ticks.push(
+      <div key={d} className={`bg-compass-tick ${labels[deg] ? "major" : ""}`} style={{ left: `${x}%` }}>
+        <span>{labels[deg] ?? deg}</span>
+      </div>,
+    );
+  }
+  return (
+    <div className="bg-compass">
+      {ticks}
+      <div className="bg-compass-needle">{Math.round(heading)}</div>
+    </div>
+  );
+}
+
+function Minimap({ hud, src }: { hud: HudState; src: string }) {
+  const scale = MINI / MINI_METRES;
+  const toMini = (wx: number, wz: number) => ({
+    x: (wx - hud.player.x) * scale + MINI / 2,
+    y: (wz - hud.player.z) * scale + MINI / 2,
+  });
+  const z = hud.zone;
+  const cur = toMini(z.cx, z.cz);
+  const next = toMini(z.nx, z.nz);
+  const bgSize = MAP_SIZE * scale;
+  return (
+    <div className="bg-minimap" style={{ width: MINI, height: MINI }}>
+      <div
+        className="bg-minimap-img"
+        style={{
+          backgroundImage: src ? `url(${src})` : undefined,
+          backgroundSize: `${bgSize}px ${bgSize}px`,
+          backgroundPosition: `${-(hud.player.x + MAP_HALF) * scale + MINI / 2}px ${-(hud.player.z + MAP_HALF) * scale + MINI / 2}px`,
+        }}
+      />
+      <svg width={MINI} height={MINI} className="bg-minimap-svg">
+        <defs>
+          <mask id="bg-zone-mask">
+            <rect width={MINI} height={MINI} fill="white" />
+            <circle cx={cur.x} cy={cur.y} r={z.radius * scale} fill="black" />
+          </mask>
+        </defs>
+        <rect width={MINI} height={MINI} fill="hsla(220, 90%, 45%, 0.35)" mask="url(#bg-zone-mask)" />
+        <circle cx={cur.x} cy={cur.y} r={z.radius * scale} fill="none" stroke="hsl(212, 100%, 66%)" strokeWidth={2} />
+        <circle cx={next.x} cy={next.y} r={z.nRadius * scale} fill="none" stroke="white" strokeWidth={1.5} strokeDasharray="4 3" />
+        {!z.inside && <line x1={MINI / 2} y1={MINI / 2} x2={next.x} y2={next.y} stroke="white" strokeWidth={1} strokeDasharray="2 3" />}
+      </svg>
+      <div className="bg-minimap-me" style={{ transform: `translate(-50%, -50%) rotate(${hud.heading}deg)` }} />
+    </div>
+  );
+}
+
+export default function Hud({ hud, minimap }: { hud: HudState; minimap: string }) {
+  const hp = hud.health / hud.maxHealth;
+  const active = hud.slots.find((s) => s?.active) ?? null;
+  const hitAge = hud.hitMarker ? hud.now - hud.hitMarker.time : 99;
+  const spread = Math.min(80, Math.max(6, hud.spreadPx));
+  const lowHp = hp < 0.3;
+
+  return (
+    <div className={`bg-hud ${hud.scoped ? "scoped" : ""}`}>
+      {/* First so the rest of the HUD draws on top of the scope mask. */}
+      {hud.scoped && (
+        <div className="bg-scope">
+          <div className="bg-scope-reticle" />
+          {hud.zoom && <span className="bg-scope-zoom">{hud.zoom.replace("x", "×")}</span>}
+        </div>
+      )}
+      <Compass heading={hud.heading} />
+
+      <div className="bg-topright">
+        <Minimap hud={hud} src={minimap} />
+        <div className="bg-counters">
+          <div><span>Alive</span><b>{hud.alive}</b></div>
+          <div><span>Kills</span><b>{hud.kills}</b></div>
+        </div>
+        <div className="bg-tech">{hud.backend} · {hud.fps} fps</div>
+      </div>
+
+      <div className="bg-killfeed">
+        {hud.killFeed.map((k) => (
+          <div key={k.id} className={`bg-kill ${k.byPlayer ? "mine" : ""}`}>
+            <b>{k.killer}</b>
+            <span className="bg-kill-gun">{k.headshot ? "⌖ " : ""}{k.weapon}</span>
+            <b>{k.victim}</b>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-zone-info">
+        {hud.peaceful > 0 && <div className="bg-banner">Bots hold fire for {hud.peaceful}s, grab a gun</div>}
+        <div className={`bg-zone-pill ${hud.zone.shrinking ? "warn" : ""}`}>
+          {hud.zone.shrinking ? "Zone shrinking" : `Zone ${hud.zone.phase} shrinks in`} <b>{fmtTime(hud.zone.timer)}</b>
+        </div>
+        {!hud.zone.inside && <div className="bg-zone-pill danger">Outside the zone · {Math.round(hud.zone.distance)} m · −{hud.zone.dps} HP/s</div>}
+      </div>
+
+      {/* Crosshair */}
+      {!hud.scoped && !hud.sprinting && (
+        hud.aiming ? (
+          <div className={`bg-dot ${hud.sight === "iron" ? "iron" : ""}`} />
+        ) : (
+          <div className="bg-cross" style={{ ["--s" as string]: `${spread}px` }}>
+            <i className="t" /><i className="b" /><i className="l" /><i className="r" />
+          </div>
+        )
+      )}
+      {hitAge < 0.25 && <div className={`bg-hit ${hud.hitMarker?.kind}`}><i /><i /><i /><i /></div>}
+
+      {hud.damageDirs.map((d, i) => (
+        <div key={i} className="bg-dmg" style={{ transform: `translate(-50%, -50%) rotate(${(-d.angle * 180) / Math.PI}deg)`, opacity: Math.max(0, 1 - (hud.now - d.time) / 1.6) }} />
+      ))}
+      {lowHp && <div className="bg-vignette" />}
+
+      {(hud.reload > 0 || hud.heal > 0) && (
+        <div className="bg-progress">
+          <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" pathLength={100} style={{ strokeDashoffset: 100 - (hud.reload || hud.heal) * 100 }} /></svg>
+          <span>{hud.reload > 0 ? "Reloading" : "Using med kit"}</span>
+        </div>
+      )}
+
+      {hud.pickup && <div className="bg-toast" key={hud.pickup.time}>+ {hud.pickup.text}</div>}
+
+      {hud.prompt && (
+        <div className="bg-prompt"><kbd>I</kbd>{hud.prompt}</div>
+      )}
+
+      <div className="bg-bottom">
+        <div className="bg-health">
+          <div className="bg-health-meta">
+            <span className="bg-stance">{hud.stance === "stand" ? (hud.sprinting ? "Sprint" : "Stand") : hud.stance === "crouch" ? "Crouch" : "Prone"}</span>
+            <span className="bg-meds"><kbd>L</kbd> Med kit ×{hud.medkits}</span>
+          </div>
+          <div className={`bg-health-bar ${lowHp ? "low" : ""}`}>
+            <div style={{ width: `${hp * 100}%` }} />
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-weapons">
+        {active && (
+          <div className="bg-ammo">
+            <b className={active.mag === 0 ? "empty" : ""}>{active.mag}</b>
+            <span>/ {active.reserve}</span>
+          </div>
+        )}
+        <div className="bg-slots">
+          {hud.slots.map((s, i) => (
+            <div key={i} className={`bg-slot ${s?.active ? "active" : ""} ${s ? "" : "empty"}`}>
+              <kbd>{i + 1}</kbd>
+              <div>
+                <b>{s ? s.name : i === 2 ? "Pistol" : "Empty"}</b>
+                <span>{s ? `${s.mag}/${s.magSize} · ${s.ammo}${s.scope ? ` · ${s.scope}` : ""}` : "—"}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {hud.spareScopes.length > 0 && <div className="bg-hint">Backpack: {hud.spareScopes.join(", ")}</div>}
+        <div className="bg-hint"><kbd>O</kbd> switch · <kbd>U</kbd> reload{hud.switching ? " · switching…" : ""}</div>
+      </div>
+    </div>
+  );
+}

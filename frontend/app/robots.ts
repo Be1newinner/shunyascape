@@ -8,7 +8,7 @@ export default function robots(): MetadataRoute.Robots {
         userAgent: "*",
         allow: "/",
         // The game and admin panel need an account; nothing to index there
-        disallow: ["/world", "/admin", "/api/"],
+        disallow: ["/battleground", "/admin", "/api/"],
       },
     ],
     sitemap: `${SITE_URL}/sitemap.xml`,

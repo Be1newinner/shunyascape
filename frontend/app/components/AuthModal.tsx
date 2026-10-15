@@ -45,7 +45,7 @@ export default function AuthModal({ onClose }: AuthModalProps) {
           }
           throw new Error(data.error || "Login failed");
         }
-        router.push("/world");
+        router.push("/battleground");
       } 
       
       else if (mode === "register") {
@@ -70,7 +70,7 @@ export default function AuthModal({ onClose }: AuthModalProps) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Verification failed");
         
-        router.push("/world");
+        router.push("/battleground");
       }
 
       else if (mode === "forgot") {
@@ -183,7 +183,7 @@ export default function AuthModal({ onClose }: AuthModalProps) {
           <div className="mb-4">
             <GoogleSignInButton
               text={mode === "register" ? "signup_with" : "continue_with"}
-              onSignedIn={() => router.push("/world")}
+              onSignedIn={() => router.push("/battleground")}
               onError={(message) => {
                 setSuccess("");
                 setError(message);

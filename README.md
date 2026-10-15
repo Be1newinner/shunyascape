@@ -8,7 +8,7 @@ This project is built from the ground up to support highly optimized, real-time 
 
 ## 🎮 Game Features & Economy
 
-*   **Real-Time Collaborative Sandbox**: Interact with other players on a live 32x32 voxel grid.
+*   **Real-Time Collaborative Sandbox**: Interact with other players in a shared 200×200 city with a server-simulated population.
 *   **Resource Gathering**: Scavenge the map for ShunyaCoins, Energy Crystals, and Wood.
 *   **Gamified Progression**: Earn XP and coins by performing jobs (e.g. tech office worker, renovation helper) or completing quests for NPCs.
 *   **Permit Store**: Purchase building permits to construct roads, plant trees, or erect commercial/residential real estate.

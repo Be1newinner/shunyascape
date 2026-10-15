@@ -40,6 +40,11 @@ const SettingsSchema = new Schema({
     type: Number,
     default: 10 // percentage tax on commercial transactions
   },
+  // Stored grid format; see world/grid.ts migrateGrid()
+  worldVersion: {
+    type: Number,
+    default: 1
+  },
   lastUpdated: {
     type: Date,
     default: Date.now

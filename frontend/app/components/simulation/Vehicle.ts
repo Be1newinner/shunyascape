@@ -21,9 +21,11 @@ export function createVehicleMesh(ctx: SimContext, color: number): THREE.Group {
   carGroup.add(cab);
 
   // Wheels (4 small cylinders)
-  const wheelGeom = ctx.getGeometry('car_wheel', () => new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8));
+  // Rotate once inside the creator: the geometry is cached and shared by every car
+  const wheelGeom = ctx.getGeometry('car_wheel', () =>
+    new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8).rotateX(Math.PI / 2),
+  );
   const wheelMat = ctx.getMaterial('car_wheels', { color: '#111111', roughness: 0.95 });
-  wheelGeom.rotateX(Math.PI / 2);
 
   const wheelOffsets = [
     [0.2, 0.08, 0.24],
@@ -75,27 +77,9 @@ export function spawnVehicleOnRoad(
     heading: 0
   };
 
-  // Passenger boarding feature
-  // Chance to pick an idle system NPC to sit in the car
-  if (Math.random() < 0.5) {
-    const idleNPC = humansList.find(h => h.state === 'idle' && !h.isPlayer && !h.playerEmail && !h.seatedInVehicleId);
-    if (idleNPC) {
-      idleNPC.state = 'sitting';
-      idleNPC.actionState = 'sitting';
-      idleNPC.seatedInVehicleId = vehicle.id;
-
-      // Remove NPC mesh from scene and attach it to the car
-      ctx.scene.remove(idleNPC.mesh);
-      
-      // Position the character to look like they are sitting in the driver/commuter seat
-      idleNPC.mesh.position.set(-0.05, 0.28, 0); 
-      idleNPC.mesh.rotation.set(0, -Math.PI / 2, 0); // face forward in car coordinates
-      idleNPC.mesh.scale.set(0.65, 0.65, 0.65); // scale down slightly to fit inside cab
-      
-      carGroup.add(idleNPC.mesh);
-      vehicle.passenger = idleNPC;
-    }
-  }
+  // City NPCs are simulated on the server, so cars no longer pick them up
+  // as passengers (that would desync the NPC from every other client).
+  void humansList;
 
   vehiclesList.push(vehicle);
 }

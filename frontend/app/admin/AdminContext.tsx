@@ -100,7 +100,8 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       setRefreshing(true);
     }
     try {
-      const res = await fetch("/api/users");
+      // Admin list includes emails; the public /api/users does not
+      const res = await fetch("/api/admin/users");
       if (res.status === 401) {
         localStorage.removeItem("shunyascape_user");
         setCurrentUser(null);

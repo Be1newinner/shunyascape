@@ -142,6 +142,20 @@ function useDraggable() {
   };
 }
 
+/** Progression totals; only the server writes these. */
+interface ServerProgress {
+  shunyaCoins: number;
+  level: number;
+  xp: number;
+  wood: number;
+  unlockedPermits: string[];
+  completedAchievements: string[];
+  completedQuests?: string[];
+}
+
+// Server close code for "replaced by a newer session" (backend WS_CLOSE_REPLACED)
+const WS_CLOSE_REPLACED = 4001;
+
 interface GPUInfo {
   vendor: string;
   renderer: string;
@@ -288,8 +302,9 @@ export default function CitySimulator() {
   const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
   const [showAchievements, setShowAchievements] = useState<boolean>(false);
   const [showLandShop, setShowLandShop] = useState<boolean>(false);
-  const [availablePlots, setAvailablePlots] = useState<LandPlot[]>([]);
-  const [cityGridSize, setCityGridSize] = useState<number>(32);
+  // Land expansion is disabled while it can't be shared (see openLandShop)
+  const [availablePlots] = useState<LandPlot[]>([]);
+  const [cityGridSize] = useState<number>(200);
   const [showBuildMenu, setShowBuildMenu] = useState<boolean>(false);
   const [zoomScale, setZoomScale] = useState<number>(1.0);
 
@@ -310,7 +325,7 @@ export default function CitySimulator() {
     storeName: string;
     emoji: string;
     ownerName: string | null;
-    ownerEmail: string | null;
+    ownerId: string | null;
     price: number;
     isPurchased: boolean;
     x: number;
@@ -343,6 +358,80 @@ export default function CitySimulator() {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
   };
+
+  // ── Server-authoritative progression ────────────────────────────────────────
+  // The client never decides coin/XP amounts. It sends a game action over the
+  // WebSocket and applies the totals the server replies with.
+  // globalThis.Map: `Map` here is the lucide-react icon
+  const pendingActionsRef = useRef(
+    new globalThis.Map<
+      string,
+      {
+        resolve: () => void;
+        reject: (err: Error) => void;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    >(),
+  );
+  const actionCounterRef = useRef(0);
+  const pendingAchievementsRef = useRef(new Set<string>());
+  const walkedSinceFlushRef = useRef(0);
+  // This player's user id, from the server's `init` message
+  const selfIdRef = useRef<string | null>(null);
+
+  const applyServerProgress = (p: ServerProgress, leveledUp = false) => {
+    setShunyaCoins(p.shunyaCoins);
+    setXp(p.xp);
+    setWood(p.wood);
+    setLevel(p.level);
+    setUnlockedPermits(p.unlockedPermits);
+    setCompletedAchievements(p.completedAchievements);
+    if (p.completedQuests?.includes("quest_skyscraper")) {
+      setSkyscraperClimbed(true);
+    }
+    if (leveledUp) {
+      showToast(`Level Up! Reached Level ${p.level}!`, "success");
+      if (cityRef.current) {
+        cityRef.current.audio.playSpawn(); // level up sound
+        cityRef.current.updatePlayerLevel(p.level);
+      }
+    }
+  };
+
+  /** Send an action and resolve once the server accepts it. */
+  const sendGameAction = (action: Record<string, unknown>): Promise<void> => {
+    const ws = cityRef.current?.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("Not connected to the server. Try again in a moment."));
+    }
+    const requestId = `a${Date.now()}_${++actionCounterRef.current}`;
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingActionsRef.current.delete(requestId);
+        reject(new Error("The server didn't respond. Try again."));
+      }, 8000);
+      pendingActionsRef.current.set(requestId, { resolve, reject, timer });
+      ws.send(JSON.stringify({ ...action, requestId }));
+    });
+  };
+
+  const settleAction = (requestId: unknown, error?: string): boolean => {
+    if (typeof requestId !== "string") return false;
+    const pending = pendingActionsRef.current.get(requestId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    pendingActionsRef.current.delete(requestId);
+    if (error) pending.reject(new Error(error));
+    else pending.resolve();
+    return true;
+  };
+
+  /** Claim a reward; the server decides the amount and may rate-limit it. */
+  const earnReward = (reason: string) =>
+    sendGameAction({ type: "earn", reason });
+
+  const warnOnError = (err: unknown) =>
+    showToast(err instanceof Error ? err.message : String(err), "warning");
 
   // Authentication & Session states
   const [authMode, setAuthMode] = useState<"login" | "register" | "reset">(
@@ -597,12 +686,7 @@ export default function CitySimulator() {
       const user = data.user;
       localStorage.setItem("shunyascape_user", JSON.stringify(user));
       setCurrentUser(user);
-      setShunyaCoins(user.shunyaCoins || 100);
-      setWood(user.wood || 0);
-      setLevel(user.level || 1);
-      setXp(user.xp || 0);
-      setUnlockedPermits(user.unlockedPermits || []);
-      setCompletedAchievements(user.completedAchievements || []);
+      applyServerProgress(user);
       setHasSpawned(true);
       setShowAuthModal(false);
       setAuthLoading(false);
@@ -614,7 +698,6 @@ export default function CitySimulator() {
           user.name,
           user.x,
           user.z,
-          user.email,
           user.clothingColor,
           user.id,
           user.level || 1,
@@ -629,119 +712,33 @@ export default function CitySimulator() {
     }
   };
 
-  // Helper to add player coins/XP/wood and sync them
-  const addProgress = (
-    coinsGained: number,
-    xpGained: number,
-    woodGained: number = 0,
-    achievementsOverride?: string[],
-    permitsOverride?: string[],
-  ) => {
-    setShunyaCoins((prevCoins) => {
-      const nextCoins = prevCoins + coinsGained;
-
-      setXp((prevXp) => {
-        let nextXp = prevXp + xpGained;
-
-        setLevel((prevLevel) => {
-          let nextLevel = prevLevel;
-          let xpNeeded = nextLevel * 100;
-
-          while (nextXp >= xpNeeded) {
-            nextLevel += 1;
-            nextXp -= xpNeeded;
-            showToast(`Level Up! Reached Level ${nextLevel}!`, "success");
-            if (cityRef.current) {
-              cityRef.current.audio.playSpawn(); // level up sound
-              cityRef.current.updatePlayerLevel(nextLevel);
-            }
-            xpNeeded = nextLevel * 100;
-          }
-
-          setWood((prevWood) => {
-            const nextWood = prevWood + woodGained;
-
-            // Sync with backend websocket
-            const permits =
-              permitsOverride !== undefined ? permitsOverride : unlockedPermits;
-            const achs =
-              achievementsOverride !== undefined
-                ? achievementsOverride
-                : completedAchievements;
-
-            if (
-              cityRef.current?.ws &&
-              cityRef.current.ws.readyState === WebSocket.OPEN
-            ) {
-              cityRef.current.ws.send(
-                JSON.stringify({
-                  type: "progress-update",
-                  shunyaCoins: nextCoins,
-                  level: nextLevel,
-                  xp: nextXp,
-                  wood: nextWood,
-                  unlockedPermits: permits,
-                  completedAchievements: achs,
-                }),
-              );
-            }
-
-            return nextWood;
-          });
-
-          return nextLevel;
-        });
-
-        return nextXp;
-      });
-
-      return nextCoins;
-    });
-  };
-
   const buyPermit = (permitKey: string, cost: number) => {
     if (shunyaCoins < cost) {
       showToast("Not enough ShunyaCoins!", "warning");
       return;
     }
-    const nextPermits = [...unlockedPermits, permitKey];
-    setUnlockedPermits(nextPermits);
-    addProgress(-cost, 10, 0, undefined, nextPermits);
-    showToast(
-      `Purchased ${permitKey.charAt(0).toUpperCase() + permitKey.slice(1)} Permit!`,
-      "success",
-    );
+    sendGameAction({ type: "buy-permit", permit: permitKey })
+      .then(() =>
+        showToast(
+          `Purchased ${permitKey.charAt(0).toUpperCase() + permitKey.slice(1)} Permit!`,
+          "success",
+        ),
+      )
+      .catch(warnOnError);
   };
 
+  // Land expansion only resized the buyer's own copy of the map, which broke the
+  // shared city. Disabled until expansion is stored and applied server-wide.
+  const LAND_EXPANSION_DISABLED_MSG =
+    "🗺️ Land expansion is coming soon — it will grow the city for every player at once.";
+
   const openLandShop = () => {
-    if (cityRef.current) {
-      const plots = cityRef.current.landExpansionManager.getAvailablePlots();
-      setAvailablePlots(plots);
-    }
-    setShowLandShop(true);
+    showToast(LAND_EXPANSION_DISABLED_MSG, "info");
   };
 
   const buyLandPlot = (plot: LandPlot) => {
-    if (shunyaCoins < plot.cost) {
-      showToast("Not enough ShunyaCoins to buy this land plot!", "warning");
-      return;
-    }
-    if (!cityRef.current) return;
-
-    const success = cityRef.current.expandGrid(plot.id);
-    if (success) {
-      addProgress(-plot.cost, 25); // Deduct coins, give 25 XP for expansion
-      setCityGridSize(cityRef.current.gridSize);
-      // Refresh available plots after purchase
-      const newPlots = cityRef.current.landExpansionManager.getAvailablePlots();
-      setAvailablePlots(newPlots);
-      showToast(
-        `🗺️ Land expanded ${LandExpansionManager.directionLabel(plot.direction)}! New area revealed.`,
-        "success",
-      );
-    } else {
-      showToast("Could not expand land in that direction.", "warning");
-    }
+    void plot;
+    showToast(LAND_EXPANSION_DISABLED_MSG, "info");
   };
 
   // ── Hunger System ────────────────────────────────────────────────────────────
@@ -795,22 +792,7 @@ export default function CitySimulator() {
     setShowDeathScreen(false);
 
     // Sync reset to backend
-    if (
-      cityRef.current?.ws &&
-      cityRef.current.ws.readyState === WebSocket.OPEN
-    ) {
-      cityRef.current.ws.send(
-        JSON.stringify({
-          type: "progress-update",
-          shunyaCoins: 0,
-          level: 1,
-          xp: 0,
-          wood: 0,
-          unlockedPermits: [],
-          completedAchievements: [],
-        }),
-      );
-    }
+    sendGameAction({ type: "progress-reset" }).catch(warnOnError);
 
     // Teleport player back to city centre
     if (cityRef.current?.player) {
@@ -823,20 +805,9 @@ export default function CitySimulator() {
     );
   };
 
-  // ── Admin Revenue Helper ─────────────────────────────────────────────────────
-  const sendAdminRevenue = (amount: number) => {
-    if (
-      cityRef.current?.ws &&
-      cityRef.current.ws.readyState === WebSocket.OPEN
-    ) {
-      cityRef.current.ws.send(
-        JSON.stringify({ type: "admin-revenue", amount }),
-      );
-    }
-  };
-
   // ── Food Shop ────────────────────────────────────────────────────────────────
   const buyFood = (item: {
+    id: string;
     name: string;
     cost: number;
     hungerRestore: number;
@@ -845,12 +816,14 @@ export default function CitySimulator() {
       showToast(`Not enough ShunyaCoins! Need ${item.cost} SC.`, "warning");
       return;
     }
-    addProgress(-item.cost, 5);
-    sendAdminRevenue(item.cost);
-    setHungerLevel((prev) => Math.min(100, prev + item.hungerRestore));
-    setShowFoodShop(false);
-    showToast(`🍔 Enjoyed ${item.name}! Hunger restored.`, "success");
-    cityRef.current?.audio.playPop();
+    sendGameAction({ type: "buy-item", item: `food:${item.id}` })
+      .then(() => {
+        setHungerLevel((prev) => Math.min(100, prev + item.hungerRestore));
+        setShowFoodShop(false);
+        showToast(`🍔 Enjoyed ${item.name}! Hunger restored.`, "success");
+        cityRef.current?.audio.playPop();
+      })
+      .catch(warnOnError);
   };
 
   // ── Cloth Shop ────────────────────────────────────────────────────────────────
@@ -864,16 +837,18 @@ export default function CitySimulator() {
       showToast(`Not enough ShunyaCoins! Need ${cost} SC.`, "warning");
       return;
     }
-    addProgress(-cost, 5);
-    sendAdminRevenue(cost);
-    const hexStr = "#" + hexColor.toString(16).padStart(6, "0");
-    setEquippedClothes((prev) => ({
-      ...prev,
-      [`${slot}Color`]: hexColor,
-    }));
-    cityRef.current?.updatePlayerClothing(slot, hexStr);
-    showToast(`👕 Equipped new ${label}!`, "success");
-    cityRef.current?.audio.playPop();
+    sendGameAction({ type: "buy-item", item: `cloth:${slot}` })
+      .then(() => {
+        const hexStr = "#" + hexColor.toString(16).padStart(6, "0");
+        setEquippedClothes((prev) => ({
+          ...prev,
+          [`${slot}Color`]: hexColor,
+        }));
+        cityRef.current?.updatePlayerClothing(slot, hexStr);
+        showToast(`👕 Equipped new ${label}!`, "success");
+        cityRef.current?.audio.playPop();
+      })
+      .catch(warnOnError);
   };
 
   // ── Barber Shop ────────────────────────────────────────────────────────────────
@@ -882,26 +857,33 @@ export default function CitySimulator() {
       showToast(`Not enough ShunyaCoins! Need ${cost} SC.`, "warning");
       return;
     }
-    addProgress(-cost, 5);
-    sendAdminRevenue(cost);
-    setPlayerHairColor(hexColor);
-    cityRef.current?.updatePlayerHairColor(hexColor);
-    showToast(`✂️ New hairstyle: ${label}! Looking fresh!`, "success");
-    cityRef.current?.audio.playPop();
+    sendGameAction({ type: "buy-item", item: `hair:${hexColor}` })
+      .then(() => {
+        setPlayerHairColor(hexColor);
+        cityRef.current?.updatePlayerHairColor(hexColor);
+        showToast(`✂️ New hairstyle: ${label}! Looking fresh!`, "success");
+        cityRef.current?.audio.playPop();
+      })
+      .catch(warnOnError);
   };
 
   const triggerUnlock = (achKey: string, title: string, xpReward: number) => {
     if (completedAchievements.includes(achKey)) return;
-    const nextAchs = [...completedAchievements, achKey];
-    setCompletedAchievements(nextAchs);
-    showToast(`Achievement Unlocked: ${title}! (+${xpReward} XP)`, "success");
-    addProgress(0, xpReward, 0, nextAchs);
-    if (cityRef.current) {
-      cityRef.current.audio.playPop();
-    }
+    if (pendingAchievementsRef.current.has(achKey)) return;
+    pendingAchievementsRef.current.add(achKey);
+    sendGameAction({ type: "achievement", key: achKey })
+      .then(() => {
+        showToast(`Achievement Unlocked: ${title}! (+${xpReward} XP)`, "success");
+        cityRef.current?.audio.playPop();
+      })
+      .catch(() => {
+        // Already unlocked or not earned yet; nothing to show
+      })
+      .finally(() => pendingAchievementsRef.current.delete(achKey));
   };
 
   const startJob = (
+    jobId: string,
     duration: number,
     title: string,
     onComplete: () => void,
@@ -909,6 +891,8 @@ export default function CitySimulator() {
     if (cityRef.current) {
       cityRef.current.startWorking();
     }
+    // The server times the job and pays it out on `earn`
+    cityRef.current?.ws?.send(JSON.stringify({ type: "job-start", job: jobId }));
     setJobProgress(0);
     showToast(title, "info");
 
@@ -974,7 +958,7 @@ export default function CitySimulator() {
             action: () => {
               setFidoQuestState("completed");
               triggerUnlock("npc_helper", "NPC Helper", 50);
-              addProgress(150, 0); // Quest reward coins
+              earnReward("quest_fido").catch(() => {}); // Quest reward coins
               setActiveNpcDialog(null);
               cityRef.current?.stopFidoFollowing();
             },
@@ -989,7 +973,22 @@ export default function CitySimulator() {
         "Collect glowing energy crystals to gain huge experience boosts!",
         "Kicking or punching trees drops wood resource crates.",
       ];
-      const randomLine = lines[Math.floor(Math.random() * lines.length)];
+      // NPCs follow a daily routine on the server; talk about what they're doing
+      const activityLines: Record<string, string> = {
+        work: "Can't chat long — I'm on my way to work.",
+        home: "Long day! I'm heading home to rest.",
+        lunch: "Lunch break! The restaurant around the corner is my favourite.",
+        errand: "Just running a few errands at the shops.",
+        park: "I love a walk in Central Park this time of day.",
+        stroll: "Just stretching my legs around the block.",
+        night_walk: "Couldn't sleep, so I'm out for a late walk.",
+        build: "Busy building here — this site will be finished soon!",
+      };
+      const activityLine = npc.npc ? activityLines[npc.npc.activity] : undefined;
+      const randomLine =
+        activityLine && Math.random() < 0.6
+          ? activityLine
+          : lines[Math.floor(Math.random() * lines.length)];
       setActiveNpcDialog({
         npcName,
         text: randomLine,
@@ -1043,13 +1042,12 @@ export default function CitySimulator() {
     if (!hasSpawned) return;
 
     const handleCollect = (e: Event) => {
-      const { coins, xp: x, wood: w } = (e as CustomEvent).detail;
-      addProgress(coins, x, w);
+      const { type } = (e as CustomEvent).detail;
+      earnReward(`collect_${type}`).catch(warnOnError);
     };
 
-    const handleHarvest = (e: Event) => {
-      const { coins, xp: x, wood: w } = (e as CustomEvent).detail;
-      addProgress(coins, x, w);
+    const handleHarvest = () => {
+      earnReward("harvest_tree").catch(warnOnError);
     };
 
     const handleBuildCompleted = () => {
@@ -1061,19 +1059,17 @@ export default function CitySimulator() {
         if (prev >= 3) return prev;
         const nextCount = prev + 1;
         if (nextCount === 3) {
-          addProgress(100, 30);
-          showToast(
-            "Quest Completed: Plant 3 Trees! (+100 SC, +30 XP)",
-            "success",
-          );
+          earnReward("quest_trees")
+            .then(() =>
+              showToast(
+                "Quest Completed: Plant 3 Trees! (+100 SC, +30 XP)",
+                "success",
+              ),
+            )
+            .catch(() => {});
         }
         return nextCount;
       });
-    };
-
-    const handleWalked = (e: Event) => {
-      const { distance } = (e as CustomEvent).detail;
-      setDistanceWalked((prev) => prev + distance);
     };
 
     const handleJumped = () => {
@@ -1087,11 +1083,14 @@ export default function CitySimulator() {
         triggerUnlock("skyscraper_climber", "Skyscraper Climber", 100);
         if (!skyscraperClimbed) {
           setSkyscraperClimbed(true);
-          addProgress(200, 100);
-          showToast(
-            "Quest Completed: Skyscraper Climber! (+200 SC, +100 XP)",
-            "success",
-          );
+          earnReward("quest_skyscraper")
+            .then(() =>
+              showToast(
+                "Quest Completed: Skyscraper Climber! (+200 SC, +100 XP)",
+                "success",
+              ),
+            )
+            .catch(() => {});
         }
         setActiveStore(null);
       } else if (type === "house") {
@@ -1117,7 +1116,7 @@ export default function CitySimulator() {
             storeName: info?.name ?? type,
             emoji: info?.emoji ?? "🏪",
             ownerName: cell?.ownerName ?? null,
-            ownerEmail: cell?.ownerEmail ?? null,
+            ownerId: cell?.ownerId ?? null,
             price: cell?.price ?? 0,
             isPurchased: cell?.isPurchased ?? false,
             x,
@@ -1143,21 +1142,19 @@ export default function CitySimulator() {
       if (fidoQuestState === "fido_found") {
         setFidoQuestState("completed");
         triggerUnlock("npc_helper", "NPC Helper", 50);
-        addProgress(150, 0); // Quest reward coins
-        showToast(
-          "Quest Completed: Returned Fido safely! (+150 SC)",
-          "success",
-        );
+        earnReward("quest_fido")
+          .then(() =>
+            showToast(
+              "Quest Completed: Returned Fido safely! (+150 SC)",
+              "success",
+            ),
+          )
+          .catch(() => {});
         if (cityRef.current) {
           cityRef.current.audio.playPop();
           cityRef.current.stopFidoFollowing();
         }
       }
-    };
-
-    const handleCoinsSpent = (e: Event) => {
-      const { coins } = (e as CustomEvent).detail;
-      addProgress(-coins, 0);
     };
 
     const handleToast = (e: Event) => {
@@ -1174,12 +1171,10 @@ export default function CitySimulator() {
     window.addEventListener("shunya-harvest", handleHarvest);
     window.addEventListener("shunya-build-completed", handleBuildCompleted);
     window.addEventListener("shunya-tree-planted", handleTreePlanted);
-    window.addEventListener("shunya-walked", handleWalked);
     window.addEventListener("shunya-jumped", handleJumped);
     window.addEventListener("shunya-cell-change", handleCellChange);
     window.addEventListener("shunya-fido-near", handleFidoNear);
     window.addEventListener("shunya-fido-returned", handleFidoReturned);
-    window.addEventListener("shunya-coins-spent", handleCoinsSpent);
     window.addEventListener("shunya-toast", handleToast);
     window.addEventListener("shunya-zoom-change", handleZoomChange);
 
@@ -1191,12 +1186,10 @@ export default function CitySimulator() {
         handleBuildCompleted,
       );
       window.removeEventListener("shunya-tree-planted", handleTreePlanted);
-      window.removeEventListener("shunya-walked", handleWalked);
       window.removeEventListener("shunya-jumped", handleJumped);
       window.removeEventListener("shunya-cell-change", handleCellChange);
       window.removeEventListener("shunya-fido-near", handleFidoNear);
       window.removeEventListener("shunya-fido-returned", handleFidoReturned);
-      window.removeEventListener("shunya-coins-spent", handleCoinsSpent);
       window.removeEventListener("shunya-toast", handleToast);
       window.removeEventListener("shunya-zoom-change", handleZoomChange);
     };
@@ -1233,21 +1226,34 @@ export default function CitySimulator() {
             setShowPoliceStation(true);
             return;
           } else if (type === "skyscraper") {
-            startJob(5000, "Working in Tech Office...", () => {
-              addProgress(50, 20);
-              showToast(
-                "Worked at Tech Office! Earned +50 SC, +20 XP",
-                "success",
-              );
+            startJob("job_office", 5000, "Working in Tech Office...", () => {
+              earnReward("job_office")
+                .then(() =>
+                  showToast(
+                    "Worked at Tech Office! Earned +50 SC, +20 XP",
+                    "success",
+                  ),
+                )
+                .catch(warnOnError);
             });
           } else if (type === "house") {
-            startJob(4000, "Helping Renovate House...", () => {
-              addProgress(30, 15);
-              showToast("Finished Repairs! Earned +30 SC, +15 XP", "success");
+            startJob("job_house", 4000, "Helping Renovate House...", () => {
+              earnReward("job_house")
+                .then(() =>
+                  showToast("Finished Repairs! Earned +30 SC, +15 XP", "success"),
+                )
+                .catch(warnOnError);
             });
           } else if (type === "construction") {
-            startJob(3000, "Accelerating Construction...", () => {
-              addProgress(20, 10);
+            startJob("job_construction", 3000, "Accelerating Construction...", () => {
+              earnReward("job_construction")
+                .then(() =>
+                  showToast(
+                    "Accelerated Construction! Earned +20 SC, +10 XP",
+                    "success",
+                  ),
+                )
+                .catch(warnOnError);
               if (cityRef.current) {
                 const cell =
                   cityRef.current.grid[standingCell.x][standingCell.z];
@@ -1283,10 +1289,6 @@ export default function CitySimulator() {
                   }
                 }
               }
-              showToast(
-                "Accelerated Construction! Earned +20 SC, +10 XP",
-                "success",
-              );
             });
           }
         }
@@ -1375,29 +1377,16 @@ export default function CitySimulator() {
     }
   }, [fidoQuestState]);
 
-  // Establish WebSocket connection & do initial syncs
+  // Establish WebSocket connection (grid state arrives with /api/world in loadCity)
   useEffect(() => {
-    // 1. Initial HTTP fetches for bootstrap
-    const initialSync = async () => {
-      try {
-        const gridRes = await fetch("/api/grid");
-        if (gridRes.ok && cityRef.current) {
-          const gridData = await gridRes.json();
-          if (gridData.cells) {
-            cityRef.current.syncGrid(gridData.cells);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to run initial grid sync:", err);
-      }
-    };
-    initialSync();
-
-    // 2. Open WebSocket connection
     let socket: WebSocket | null = null;
-    let reconnectTimeout: any = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    // Set on cleanup so a closing socket doesn't schedule a reconnect for an
+    // effect that no longer exists (that loop kicked the new socket every 3 s)
+    let disposed = false;
 
     const connectWebSocket = () => {
+      if (disposed) return;
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
 
       let wsUrl = "";
@@ -1449,22 +1438,16 @@ export default function CitySimulator() {
 
           switch (data.type) {
             case "init":
-              // Load users
-              const playerEmail = currentUser?.email || "";
-              cityRef.current.loadAllDatabaseUsers(data.users, playerEmail);
+              // Load users (players are identified by id; the server never sends emails)
+              selfIdRef.current = data.selfId ?? currentUser?.id ?? null;
+              cityRef.current.syncRemotePlayers(data.users, selfIdRef.current);
               setOtherPlayers(
-                data.users.filter((u: any) => u.email !== playerEmail),
+                data.users.filter((u: any) => u._id !== selfIdRef.current),
               );
 
-              // Load NPCs
+              // City NPCs, simulated on the server
               const isAdmin = currentUser?.role === "admin";
-              cityRef.current.syncNpcs(data.npcs, isAdmin);
-
-              // Extract party info
-              const myDbUser = data.users.find((u: any) => u.email === playerEmail);
-              if (myDbUser && myDbUser.groupId) {
-                // To fetch party data, we request it via WS or REST. We'll do WS later.
-              }
+              cityRef.current.applyNpcSnapshots(data.npcs, data.t, true);
 
               // Load settings
               if (data.settings) {
@@ -1487,9 +1470,8 @@ export default function CitySimulator() {
               break;
 
             case "player-connected":
-              const currentEmail = currentUser?.email || "";
-              cityRef.current.addDatabaseUser(data.user, currentEmail);
-              if (data.user.email !== currentEmail) {
+              cityRef.current.addRemotePlayer(data.user, selfIdRef.current);
+              if (data.user._id !== selfIdRef.current) {
                 setOtherPlayers((prev) => [
                   ...prev.filter((p) => p._id !== data.user._id),
                   data.user,
@@ -1509,9 +1491,9 @@ export default function CitySimulator() {
               );
               break;
 
-            case "npcs-updated":
-              const isUserAdmin = currentUser?.role === "admin";
-              cityRef.current.syncNpcs(data.npcs, isUserAdmin);
+            case "npc-paths":
+            case "npcs-added":
+              cityRef.current.applyNpcSnapshots(data.npcs, data.t, false);
               break;
 
             case "settings-updated":
@@ -1542,6 +1524,17 @@ export default function CitySimulator() {
               setOtherPlayers((prev) =>
                 prev.filter((p) => p._id !== data.userId),
               );
+              break;
+
+            case "progress":
+              applyServerProgress(data, data.leveledUp);
+              settleAction(data.requestId);
+              break;
+
+            case "action-rejected":
+              if (!settleAction(data.requestId, data.error) && data.error) {
+                showToast(data.error, "warning");
+              }
               break;
 
             case "player-progressed":
@@ -1603,13 +1596,21 @@ export default function CitySimulator() {
       };
 
       socket.onclose = (e) => {
+        if (cityRef.current && cityRef.current.ws === socket) {
+          cityRef.current.ws = null;
+        }
+        if (disposed) return;
+        if (e.code === WS_CLOSE_REPLACED) {
+          showToast(
+            "You opened the game in another tab or device. This session is paused.",
+            "warning",
+          );
+          return;
+        }
         console.log(
           "WebSocket closed. Attempting reconnect in 3s...",
           e.reason,
         );
-        if (cityRef.current) {
-          cityRef.current.ws = null;
-        }
         reconnectTimeout = setTimeout(connectWebSocket, 3000);
       };
 
@@ -1625,14 +1626,35 @@ export default function CitySimulator() {
     connectWebSocket();
 
     return () => {
-      if (socket) {
-        socket.close();
-      }
+      disposed = true;
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
       }
+      if (socket) {
+        socket.close();
+      }
     };
   }, [currentUser]);
+
+  // Distance walked: the engine reports every frame, React state updates once a
+  // second (a per-frame setState re-rendered this whole component at 60 fps)
+  useEffect(() => {
+    const handleWalked = (e: Event) => {
+      walkedSinceFlushRef.current += (e as CustomEvent).detail.distance;
+    };
+    const flush = setInterval(() => {
+      const walked = walkedSinceFlushRef.current;
+      if (walked > 0) {
+        walkedSinceFlushRef.current = 0;
+        setDistanceWalked((prev) => prev + walked);
+      }
+    }, 1000);
+    window.addEventListener("shunya-walked", handleWalked);
+    return () => {
+      clearInterval(flush);
+      window.removeEventListener("shunya-walked", handleWalked);
+    };
+  }, []);
 
   // Initialize Simulation Engine
   useEffect(() => {
@@ -1673,6 +1695,10 @@ export default function CitySimulator() {
         });
       } catch (err) {
         console.error("Failed to load city simulator:", err);
+        showToast(
+          "Couldn't load the city from the server. Please refresh to try again.",
+          "warning",
+        );
       } finally {
         setLoading(false);
       }
@@ -1688,19 +1714,13 @@ export default function CitySimulator() {
           if (data.user) {
             localStorage.setItem("shunyascape_user", JSON.stringify(data.user));
             setCurrentUser(data.user);
-            setShunyaCoins(data.user.shunyaCoins || 100);
-            setWood(data.user.wood || 0);
-            setLevel(data.user.level || 1);
-            setXp(data.user.xp || 0);
-            setUnlockedPermits(data.user.unlockedPermits || []);
-            setCompletedAchievements(data.user.completedAchievements || []);
+            applyServerProgress(data.user);
             setHasSpawned(true);
             citySim.isAdmin = data.user.role === "admin";
             citySim.spawnPlayer(
               data.user.name,
               data.user.x,
               data.user.z,
-              data.user.email,
               data.user.clothingColor,
               data.user.id,
               data.user.level || 1,
@@ -5109,6 +5129,7 @@ export default function CitySimulator() {
             <div className="p-5 flex flex-col gap-3">
               {[
                 {
+                  id: "burger",
                   name: "Burger Meal",
                   emoji: "🍔",
                   cost: 25,
@@ -5116,6 +5137,7 @@ export default function CitySimulator() {
                   desc: "Fully restores hunger — the best choice!",
                 },
                 {
+                  id: "chicken",
                   name: "Chicken Snack",
                   emoji: "🍗",
                   cost: 10,
@@ -5123,6 +5145,7 @@ export default function CitySimulator() {
                   desc: "A quick bite. Restores 40% hunger.",
                 },
                 {
+                  id: "water",
                   name: "Bottled Water",
                   emoji: "💧",
                   cost: 5,

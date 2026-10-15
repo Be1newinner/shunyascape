@@ -65,6 +65,10 @@ const UserSchema = new Schema({
     type: [String],
     default: []
   },
+  completedQuests: {
+    type: [String],
+    default: []
+  },
   currentRefreshToken: {
     type: String,
     default: null

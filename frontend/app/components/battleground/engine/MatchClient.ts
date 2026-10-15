@@ -1,5 +1,5 @@
 import type { Stance } from "./Character";
-import type { ScopeId, WeaponId } from "./config";
+import type { GearLevel, ScopeId, WeaponId } from "./config";
 import type { LootItem } from "./Loot";
 import type { MatchSummary } from "../LiveMatches";
 
@@ -9,6 +9,8 @@ export interface RosterEntry {
   name: string;
   outfit: string;
   bot: boolean;
+  /** Squad id: soldiers with the same team fight together. */
+  team?: string;
 }
 
 export interface MatchStart {
@@ -22,6 +24,10 @@ export interface MatchStart {
   grace?: number;
   /** Match length limit in seconds. */
   limit?: number;
+  /** Bot difficulty 0..1, from the lobby's levels. */
+  difficulty?: number;
+  /** Number of teams (squads + solo players + bots). */
+  teams?: number;
 }
 
 export interface PodiumEntry {
@@ -37,6 +43,8 @@ export interface PodiumEntry {
 
 export interface MatchEnd {
   winner: string | null;
+  /** The winning squad (team id), when a team won. */
+  winnerTeam?: string | null;
   reason: "last" | "time" | "abandoned";
   podium: PodiumEntry[];
   survivors: number;
@@ -72,13 +80,19 @@ export interface NetState {
   vz: number;
   weapon: WeaponId | null;
   scope: ScopeId | null;
+  /** Armour levels being worn (0 = none). */
+  vest: GearLevel;
+  helmet: GearLevel;
+  /** Dropping in at the start: 0 on the ground, 1 free-falling, 2 under the parachute. */
+  drop: 0 | 1 | 2;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 export function encodeState(s: NetState): unknown[] {
-  const flags = (s.sprint ? 1 : 0) | (s.aim ? 2 : 0) | (s.grounded ? 4 : 0) | (s.reload ? 8 : 0) | (s.heal ? 16 : 0);
-  return [r2(s.x), r2(s.y), r2(s.z), r2(s.yaw), r2(s.pitch), s.stance[0], flags, r2(s.vx), r2(s.vz), s.weapon, s.scope];
+  const flags = (s.sprint ? 1 : 0) | (s.aim ? 2 : 0) | (s.grounded ? 4 : 0) | (s.reload ? 8 : 0) | (s.heal ? 16 : 0)
+    | (s.drop === 1 ? 32 : 0) | (s.drop === 2 ? 64 : 0);
+  return [r2(s.x), r2(s.y), r2(s.z), r2(s.yaw), r2(s.pitch), s.stance[0], flags, r2(s.vx), r2(s.vz), s.weapon, s.scope, s.vest + s.helmet * 4];
 }
 
 export function decodeState(d: unknown[]): NetState | null {
@@ -86,32 +100,50 @@ export function decodeState(d: unknown[]): NetState | null {
   const n = (i: number) => (typeof d[i] === "number" ? (d[i] as number) : 0);
   const flags = n(6);
   const st = d[5] === "c" ? "crouch" : d[5] === "p" ? "prone" : "stand";
+  const gear = n(11);
+  const lv = (v: number) => Math.max(0, Math.min(3, Math.floor(v))) as GearLevel;
   return {
     x: n(0), y: n(1), z: n(2), yaw: n(3), pitch: n(4), stance: st,
     sprint: !!(flags & 1), aim: !!(flags & 2), grounded: !!(flags & 4), reload: !!(flags & 8), heal: !!(flags & 16),
     vx: n(7), vz: n(8),
     weapon: (typeof d[9] === "string" ? d[9] : null) as WeaponId | null,
     scope: (typeof d[10] === "string" ? d[10] : null) as ScopeId | null,
+    vest: lv(gear % 4),
+    helmet: lv(gear / 4),
+    drop: flags & 64 ? 2 : flags & 32 ? 1 : 0,
   };
 }
 
 /** Messages the game server sends. */
 export type ServerMessage =
   | { t: "hello"; you: string }
-  | { t: "queue"; players: number; max: number; startsIn: number | null; full: boolean; position: number; matches: MatchSummary[] }
+  | { t: "queue"; players: number; max: number; startsIn: number | null; full: boolean; position: number; squad?: number; matches: MatchSummary[] }
+  | { t: "party"; code: string | null; leader?: string; members?: SquadMember[] }
+  | { t: "party-error"; error: string }
   | { t: "queue-left" }
   | { t: "match-failed" }
   | ({ t: "start" } & MatchStart)
   | { t: "snap"; s: unknown[][]; alive: number }
   | ({ t: "zone"; elapsed?: number } & ZoneSync)
   | { t: "fx"; by: string; w: WeaponId; o: number[]; e: number[]; h: number }
-  | { t: "hp"; id: string; hp: number; by: string | null; head: boolean }
+  /** `ar`: the target's armour after the hit [vest, vestDur, helmet, helmetDur] (players only). */
+  | { t: "hp"; id: string; hp: number; by: string | null; head: boolean; ar?: number[] }
+  | { t: "nade"; by: string; o: number[]; v: number[] }
+  | { t: "boom"; by: string; pos: number[] }
+  | { t: "airdrop"; id: string; x: number; z: number; items: Array<{ id: string; item: LootItem }>; land: number }
   | { t: "kill"; victim: string; killer: string | null; w: string; head: boolean; alive: number }
   | { t: "taken"; id: string; by: string }
   | { t: "pick-denied"; id: string }
   | { t: "spawn"; id: string; item: LootItem; pos: number[] }
-  | { t: "result"; placement: number; kills: number; damage: number; survived: number; survivor?: boolean }
+  | { t: "result"; placement: number; kills: number; damage: number; survived: number; survivor?: boolean; teams?: number; squad?: boolean }
   | ({ t: "end" } & MatchEnd);
+
+export interface SquadMember {
+  id: string;
+  name: string;
+  outfit: string;
+  level: number;
+}
 
 type Listener = (msg: ServerMessage) => void;
 
@@ -182,6 +214,19 @@ export class MatchClient {
   }
   leave() {
     this.send({ t: "leave" });
+  }
+  createSquad() {
+    this.send({ t: "party-create" });
+  }
+  joinSquad(code: string) {
+    this.send({ t: "party-join", code });
+  }
+  leaveSquad() {
+    this.send({ t: "party-leave" });
+  }
+
+  get open() {
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
   close() {

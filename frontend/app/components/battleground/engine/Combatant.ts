@@ -1,7 +1,8 @@
 import * as THREE from "three/webgpu";
 import type RAPIER from "@dimforge/rapier3d-compat";
 import { CharacterVisual, type CharacterPose, type Stance } from "./Character";
-import { MEDKIT_HEAL_TIME, PLAYER_MAX_HEALTH, SCOPES, WEAPONS, type AmmoType, type ScopeId, type WeaponId } from "./config";
+import { ARMOR, GRENADE, MEDKIT_HEAL_TIME, NO_GEAR, PLAYER_MAX_HEALTH, SCOPES, WEAPONS, type AmmoType, type Gear, type GearLevel, type GearSlot, type ScopeId, type WeaponId } from "./config";
+import { chuteMesh } from "./Drop";
 import { groups, LAYER, type Physics } from "./Physics";
 import { makeGun, type Gun, type WeaponFactory } from "./Weapons";
 import type { NetState } from "./MatchClient";
@@ -40,6 +41,14 @@ export class Combatant {
   medkits = 0;
   /** Scopes carried but not mounted on a gun. */
   scopeBag: ScopeId[] = [];
+  /** Worn armour and what's left of it. */
+  gear: Gear = { ...NO_GEAR };
+  grenades = 0;
+  /** Squad: soldiers on the same team can't hurt each other. Empty = on your own. */
+  team = "";
+  /** Dropping in at the start: 1 free-falling, 2 under the parachute. */
+  dropping: 0 | 1 | 2 = 0;
+  private chuteObj: THREE.Object3D | null = null;
 
   fireCooldown = 0;
   reloadLeft = 0;
@@ -102,6 +111,57 @@ export class Combatant {
 
   get eyeHeight() {
     return EYE_HEIGHT[this.stance];
+  }
+
+  /** Put on armour; returns what was worn in that slot before (to drop it). */
+  wear(slot: GearSlot, level: GearLevel, dur?: number) {
+    const old = { level: this.gear[slot], dur: slot === "vest" ? this.gear.vestDur : this.gear.helmetDur };
+    const fresh = dur ?? ARMOR[slot].durability[level];
+    if (slot === "vest") this.gear = { ...this.gear, vest: level, vestDur: fresh };
+    else this.gear = { ...this.gear, helmet: level, helmetDur: fresh };
+    this.visual.setGear(this.gear.vest, this.gear.helmet);
+    return old;
+  }
+
+  /** Armour took a beating; it breaks when nothing is left. */
+  wearDown(vestWear: number, helmetWear: number) {
+    const g = { ...this.gear };
+    if (g.vest && vestWear) {
+      g.vestDur -= vestWear;
+      if (g.vestDur <= 0) g.vest = g.vestDur = 0;
+    }
+    if (g.helmet && helmetWear) {
+      g.helmetDur -= helmetWear;
+      if (g.helmetDur <= 0) g.helmet = g.helmetDur = 0;
+    }
+    this.gear = g;
+    this.visual.setGear(g.vest, g.helmet);
+  }
+
+  addGrenades(n: number) {
+    const before = this.grenades;
+    this.grenades = Math.min(GRENADE.carry, this.grenades + n);
+    return this.grenades - before;
+  }
+
+  /** Jump straight to a spot (dropping in from the plane), no collisions on the way. */
+  teleport(p: THREE.Vector3Like) {
+    this.position.set(p.x, p.y, p.z);
+    const hh = this.halfHeight(this.stance);
+    this.body.setTranslation({ x: p.x, y: p.y + hh + RADIUS, z: p.z }, true);
+    this.body.setNextKinematicTranslation({ x: p.x, y: p.y + hh + RADIUS, z: p.z });
+  }
+
+  /** Free-fall lies the soldier flat; the canopy stands them up under it. */
+  setDropping(state: 0 | 1 | 2) {
+    this.dropping = state;
+    const want: Stance = state === 1 ? "prone" : "stand";
+    if (this.stance !== want) {
+      this.stance = want;
+      this.collider.setHalfHeight(this.halfHeight(want));
+    }
+    if (state === 2) this.visual.setChute((this.chuteObj ??= chuteMesh()));
+    else this.visual.setChute(null);
   }
 
   get busy() {
@@ -322,6 +382,7 @@ export class Combatant {
       reload: this.reloadLeft > 0, heal: this.healLeft > 0,
       vx: this.velocity.x, vz: this.velocity.z,
       weapon: g?.stats.id ?? null, scope: g?.scope ?? null,
+      vest: this.gear.vest, helmet: this.gear.helmet, drop: this.dropping,
     };
   }
 
@@ -367,6 +428,14 @@ export class Combatant {
     this.reloadTotal = Math.max(this.reloadTotal, 1);
     this.healLeft = s.heal ? 1 : 0;
     this.netEquip(s.weapon, s.scope);
+    if (s.vest !== this.gear.vest || s.helmet !== this.gear.helmet) {
+      this.gear = { ...this.gear, vest: s.vest, helmet: s.helmet };
+      this.visual.setGear(s.vest, s.helmet);
+    }
+    if (s.drop !== this.dropping) {
+      this.dropping = s.drop;
+      this.visual.setChute(s.drop === 2 ? (this.chuteObj ??= chuteMesh()) : null);
+    }
     const hh = this.halfHeight(this.stance);
     this.body.setNextKinematicTranslation({ x: this.position.x, y: this.position.y + hh + RADIUS, z: this.position.z });
   }

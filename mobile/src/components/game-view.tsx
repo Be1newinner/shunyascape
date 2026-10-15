@@ -17,7 +17,7 @@ import { APP_USER_AGENT, GAME_ORIGIN, GAME_URL, colors } from '@/lib/config';
  */
 export default function GameView() {
   useKeepAwake();
-  const { token, signOut } = useAuth();
+  const { token, signOut, renew } = useAuth();
   const webview = useRef<WebView>(null);
   const canGoBack = useRef(false);
   const [uri, setUri] = useState<string | null>(null);
@@ -35,7 +35,9 @@ export default function GameView() {
     let cancelled = false;
     api
       .handoff(token)
-      .then(({ code }) => {
+      .then(({ code, appToken }) => {
+        // Every launch renews the session token for another 30 days.
+        if (appToken) void renew(appToken);
         if (!cancelled) setUri(`${GAME_URL}/api/auth/handoff?code=${encodeURIComponent(code)}&next=%2Fbattleground`);
       })
       .catch((err) => {
@@ -50,7 +52,7 @@ export default function GameView() {
     return () => {
       cancelled = true;
     };
-  }, [token, attempt, signOut]);
+  }, [token, attempt, signOut, renew]);
 
   // Android back button navigates inside the game before leaving the app.
   useEffect(() => {

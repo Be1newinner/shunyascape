@@ -43,6 +43,6 @@ export const api = {
   resetPassword: (email: string, otp: string, newPassword: string) =>
     call<object>('/api/auth/reset-password', { email, otp, newPassword }),
   /** One-time code that logs the game's WebView into this session. */
-  handoff: (token: string) => call<{ code: string }>('/api/auth/handoff', undefined, token),
+  handoff: (token: string) => call<{ code: string; appToken?: string }>('/api/auth/handoff', undefined, token),
   logout: (token: string) => call<object>('/api/auth/logout', undefined, token),
 };

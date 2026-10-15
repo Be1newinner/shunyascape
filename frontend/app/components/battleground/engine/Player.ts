@@ -124,6 +124,36 @@ export class PlayerController {
     return { fire: wantFire && !me.sprinting, actions };
   }
 
+  /** Look around only (in the plane, falling, or spectating). Returns the one-shot actions. */
+  lookOnly() {
+    const { dx, dy } = this.input.consumeMouse();
+    const actions = this.input.actions();
+    const sens = this.sensitivity * (this.input.touch ? this.touchScale : 1);
+    this.yaw -= dx * sens;
+    this.pitch = clamp(this.pitch - dy * sens, -1.35, 1.1);
+    return actions;
+  }
+
+  /**
+   * Third-person camera `dist` metres behind `focus`, aimed with the current
+   * yaw / pitch (used for the plane, the drop and spectating someone).
+   */
+  chaseCamera(dt: number, focus: THREE.Vector3, dist: number, fov = HIP_FOV) {
+    const cam = this.camera;
+    const pitch = this.pitch;
+    const dir = new THREE.Vector3(Math.sin(this.yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(this.yaw) * Math.cos(pitch));
+    const back = dir.clone().negate();
+    const hit = this.physics.castRay(focus, back, dist + 0.3, LAYER.WORLD);
+    const d = hit ? Math.max(0.6, hit.distance - 0.3) : dist;
+    this.camDist = d < this.camDist ? d : lerp(this.camDist, d, 1 - Math.exp(-dt * 4));
+    cam.position.copy(focus).addScaledVector(back, this.camDist);
+    cam.lookAt(focus.clone().addScaledVector(dir, 4));
+    if (Math.abs(cam.fov - fov) > 0.01) cam.fov = lerp(cam.fov, fov, 1 - Math.exp(-dt * 6));
+    cam.near = 0.1;
+    cam.updateProjectionMatrix();
+    this.adsBlend = 0;
+  }
+
   /** Called after a shot: camera recoil and spread bloom. */
   onShot() {
     const g = this.me.gun?.stats;

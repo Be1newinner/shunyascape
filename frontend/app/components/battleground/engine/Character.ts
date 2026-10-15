@@ -2,6 +2,8 @@ import * as THREE from "three/webgpu";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { WeaponModel } from "./Weapons";
+import type { GearLevel } from "./config";
+import { helmetMesh, vestMesh } from "./Gear";
 import { clamp, lerp } from "./noise";
 
 export type Stance = "stand" | "crouch" | "prone";
@@ -110,6 +112,11 @@ export class CharacterVisual {
   private yawOffset = 0;
   readonly meshes: THREE.SkinnedMesh[] = [];
   visibleWeapon = true;
+  /** Worn armour, placed on the head / chest bones every frame. */
+  private gearObj: { helmet: THREE.Object3D | null; vest: THREE.Object3D | null } = { helmet: null, vest: null };
+  private gearLevels = { helmet: 0, vest: 0 };
+  /** Parachute canopy (while gliding down at the start of a match). */
+  private chute: THREE.Object3D | null = null;
 
   constructor(gltf: GLTF, tint?: THREE.ColorRepresentation) {
     this.model = cloneSkinned(gltf.scene);
@@ -155,6 +162,41 @@ export class CharacterVisual {
     const toe = this.bones.LeftFoot.children[0]?.getWorldPosition(new THREE.Vector3()) ?? foot.clone().add(new THREE.Vector3(0, 0, 1));
     this.yawOffset = toe.z - foot.z >= 0 ? 0 : Math.PI;
     this.model.rotation.y = this.yawOffset;
+  }
+
+  /** Show the armour this soldier is wearing (level 0 = none). */
+  setGear(vest: GearLevel, helmet: GearLevel) {
+    for (const [slot, level] of [["vest", vest], ["helmet", helmet]] as const) {
+      if (this.gearLevels[slot] === level) continue;
+      this.gearLevels[slot] = level;
+      this.gearObj[slot]?.removeFromParent();
+      this.gearObj[slot] = level ? (slot === "vest" ? vestMesh(level) : helmetMesh(level)) : null;
+      if (this.gearObj[slot]) this.body.add(this.gearObj[slot]!);
+    }
+  }
+
+  setChute(obj: THREE.Object3D | null) {
+    if (this.chute === obj) return;
+    this.chute?.removeFromParent();
+    this.chute = obj;
+    if (obj) this.root.add(obj);
+  }
+
+  /** Put the armour on the bones it belongs to (bones carry the model's scale, so no parenting). */
+  private placeGear() {
+    const { helmet, vest } = this.gearObj;
+    if (!helmet && !vest) return;
+    this.body.updateMatrixWorld(true);
+    const inv = this.body.getWorldQuaternion(new THREE.Quaternion()).invert();
+    const put = (obj: THREE.Object3D, bone: THREE.Bone, up: number, fwd: number) => {
+      const q = bone.getWorldQuaternion(new THREE.Quaternion());
+      const p = bone.getWorldPosition(new THREE.Vector3());
+      p.add(new THREE.Vector3(0, up, fwd).applyQuaternion(q));
+      obj.position.copy(this.body.worldToLocal(p));
+      obj.quaternion.copy(inv).multiply(q);
+    };
+    if (helmet) put(helmet, this.bones.Head, 0.1, 0.01);
+    if (vest) put(vest, this.bones.Spine1, 0.06, 0.0);
   }
 
   setWeapon(model: WeaponModel | null) {
@@ -276,11 +318,13 @@ export class CharacterVisual {
 
     if (detail <= 0) {
       this.placeWeaponOnHand();
+      this.placeGear();
       return;
     }
 
     if (this.stanceBlend.crouch > 0.01 && prone < 0.5) this.applyCrouch(this.stanceBlend.crouch);
     this.applyUpperBody(pose, dt);
+    this.placeGear();
   }
 
   private applyCrouch(t: number) {
@@ -408,6 +452,7 @@ export class CharacterVisual {
     this.body.position.y = lerp(this.body.position.y, 0.14, ease);
     this.mixer.update(dt * (1 - t));
     if (this.weapon) this.weaponHolder.position.y = lerp(this.weaponHolder.position.y, 0.08, ease);
+    this.placeGear();
   }
 
   dispose() {

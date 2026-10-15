@@ -11,27 +11,15 @@ export type Action =
   | "prone"
   | "switch"
   | "heal"
+  | "throw"
   | "slot1"
   | "slot2"
   | "slot3";
 
-// Requested layout: WASD move, U I J K O L actions, Space jump. Classic PC keys also work.
-const ACTION_KEYS: Record<string, Action> = {
-  Space: "jump",
-  KeyU: "reload",
-  KeyR: "reload",
-  KeyI: "pickup",
-  KeyF: "pickup",
-  KeyJ: "crouch",
-  KeyC: "crouch",
-  KeyK: "prone",
-  KeyZ: "prone",
-  KeyO: "switch",
-  KeyL: "heal",
-  Digit1: "slot1",
-  Digit2: "slot2",
-  Digit3: "slot3",
-};
+import { DEFAULT_BINDINGS, SECONDARY_KEYS, type BindAction, type Bindings } from "./bindings";
+
+/** One-shot actions a key can trigger (movement and sprint are held, not queued). */
+const ONE_SHOT: BindAction[] = ["jump", "reload", "pickup", "crouch", "prone", "switch", "heal", "throw", "slot1", "slot2", "slot3"];
 
 export class Input {
   private keys = new Set<string>();
@@ -51,7 +39,22 @@ export class Input {
   /** Joystick pushed past its rim: sprint. */
   stickSprint = false;
 
+  private bindings: Bindings = { ...DEFAULT_BINDINGS };
+  /** key code → one-shot action, from the player's bindings plus unclaimed classic keys. */
+  private actionKeys: Record<string, Action> = {};
+
+  /** Use the player's own key layout. */
+  setBindings(b: Bindings) {
+    this.bindings = { ...b };
+    const map: Record<string, Action> = {};
+    const used = new Set(Object.values(b));
+    for (const [code, action] of Object.entries(SECONDARY_KEYS)) if (!used.has(code) && action && action !== "sprint") map[code] = action as Action;
+    for (const a of ONE_SHOT) map[b[a]] = a as Action;
+    this.actionKeys = map;
+  }
+
   constructor(private element: HTMLElement) {
+    this.setBindings(this.bindings);
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
     window.addEventListener("blur", this.onBlur);
@@ -85,13 +88,15 @@ export class Input {
 
   /** Movement intent: forward / right in -1..1, from keys or the joystick. */
   moveAxis() {
-    const f = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0) + this.stickY;
-    const r = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0) + this.stickX;
+    const b = this.bindings;
+    const f = (this.keys.has(b.forward) ? 1 : 0) - (this.keys.has(b.back) ? 1 : 0) + this.stickY;
+    const r = (this.keys.has(b.right) ? 1 : 0) - (this.keys.has(b.left) ? 1 : 0) + this.stickX;
     return { f: Math.max(-1, Math.min(1, f)), r: Math.max(-1, Math.min(1, r)) };
   }
 
   get sprintHeld() {
-    return this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") || this.stickSprint;
+    const secondarySprint = !Object.values(this.bindings).includes("ShiftRight") && this.keys.has("ShiftRight");
+    return this.keys.has(this.bindings.sprint) || secondarySprint || this.stickSprint;
   }
 
   // ---- on-screen controls ----
@@ -141,9 +146,9 @@ export class Input {
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (!this.locked) return;
-    if (e.code === "Tab" || e.code === "Space") e.preventDefault();
+    if (e.code === "Tab" || e.code === "Space" || this.actionKeys[e.code]) e.preventDefault();
     if (!e.repeat) {
-      const a = ACTION_KEYS[e.code];
+      const a = this.actionKeys[e.code];
       if (a) this.queue.push(a);
     }
     this.keys.add(e.code);

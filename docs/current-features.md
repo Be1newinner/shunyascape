@@ -14,6 +14,9 @@ ShunyaScape is a browser battle royale (`/battleground`). The earlier city-build
 ## 3. Sessions: Single-Device Login
 * Access token (1 day) and refresh token (30 days) in HTTP-only, SameSite=Lax cookies.
 * Each login rotates `currentSessionId` / `currentRefreshToken`; every authenticated call checks them, so signing in elsewhere ends the old session with `401`.
+* Rotating refresh tokens (`backend/src/middlewares/auth.ts`): when the 1-day access token has expired, the refresh cookie buys a new access token **and a new 30-day refresh token** (the old one is kept as `previousRefreshToken` and still accepted for 60 s, so parallel requests don't sign you out; rotation is atomic). Players stay signed in as long as they come back within 30 days. Every refresh token has a unique `jti`; a refresh token is never accepted as an access token.
+* The mobile app's bearer token is valid while its session is (a new sign-in or logout ends it); every launch gets a fresh 30-day token from `POST /api/auth/handoff` (`appToken`), stored silently.
+* The landing page's Play / Sign in buttons check the session first (`app/lib/session.ts`): signed-in visitors go straight to `/battleground` instead of the sign-in modal.
 * The game listens for the `auth-unauthorized` event (fired on any `401`), stops the match, clears local storage and shows a "Session expired" screen.
 
 ## 4. Password & Token Security
@@ -94,4 +97,33 @@ ShunyaScape is a browser battle royale (`/battleground`). The earlier city-build
 ## 12. Install as an App (PWA)
 * The site is installable: web app manifest (`app/manifest.ts`, opens `/battleground` full screen), PNG install icons at `/pwa-icon/192`, `/pwa-icon/512` and a maskable `/pwa-icon/maskable-512` (`app/pwa-icon/[variant]/route.tsx`, drawn by `app/lib/appIcon.tsx`, which the Apple icon shares), and a service worker (`public/sw.js`, production only) that caches nothing and shows an offline page when a page load fails.
 * "Install ShunyaScape" card (`components/InstallPrompt.tsx`) slides in a moment after someone arrives — on every page from the root layout, and in the battleground lobby (not during a match). **Install** opens the browser's install dialog (Chrome, Edge, Samsung Internet); on iPhone/iPad Safari it explains Share → Add to Home Screen. **Skip** hides it for 7 days (local storage). Never shown inside the native app or once installed.
+
+## 13. Dropping In: Plane & Parachute
+* Every match starts in a transport plane (`engine/Drop.ts`) flying a straight line across the map (same route for everyone, from the match seed; each player boards when they press start). Space / the on-screen JUMP button leaves the plane while it's over the island; you're thrown out at the far edge otherwise.
+* Free-fall: push forward to dive (fast and steep), pull back to float, steer sideways. The parachute opens with Space / CHUTE, or by itself 85 m above the ground; under the canopy you glide down and steer to your spot. Roofs and trees stop you.
+* HUD: altimeter, prompts, the flight path on the minimap. Others see you fall and your canopy (network flags). You send no position while in the plane; bots ignore players who are still in the air, and spawn protection (15 s, online) starts when you land. Practice bots hold fire until 20 s after you land. Nobody takes zone damage before landing.
+
+## 14. Armour, Grenades & Airdrops
+* Helmets and vests, levels 1–3 (sand, olive, black-and-gold): they soak 30 / 40 / 55% of a hit (helmet: headshots, vest: body; half of that against blasts) and wear down until they break. Shown on the soldier (`engine/Gear.ts`) and under the health bar with durability. Better armour is picked up by walking over it; the old piece drops. Dead soldiers drop theirs. Bots wear more armour in tougher lobbies.
+* Frag grenades (G, or the grenade button; carry up to 4): a thrown arc that bounces and rolls (`engine/Grenades.ts`), bursting after 3.6 s — up to 78 damage within 7.5 m if you're not behind cover (blasts are exempt from the 19-damage bullet cap). Everyone sees the throw; online the server checks the burst (one grenade at a time, plausible fuse and distance) and applies the damage with its own line-of-sight test. Squad mates are never hurt; the thrower can be.
+* Airdrops at 2:20 and 4:50 of the match clock: a plane flies over a spot inside the next zone, a red crate floats down (32 s) and lands trailing red smoke. Inside: level-3 vest and helmet, a scoped rifle (Kar98k + 6× or M416 + 4×) with ammo, 2 grenades and 2 med kits. Marked on the minimap and on screen. The server owns the contents and refuses pickups before landing; nearby bots go for it too.
+* Server authority: armour levels come from the player's state, durability is kept by the server (`hp` messages carry it back); damage formula shared in `rules.ts` / `config.ts` (`armorHit`, `blastDamage`).
+
+## 15. Combat Feedback, Kill-cam & Spectating
+* Floating damage numbers over whoever you hit (yellow for headshots, red for kills; quick hits merge), the server's numbers online.
+* Callouts: First blood, Headshot, Double / Triple / Quad kill, Rampage (10 s window), with a rising sting, plus "Airdrop incoming". Phones vibrate on hits, kills, getting hurt and nearby blasts.
+* Red dot where a shot at you came from (hits and close misses), on the minimap and on screen, fading over 6 s.
+* Bullet tracers that pass within 4 m of the camera aren't drawn (they looked like giant white arrows flying at you), and none show during the kill-cam. Crosshair, pick-up prompt and damage arcs hide once you're dead.
+* Kill-cam: for 4 s after death the camera zooms in on whoever killed you ("Eliminated by", weapon, distance, headshot, their HP left), then the results. **Spectate** follows a living soldier from behind (squad mates first, then your killer, then the nearest); Next cycles, Results returns.
+
+## 16. Squads, Missions, Ranked & Bot Difficulty
+* Squads (`backend/src/match/Party.ts`, lobby Squad tab): create one and share its 5-letter code or invite link (`/battleground?squad=CODE`, native share sheet on phones); up to 4 players. The leader starts matchmaking for everyone; the squad lands in the same match as one team: no friendly fire (bullets or grenades), name tags and health bars over mates, a squad list and minimap dots. A player who dies spectates while the squad fights on; the squad is placed together when its last member falls ("Squad victory" if it wins). The lobby keeps one game-server connection open for this.
+* Daily missions (`backend/src/game/missions.ts`, Missions tab): three a day (UTC) from a pool of 14 (kills, weapon kills, headshots, grenade kill, damage, top 10, survive, win, loot an airdrop, play with your squad…), progress only from online match results, XP paid on **Claim**. Login streak: XP every day (20 → 80 by day 7); 3 and 7 days in a row unlock the Ember and Gold Elite outfits. A toast greets the day's first visit.
+* Ranked (`backend/src/game/ranked.ts`, Ranked tab + tier chip): RP per online match from placement (relative to the number of teams, −18…+40) plus kills (up to +50) and +10 for surviving; tiers Bronze → Silver → Gold → Platinum → Diamond → Crown → Ace (divisions III–I), top 10 Ace players are Conqueror. Weekly seasons (ISO week, reset Monday 00:00 UTC), last season's tier kept. `GET /api/leaderboard` (top 50 + your place), `POST /api/missions/claim`. The results screen shows the match's XP and RP.
+* Adaptive bots: difficulty from the lobby's average level (level 1 → Rookie … 26+ → Elite) sharpens bots' aim, reactions and notice range and gives them more armour; practice uses your own level. Shown on the start card.
+* Stats writes use atomic `$inc` so a podium bonus, a mission claim and a match result never overwrite each other.
+
+## 17. Customize Controls
+* Lobby → Settings → **Customize controls** (`ControlsEditor.tsx`). Touch layout: every on-screen control (fire ×2, aim, jump, crouch, prone, reload, switch, med kit, grenade, pick up, pause, joystick, and the plane/parachute button) can be dragged anywhere, resized (60–180%) and faded (opacity 25–100%), with separate Combat and Plane & parachute views; reset one or all. Saved on the device (`bg.touchLayout`).
+* Keyboard: click an action and press the key you want (a taken key swaps over); defaults are WASD, Space, Shift, U I J K O L, G, 1–3. Saved in `bg.bindings`; the start card and settings show your own keys.
 

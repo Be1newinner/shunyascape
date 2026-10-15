@@ -12,6 +12,8 @@ interface AuthState {
   onboarded: boolean;
   /** Store the session the backend issued. */
   signIn: (token: string) => Promise<void>;
+  /** Save a renewed token for the same session (next launch uses it) without reloading the game. */
+  renew: (token: string) => Promise<void>;
   /** Forget the session (and tell the backend, unless it already ended). */
   signOut: (opts?: { remote?: boolean }) => Promise<void>;
   finishOnboarding: () => Promise<void>;
@@ -40,6 +42,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(t);
   }, []);
 
+  const renew = useCallback(async (t: string) => {
+    await SecureStore.setItemAsync(TOKEN_KEY, t).catch(() => {});
+  }, []);
+
   const signOut = useCallback(
     async ({ remote = true } = {}) => {
       if (remote && token) await api.logout(token).catch(() => {});
@@ -56,8 +62,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ ready, token, onboarded, signIn, signOut, finishOnboarding }),
-    [ready, token, onboarded, signIn, signOut, finishOnboarding],
+    () => ({ ready, token, onboarded, signIn, renew, signOut, finishOnboarding }),
+    [ready, token, onboarded, signIn, renew, signOut, finishOnboarding],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

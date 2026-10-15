@@ -131,25 +131,56 @@ export const SCOPES: Record<ScopeId, ScopeStats> = {
 };
 
 export const AMMO_PICKUP: Record<AmmoType, number> = { "5.56mm": 60, "7.62mm": 20, "9mm": 30 };
+
+/** Body armour. Level 0 = none. Same numbers as the game server's rules.ts. */
+export type GearSlot = "vest" | "helmet";
+export type GearLevel = 0 | 1 | 2 | 3;
+export const ARMOR: Record<GearSlot, { name: string; reduce: readonly number[]; durability: readonly number[] }> = {
+  // Share of a hit the armour soaks up, and how much damage it can take before it breaks.
+  vest: { name: "Vest", reduce: [0, 0.3, 0.4, 0.55], durability: [0, 80, 120, 170] },
+  helmet: { name: "Helmet", reduce: [0, 0.3, 0.4, 0.55], durability: [0, 60, 90, 130] },
+};
+
+/** Worn armour with how much of it is left. */
+export interface Gear {
+  vest: GearLevel;
+  vestDur: number;
+  helmet: GearLevel;
+  helmetDur: number;
+}
+
+export const NO_GEAR: Gear = { vest: 0, vestDur: 0, helmet: 0, helmetDur: 0 };
+
+/**
+ * Damage after armour: the helmet takes headshots, the vest everything else
+ * (and half of a blast). Returns the damage dealt and the wear on each piece.
+ */
+export function armorHit(raw: number, gear: Gear, part: "head" | "body" | "blast") {
+  const slot: GearSlot = part === "head" ? "helmet" : "vest";
+  const level = gear[slot];
+  if (level === 0) return { damage: raw, vestWear: 0, helmetWear: 0 };
+  const reduce = ARMOR[slot].reduce[level] * (part === "blast" ? 0.5 : 1);
+  const wear = raw * (part === "blast" ? 0.5 : 1);
+  return { damage: raw * (1 - reduce), vestWear: slot === "vest" ? wear : 0, helmetWear: slot === "helmet" ? wear : 0 };
+}
+
+/** Frag grenade: thrown with G (or the grenade button), bursts after the fuse. */
+export const GRENADE = {
+  fuse: 3.6,
+  /** Hurts anyone within this many metres who isn't behind cover. */
+  radius: 7.5,
+  /** At the centre; falls off with distance. A grenade is not a bullet, so MAX_HIT_DAMAGE doesn't apply. */
+  maxDamage: 78,
+  throwSpeed: 19,
+  carry: 4,
+} as const;
+
+export function blastDamage(dist: number) {
+  if (dist >= GRENADE.radius) return 0;
+  return GRENADE.maxDamage * Math.pow(1 - dist / GRENADE.radius, 1.3);
+}
 export const MEDKIT_HEAL_TIME = 4.5;
 
-/** Keyboard layout requested for the battleground: WASD + U I J K O L + Space. */
-export const CONTROLS = [
-  { keys: "W A S D", action: "Move" },
-  { keys: "Mouse", action: "Look around" },
-  { keys: "Left click", action: "Shoot" },
-  { keys: "Right click", action: "Aim / scope" },
-  { keys: "Space", action: "Jump" },
-  { keys: "Shift", action: "Sprint" },
-  { keys: "U", action: "Reload" },
-  { keys: "I", action: "Pick up" },
-  { keys: "J", action: "Crouch" },
-  { keys: "K", action: "Prone" },
-  { keys: "O", action: "Switch weapon" },
-  { keys: "L", action: "Use med kit" },
-  { keys: "1 / 2 / 3", action: "Weapon slots" },
-  { keys: "Mouse wheel", action: "Next weapon" },
-] as const;
 
 export const BOT_NAMES = [
   "Ravi_OP", "NinjaArjun", "xSniperKing", "DesiDragon", "Ghost_Vikram", "ShadowPriya", "Thunder_Kabir",

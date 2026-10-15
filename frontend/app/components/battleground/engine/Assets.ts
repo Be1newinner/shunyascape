@@ -22,6 +22,7 @@ export const MODEL_FILES = {
   rocks: "models/rock_moss_set_01.glb",
   boulder: "models/namaqualand_boulder_02.glb",
   log: "models/dead_tree_trunk.glb",
+  grenade: "models/stick_grenade.glb",
 } as const;
 
 export const TREE_TYPES = ["pine_a", "pine_b", "oak_a", "ash_a", "aspen_a", "bush_a", "bush_b"] as const;

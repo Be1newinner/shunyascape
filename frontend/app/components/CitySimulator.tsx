@@ -33,6 +33,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { ThreeCity } from "./simulation/ThreeCity";
+import GoogleSignInButton from "./GoogleSignInButton";
 import {
   BuildType,
   CityStats,
@@ -683,34 +684,40 @@ export default function CitySimulator() {
         return;
       }
 
-      const user = data.user;
-      localStorage.setItem("shunyascape_user", JSON.stringify(user));
-      setCurrentUser(user);
-      applyServerProgress(user);
-      setHasSpawned(true);
-      setShowAuthModal(false);
-      setAuthLoading(false);
-      showToast(`Welcome back, ${user.name}!`, "success");
-
-      if (cityRef.current) {
-        cityRef.current.isAdmin = user.role === "admin";
-        cityRef.current.spawnPlayer(
-          user.name,
-          user.x,
-          user.z,
-          user.clothingColor,
-          user.id,
-          user.level || 1,
-        );
-        setSoundEnabled(true);
-        cityRef.current.audio.toggle(true);
-      }
+      completeSignIn(data.user, `Welcome back, ${data.user.name}!`);
     } catch (err) {
       console.error(err);
       setAuthError("Connection failed. Please verify database availability.");
       setAuthLoading(false);
     }
   };
+
+  /** Enter the world after a successful email or Google sign-in. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function completeSignIn(user: any, greeting: string) {
+    localStorage.setItem("shunyascape_user", JSON.stringify(user));
+    setCurrentUser(user);
+    applyServerProgress(user);
+    setHasSpawned(true);
+    setShowAuthModal(false);
+    setAuthLoading(false);
+    setAuthError("");
+    showToast(greeting, "success");
+
+    if (cityRef.current) {
+      cityRef.current.isAdmin = user.role === "admin";
+      cityRef.current.spawnPlayer(
+        user.name,
+        user.x,
+        user.z,
+        user.clothingColor,
+        user.id,
+        user.level || 1,
+      );
+      setSoundEnabled(true);
+      cityRef.current.audio.toggle(true);
+    }
+  }
 
   const buyPermit = (permitKey: string, cost: number) => {
     if (shunyaCoins < cost) {
@@ -2618,6 +2625,19 @@ export default function CitySimulator() {
                 simulation.
               </p>
             </div>
+
+            {authMode !== "reset" && (
+              <GoogleSignInButton
+                text={authMode === "register" ? "signup_with" : "continue_with"}
+                onSignedIn={(user, created) =>
+                  completeSignIn(
+                    user,
+                    created ? `Welcome to ShunyaScape, ${user.name}!` : `Welcome back, ${user.name}!`,
+                  )
+                }
+                onError={(message) => setAuthError(message)}
+              />
+            )}
 
             {/* Mode Switch Tabs */}
             {authMode !== "reset" ? (

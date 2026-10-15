@@ -92,3 +92,10 @@
 * Set `NEXT_PUBLIC_SITE_URL` (e.g. `https://your-domain`) so canonical links, the sitemap and social cards use absolute URLs.
 * Fonts: Outfit (display) and Inter (text) via `next/font`, self-hosted at build time.
 * Fix: the page body is scrollable again (it was locked with `overflow: hidden` for the game); the game page now locks scroll itself.
+
+## 15. Sign in with Google
+* "Continue with Google" / "Sign up with Google" in the landing sign-in modal and the in-game sign-in form (`frontend/app/components/GoogleSignInButton.tsx`), using Google Identity Services in popup mode.
+* The browser gets a Google-signed ID token; `POST /api/auth/google` verifies its signature, issuer, expiry and audience with `google-auth-library` (`backend/src/utils/google.ts`) and starts the usual single-device cookie session. No client secret is needed.
+* New Google users are created already verified (no OTP email). An existing account with the same verified email is linked. If that account was never verified, its password is cleared, so whoever registered the email can't keep access.
+* Google-only accounts have no password; a password login gets a "use Google" message, and "Forgot password" can add one later.
+* Configuration: set `GOOGLE_CLIENT_ID` on the backend only. The frontend reads it from `GET /api/auth/config`, and the button stays hidden when it isn't set.

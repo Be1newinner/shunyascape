@@ -14,6 +14,7 @@ import Settings from "./models/Settings";
 import { hashPassword, verifyPassword, signToken, verifyToken } from "./utils/auth";
 import { authMiddleware, requireAuth, requireAdmin, AuthenticatedRequest } from "./middlewares/auth";
 import { sendOtpEmail } from "./utils/mailer";
+import { googleClientId, verifyGoogleIdToken } from "./utils/google";
 import * as economy from "./game/economy";
 import { loadGrid, getOverrides, getCell, setCell, isNear, CellOverride } from "./world/grid";
 import { createNpcSimulation } from "./world/npcs";
@@ -466,6 +467,56 @@ function creditAdminRevenue(amount: number, fromUser: CachedUser) {
 }
 
 // ==========================================
+// SESSIONS
+// ==========================================
+
+const ACCESS_TOKEN_MS = 24 * 60 * 60 * 1000;
+const REFRESH_TOKEN_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Start a new single-device session: rotate the session id, store the
+ * refresh token, cache the user and set the auth cookies.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function startSession(user: any, res: express.Response): Promise<CachedUser> {
+  const sessionId = crypto.randomUUID();
+  const claims = { userId: user._id, email: user.email, role: user.role, sessionId };
+  const accessToken = signToken(claims, "1d");
+  const refreshToken = signToken(claims, "30d");
+
+  user.currentSessionId = sessionId;
+  user.currentRefreshToken = refreshToken;
+  await user.save();
+
+  const cookie = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/",
+  };
+  res.cookie("accessToken", accessToken, { ...cookie, maxAge: ACCESS_TOKEN_MS });
+  res.cookie("refreshToken", refreshToken, { ...cookie, maxAge: REFRESH_TOKEN_MS });
+
+  // Keeps unflushed progress if the user is already cached
+  return ensureCachedUser(user);
+}
+
+/** The signed-in user's own view of their account (includes their email). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function sessionUser(user: any, cached: CachedUser) {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    x: cached.x,
+    z: cached.z,
+    clothingColor: user.clothingColor,
+    ...progressOf(cached),
+  };
+}
+
+// ==========================================
 // HTTP ROUTE HANDLERS
 // ==========================================
 
@@ -522,6 +573,14 @@ app.post(
         return;
       }
 
+      if (!user.password && user.googleId) {
+        res.status(401).json({
+          error: "This account uses Google sign-in. Continue with Google, or use \"Forgot password\" to add a password.",
+          useGoogle: true,
+        });
+        return;
+      }
+
       const passwordCheck = await verifyPassword(String(password), user.password);
       if (passwordCheck === "needs-reset") {
         res.status(403).json({
@@ -547,51 +606,8 @@ app.post(
         return;
       }
 
-      const sessionId = crypto.randomUUID();
-      const accessToken = signToken(
-        { userId: user._id, email: user.email, role: user.role, sessionId },
-        "1d",
-      );
-      const refreshToken = signToken(
-        { userId: user._id, email: user.email, role: user.role, sessionId },
-        "30d",
-      );
-
-      user.currentRefreshToken = refreshToken;
-      user.currentSessionId = sessionId;
-      await user.save();
-
-      // Add to in-memory cache (keeps unflushed progress if already cached)
-      const cachedUser = ensureCachedUser(user);
-
-      res.cookie("accessToken", accessToken, {
-        maxAge: 24 * 60 * 60 * 1000,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-      });
-      res.cookie("refreshToken", refreshToken, {
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-      });
-
-      res.status(200).json({
-        message: "Login successful",
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          x: cachedUser.x,
-          z: cachedUser.z,
-          clothingColor: user.clothingColor,
-          ...progressOf(cachedUser),
-        },
-      });
+      const cachedUser = await startSession(user, res);
+      res.status(200).json({ message: "Login successful", user: sessionUser(user, cachedUser) });
     } catch (error: any) {
       console.error("Login API Error:", error);
       res.status(500).json({ error: "Internal server error during login" });
@@ -712,20 +728,7 @@ app.post(
       user.isVerified = true;
       user.otp = null;
       user.otpExpires = null;
-      
-      const sessionId = crypto.randomUUID();
-      user.currentSessionId = sessionId;
-
-      const accessToken = signToken({ userId: user._id, email: user.email, role: user.role, sessionId }, "1d");
-      const refreshToken = signToken({ userId: user._id, email: user.email, role: user.role, sessionId }, "30d");
-
-      user.currentRefreshToken = refreshToken;
-      await user.save();
-
-      ensureCachedUser(user);
-
-      res.cookie("accessToken", accessToken, { maxAge: 24 * 60 * 60 * 1000, httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
-      res.cookie("refreshToken", refreshToken, { maxAge: 30 * 24 * 60 * 60 * 1000, httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
+      await startSession(user, res);
 
       res.status(200).json({ message: "Verification successful" });
     } catch (error: any) {
@@ -733,6 +736,89 @@ app.post(
       res.status(500).json({ error: "Internal server error" });
     }
   }
+);
+
+// GET /api/auth/config — public auth settings for the sign-in UI
+app.get("/api/auth/config", (req: express.Request, res: express.Response) => {
+  res.status(200).json({ googleClientId: googleClientId() });
+});
+
+// POST /api/auth/google — sign in (or sign up) with a Google ID token
+app.post(
+  "/api/auth/google",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const credential = req.body?.credential;
+      if (typeof credential !== "string" || credential.length === 0 || credential.length > 4096) {
+        res.status(400).json({ error: "Missing Google credential" });
+        return;
+      }
+      if (!googleClientId()) {
+        res.status(503).json({ error: "Google sign-in is not configured on this server" });
+        return;
+      }
+
+      let profile;
+      try {
+        profile = await verifyGoogleIdToken(credential);
+      } catch (err) {
+        console.warn("Rejected Google ID token:", (err as Error).message);
+        res.status(401).json({ error: "Google sign-in failed. Please try again." });
+        return;
+      }
+      if (!profile.emailVerified) {
+        res.status(403).json({ error: "Your Google account's email address isn't verified." });
+        return;
+      }
+
+      await connectDB();
+      let user =
+        (await User.findOne({ googleId: profile.sub })) ??
+        (await User.findOne({ email: profile.email }));
+      let created = false;
+
+      if (user && !user.googleId) {
+        // Link an existing email account: Google has proven the person owns this email
+        user.googleId = profile.sub;
+        if (!user.isVerified) {
+          // Someone registered this email without ever verifying it; their
+          // password must not keep working now that the real owner is here
+          user.password = null;
+          user.isVerified = true;
+          user.otp = null;
+          user.otpExpires = null;
+        }
+      } else if (user && user.googleId !== profile.sub) {
+        res.status(409).json({ error: "This email is already linked to a different Google account." });
+        return;
+      } else if (!user) {
+        const totalUsers = await User.countDocuments({});
+        user = new User({
+          name: profile.name || profile.email.split("@")[0],
+          email: profile.email,
+          password: null,
+          googleId: profile.sub,
+          role: totalUsers === 0 ? "admin" : "user",
+          isVerified: true,
+          x: 0,
+          z: 0,
+          lastX: 0,
+          lastZ: 0,
+        });
+        created = true;
+      }
+
+      const cachedUser = await startSession(user, res);
+      res.status(200).json({
+        message: created ? "Account created with Google" : "Login successful",
+        created,
+        user: sessionUser(user, cachedUser),
+      });
+    } catch (error) {
+      console.error("Google Sign-In Error:", error);
+      res.status(500).json({ error: "Internal server error during Google sign-in" });
+    }
+  },
 );
 
 // POST /api/auth/forgot-password

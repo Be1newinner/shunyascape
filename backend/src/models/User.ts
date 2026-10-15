@@ -12,9 +12,16 @@ const UserSchema = new Schema({
     lowercase: true, 
     trim: true 
   },
+  // Null for accounts created with Google sign-in until a password is set
   password: { 
     type: String, 
-    required: true 
+    default: null 
+  },
+  // Google account id ("sub") for Sign in with Google
+  googleId: {
+    type: String,
+    default: undefined,
+    index: { unique: true, sparse: true }
   },
   role: { 
     type: String, 

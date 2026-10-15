@@ -6,6 +6,7 @@ import { CONTROLS, type Quality } from "./engine/config";
 import type { LobbyScene } from "./engine/LobbyScene";
 import { OUTFITS, outfitTint } from "./engine/outfits";
 import type { Profile } from "./profile";
+import LiveMatches, { serverFull, useServerStatus } from "./LiveMatches";
 
 interface Props {
   profile: Profile | null;
@@ -29,6 +30,8 @@ function fmtHours(seconds: number) {
 /** BGMI-style home screen: your soldier, your record, the wardrobe and the Start button. */
 export default function Lobby(props: Props) {
   const { profile, outfit, onOutfit, quality, onQuality, sensitivity, onSensitivity, onStart, lastMatch, touch, onLogout } = props;
+  const status = useServerStatus();
+  const full = serverFull(status);
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<LobbyScene | null>(null);
   const [panel, setPanel] = useState<"none" | "wardrobe" | "settings">("none");
@@ -56,7 +59,11 @@ export default function Lobby(props: Props) {
     })();
     return () => {
       cancelled = true;
-      scene?.dispose();
+      try {
+        scene?.dispose();
+      } catch (e) {
+        console.warn("[bg] lobby dispose", e);
+      }
       sceneRef.current = null;
     };
     // The stage is built once; outfit changes are applied below without a rebuild.
@@ -198,10 +205,14 @@ export default function Lobby(props: Props) {
             <span>Battleground · you vs 24 soldiers</span>
           </div>
         </div>
-        <button className="bg-start" onClick={onStart}>
-          <Swords className="h-6 w-6" aria-hidden="true" />
-          Start
-        </button>
+        <div className="bg-lobby-go">
+          <LiveMatches status={status} />
+          {full && <p className="bg-go-note">Both matches are running. Join the line to play next.</p>}
+          <button className={`bg-start ${full ? "waiting" : ""}`} onClick={onStart}>
+            <Swords className="h-6 w-6" aria-hidden="true" />
+            {full ? "Join line" : "Start"}
+          </button>
+        </div>
       </footer>
     </div>
   );

@@ -8,7 +8,8 @@ import { outfitTint } from "./engine/outfits";
 import Hud from "./Hud";
 import Lobby from "./Lobby";
 import TouchControls from "./TouchControls";
-import type { MatchClient, MatchStart } from "./engine/MatchClient";
+import LiveMatches from "./LiveMatches";
+import type { MatchClient, MatchStart, ServerMessage } from "./engine/MatchClient";
 import { fetchProfile, saveOutfit, type Profile } from "./profile";
 import { isNativeApp, postToApp } from "../../lib/nativeApp";
 import "./battleground.css";
@@ -46,7 +47,7 @@ export default function BattlegroundGame() {
   const [screen, setScreen] = useState<"lobby" | "queue" | "match">("lobby");
   const clientRef = useRef<MatchClient | null>(null);
   const [online, setOnline] = useState<{ client: MatchClient; start: MatchStart } | null>(null);
-  const [queueInfo, setQueueInfo] = useState<{ players: number; max: number; startsIn: number } | null>(null);
+  const [queueInfo, setQueueInfo] = useState<Extract<ServerMessage, { t: "queue" }> | null>(null);
   const [netError, setNetError] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [outfit, setOutfit] = useState("classic");
@@ -119,7 +120,12 @@ export default function BattlegroundGame() {
     })();
     return () => {
       cancelled = true;
-      game?.dispose();
+      // A failure while tearing down the 3D scene must never take the page down with it.
+      try {
+        game?.dispose();
+      } catch (e) {
+        console.warn("[bg] dispose", e);
+      }
       gameRef.current = null;
       setLiveGame(null);
     };
@@ -169,6 +175,15 @@ export default function BattlegroundGame() {
 
   const play = useCallback(() => gameRef.current?.play(), []);
 
+  const disposeGame = () => {
+    try {
+      gameRef.current?.dispose();
+    } catch (e) {
+      console.warn("[bg] dispose", e);
+    }
+    gameRef.current = null;
+  };
+
   const closeClient = () => {
     clientRef.current?.close();
     clientRef.current = null;
@@ -177,8 +192,7 @@ export default function BattlegroundGame() {
   /** Join matchmaking; the server starts the match when it's full or after a minute. */
   const findMatch = async () => {
     closeClient();
-    gameRef.current?.dispose();
-    gameRef.current = null;
+    disposeGame();
     setHud(null);
     setOnline(null);
     setNetError(null);
@@ -189,7 +203,7 @@ export default function BattlegroundGame() {
       const client = new MatchClient();
       clientRef.current = client;
       client.on((msg) => {
-        if (msg.t === "queue") setQueueInfo({ players: msg.players, max: msg.max, startsIn: msg.startsIn });
+        if (msg.t === "queue") setQueueInfo(msg);
         if (msg.t === "match-failed") setNetError("Couldn't start the match. Please try again.");
         if (msg.t === "start") {
           setOnline({ client, start: msg });
@@ -228,8 +242,7 @@ export default function BattlegroundGame() {
     clientRef.current?.leave();
     closeClient();
     setOnline(null);
-    gameRef.current?.dispose();
-    gameRef.current = null;
+    disposeGame();
     setHud(null);
     setNetError(null);
     setScreen("lobby");
@@ -239,8 +252,7 @@ export default function BattlegroundGame() {
 
   const logout = async () => {
     closeClient();
-    gameRef.current?.dispose();
-    gameRef.current = null;
+    disposeGame();
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     try {
       localStorage.removeItem("shunyascape_user");
@@ -313,12 +325,24 @@ export default function BattlegroundGame() {
                 <button className="bg-cta ghost" onClick={practice}>Practice offline vs bots</button>
                 <button className="bg-cta ghost" onClick={cancelQueue}>Back to lobby</button>
               </>
+            ) : queueInfo?.full ? (
+              <>
+                <p className="bg-eyebrow">Server busy</p>
+                <h2 className="bg-title small">You&apos;re #{queueInfo.position} in line</h2>
+                <LiveMatches
+                  status={{ maxMatches: Math.max(queueInfo.matches.length, 2), waiting: 0, matches: queueInfo.matches }}
+                  compact
+                />
+                <p className="bg-sub">
+                  Both matches are in progress. Stay on this screen: you&apos;ll join the next match as soon as one ends.
+                </p>
+              </>
             ) : (
               <>
                 <p className="bg-eyebrow">Classic · Solo</p>
                 <h2 className="bg-title small">Finding players</h2>
                 <div className="bg-queue-ring" aria-hidden="true">
-                  <span>{queueInfo ? `0:${String(queueInfo.startsIn).padStart(2, "0")}` : "…"}</span>
+                  <span>{queueInfo?.startsIn != null ? `0:${String(queueInfo.startsIn).padStart(2, "0")}` : "…"}</span>
                 </div>
                 <div className="bg-queue-count">
                   <b>{players}</b>
@@ -328,9 +352,9 @@ export default function BattlegroundGame() {
                 <p className="bg-sub">
                   30 soldiers per match: {players} {players === 1 ? "player" : "players"} + {30 - players} bots. Starts when 25 players join, or in a minute.
                 </p>
-                <button className="bg-cta ghost" onClick={cancelQueue}>Cancel</button>
               </>
             )}
+            {!netError && <button className="bg-cta ghost" onClick={cancelQueue}>Cancel</button>}
           </div>
         </div>
       </div>
@@ -402,7 +426,9 @@ export default function BattlegroundGame() {
       {(phase === "dead" || phase === "won") && hud && (
         <div className="bg-overlay bg-result">
           <div className={`bg-result-card ${phase}`}>
-            <p className="bg-eyebrow">{phase === "won" ? "Last one standing" : "Eliminated"}</p>
+            <p className="bg-eyebrow">
+              {hud.survivor ? "Time's up · You survived" : phase === "won" ? "Last one standing" : "Eliminated"}
+            </p>
             <h2 className="bg-place">#{hud.placement}<span>/{hud.total}</span></h2>
             {!hud.online && <p className="bg-sub">Practice match: not counted toward your stats.</p>}
             <div className="bg-stats">
@@ -410,6 +436,8 @@ export default function BattlegroundGame() {
               <div><b>{hud.damageDealt}</b><span>Damage</span></div>
               <div><b>{Math.floor(hud.survived / 60)}:{String(hud.survived % 60).padStart(2, "0")}</b><span>Survived</span></div>
             </div>
+            {hud.survivor && <p className="bg-award">+75 XP survivor bonus</p>}
+            {hud.online && <Podium hud={hud} />}
             <div className="bg-result-actions">
               <button className="bg-cta ghost" onClick={backToLobby}>Lobby</button>
               <button className="bg-cta" onClick={online ? findMatch : practice}>Play again</button>
@@ -417,6 +445,31 @@ export default function BattlegroundGame() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Top 3 killers of the match, shown once it's decided. */
+function Podium({ hud }: { hud: HudState }) {
+  const end = hud.matchEnd;
+  if (!end) return <p className="bg-sub bg-podium-wait">The match is still on. Top killers are announced when it ends.</p>;
+  if (end.podium.length === 0) return null;
+  return (
+    <div className="bg-podium">
+      <p className="bg-eyebrow">Top killers</p>
+      <ol>
+        {end.podium.map((p) => (
+          <li key={p.id} className={`rank${p.rank} ${p.id === hud.you ? "me" : ""}`}>
+            <span className="bg-podium-rank">{p.rank}</span>
+            <span className="bg-podium-name">
+              {p.name}
+              {p.bot && <em> bot</em>}
+            </span>
+            <b>{p.kills} {p.kills === 1 ? "kill" : "kills"}</b>
+            {p.xp > 0 && <span className="bg-podium-xp">+{p.xp} XP</span>}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

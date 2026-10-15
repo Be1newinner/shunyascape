@@ -1,6 +1,7 @@
 import type { Stance } from "./Character";
 import type { ScopeId, WeaponId } from "./config";
 import type { LootItem } from "./Loot";
+import type { MatchSummary } from "../LiveMatches";
 
 /** One soldier in the match roster, in spawn order. */
 export interface RosterEntry {
@@ -17,6 +18,26 @@ export interface MatchStart {
   host: string | null;
   roster: RosterEntry[];
   peace: number;
+  /** Match length limit in seconds. */
+  limit?: number;
+}
+
+export interface PodiumEntry {
+  id: string;
+  name: string;
+  bot: boolean;
+  kills: number;
+  damage: number;
+  rank: number;
+  /** Bonus XP (players only). */
+  xp: number;
+}
+
+export interface MatchEnd {
+  winner: string | null;
+  reason: "last" | "time" | "abandoned";
+  podium: PodiumEntry[];
+  survivors: number;
 }
 
 export interface ZoneSync {
@@ -75,20 +96,20 @@ export function decodeState(d: unknown[]): NetState | null {
 /** Messages the game server sends. */
 export type ServerMessage =
   | { t: "hello"; you: string }
-  | { t: "queue"; players: number; max: number; startsIn: number }
+  | { t: "queue"; players: number; max: number; startsIn: number | null; full: boolean; position: number; matches: MatchSummary[] }
   | { t: "queue-left" }
   | { t: "match-failed" }
   | ({ t: "start" } & MatchStart)
   | { t: "snap"; s: unknown[][]; alive: number }
-  | ({ t: "zone" } & ZoneSync)
+  | ({ t: "zone"; elapsed?: number } & ZoneSync)
   | { t: "fx"; by: string; w: WeaponId; o: number[]; e: number[]; h: number }
   | { t: "hp"; id: string; hp: number; by: string | null; head: boolean }
   | { t: "kill"; victim: string; killer: string | null; w: string; head: boolean; alive: number }
   | { t: "taken"; id: string; by: string }
   | { t: "pick-denied"; id: string }
   | { t: "spawn"; id: string; item: LootItem; pos: number[] }
-  | { t: "result"; placement: number; kills: number; damage: number; survived: number }
-  | { t: "end"; winner: string | null };
+  | { t: "result"; placement: number; kills: number; damage: number; survived: number; survivor?: boolean }
+  | ({ t: "end" } & MatchEnd);
 
 type Listener = (msg: ServerMessage) => void;
 

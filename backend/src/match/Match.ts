@@ -1,7 +1,6 @@
 import { BotSim, type Target } from "./BotSim";
 import {
-  BOT_NAMES, MATCH_SIZE, MAX_HEALTH, MAX_HIT_DAMAGE, PEACE_SECONDS, ServerZone, WEAPONS, isWeapon, mulberry32, type WeaponId,
-} from "./rules";
+  BOT_NAMES, MATCH_SIZE, MAX_HEALTH, MAX_HIT_DAMAGE, PEACE_SECONDS, ServerZone, WEAPONS, isWeapon, mulberry32, type WeaponId, MATCH_SECONDS, PODIUM_XP } from "./rules";
 
 /** A connected human, as the match sees them. */
 export interface Peer {
@@ -17,6 +16,26 @@ export interface HumanResult {
   kills: number;
   damage: number;
   survived: number;
+  /** Still alive when the time limit ended the match. */
+  survivor: boolean;
+}
+
+/** What a match reports back to the server (stats are written there, never by clients). */
+export interface MatchEvents {
+  result(userId: string, result: HumanResult): void;
+  /** Extra XP once the match is decided (top-3 killers). */
+  award(userId: string, xp: number): void;
+}
+
+export interface PodiumEntry {
+  id: string;
+  name: string;
+  bot: boolean;
+  kills: number;
+  damage: number;
+  rank: number;
+  /** Bonus XP (players only). */
+  xp: number;
 }
 
 interface Participant {
@@ -70,7 +89,7 @@ export class Match {
 
   constructor(
     humans: Peer[],
-    private onHumanResult: (userId: string, result: HumanResult) => void,
+    private events: MatchEvents,
     private onClosed: (m: Match) => void,
   ) {
     this.id = Math.random().toString(36).slice(2, 10);
@@ -146,7 +165,7 @@ export class Match {
     this.startedAt = Date.now();
     const roster = this.roster();
     for (const peer of this.peers.values()) {
-      peer.send({ t: "start", match: this.id, seed: this.seed, you: peer.userId, host: null, roster, peace: PEACE_SECONDS });
+      peer.send({ t: "start", match: this.id, seed: this.seed, you: peer.userId, host: null, roster, peace: PEACE_SECONDS, limit: MATCH_SECONDS });
     }
     let last = Date.now();
     // An error in one tick is logged, never allowed to crash the game server.
@@ -196,10 +215,19 @@ export class Match {
     this.broadcast({ t: "snap", s, alive: this.aliveCount() });
   }
 
+  private elapsed() {
+    return Math.floor((Date.now() - this.startedAt) / 1000);
+  }
+
   private zoneTick(dt: number) {
     if (this.over) return;
+    // Time's up: everyone still standing survives the match.
+    if (this.elapsed() >= MATCH_SECONDS) {
+      this.end("time");
+      return;
+    }
     this.zone.update(dt);
-    this.broadcast({ t: "zone", ...this.zone.state() });
+    this.broadcast({ t: "zone", ...this.zone.state(), elapsed: this.elapsed() });
     for (const p of this.participants.values()) {
       if (!p.alive || !p.pos) continue;
       if (!this.zone.contains(p.pos[0], p.pos[2])) this.applyDamage(p, this.zone.dps, null, false, "Blue zone");
@@ -326,7 +354,7 @@ export class Match {
     this.checkEnd();
   }
 
-  private finishHuman(p: Participant, placement: number) {
+  private finishHuman(p: Participant, placement: number, survivor = false) {
     if (p.finished) return;
     p.finished = true;
     const result: HumanResult = {
@@ -334,9 +362,27 @@ export class Match {
       kills: p.kills,
       damage: Math.round(p.damage),
       survived: Math.round(((p.diedAt || Date.now()) - this.startedAt) / 1000),
+      survivor,
     };
     this.peers.get(p.id)?.send({ t: "result", ...result });
-    this.onHumanResult(p.id, result);
+    this.events.result(p.id, result);
+  }
+
+  /** Top 3 by kills (damage breaks ties); players on it earn bonus XP. */
+  private podium(): PodiumEntry[] {
+    return [...this.participants.values()]
+      .filter((p) => p.kills > 0)
+      .sort((a, b) => b.kills - a.kills || b.damage - a.damage)
+      .slice(0, 3)
+      .map((p, i) => ({
+        id: p.id,
+        name: p.name,
+        bot: p.bot,
+        kills: p.kills,
+        damage: Math.round(p.damage),
+        rank: i + 1,
+        xp: p.bot ? 0 : PODIUM_XP[i],
+      }));
   }
 
   private checkEnd() {
@@ -345,15 +391,51 @@ export class Match {
     const watching = [...this.peers.keys()].some((id) => this.participants.get(id)?.alive);
     // Over when one soldier is left, or no connected player is still in it.
     if (alive.length > 1 && watching) return;
+    this.end(alive.length === 1 ? "last" : "abandoned");
+  }
+
+  /**
+   * The match is decided: last soldier standing, time ran out, or no
+   * connected player is left in it.
+   */
+  private end(reason: "last" | "time" | "abandoned") {
+    if (this.over) return;
     this.over = true;
-    if (alive.length === 1 && !alive[0].bot) this.finishHuman(alive[0], 1);
-    else {
+    const alive = [...this.participants.values()].filter((p) => p.alive);
+    if (reason === "last" && !alive[0].bot) this.finishHuman(alive[0], 1);
+    else if (reason === "time") {
+      // Time's up: survivors are ranked by kills (then damage) for places 1, 2, 3…
+      alive.sort((a, b) => b.kills - a.kills || b.damage - a.damage);
+      alive.forEach((p, i) => !p.bot && this.finishHuman(p, i + 1, true));
+    } else {
       // Players who left but were never killed share the best place still open.
       for (const p of alive) if (!p.bot) this.finishHuman(p, alive.length);
     }
-    this.broadcast({ t: "end", winner: alive.length === 1 ? alive[0].id : null });
+    const podium = this.podium();
+    for (const p of podium) if (p.xp > 0) this.events.award(p.id, p.xp);
+    this.broadcast({ t: "end", winner: reason === "last" ? alive[0].id : null, reason, podium, survivors: alive.length });
     // Leave a moment for the result screens, then free the room.
     setTimeout(() => this.close(), 15_000);
+  }
+
+  /** Decided (only the results screen is left): its slot can host the next match. */
+  get ended() {
+    return this.over;
+  }
+
+  /** What the lobby shows about this match (no player names). */
+  summary() {
+    let humansAlive = 0;
+    let humans = 0;
+    let alive = 0;
+    for (const p of this.participants.values()) {
+      if (p.alive) alive++;
+      if (p.bot) continue;
+      humans++;
+      if (p.alive) humansAlive++;
+    }
+    const elapsed = Math.round((Date.now() - this.startedAt) / 1000);
+    return { id: this.id, elapsed, humans, humansAlive, alive, over: this.over };
   }
 
   /** A player disconnected or left: their soldier stays in the world until someone kills it. */

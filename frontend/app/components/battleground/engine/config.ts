@@ -27,7 +27,7 @@ export interface QualityPreset {
 
 export const QUALITY: Record<Quality, QualityPreset> = {
   // Phones: no shadows, short view distance, sparse grass; resolution adapts to keep the frame rate up.
-  mobile: { pixelRatio: Math.min(1.25, typeof window !== "undefined" ? window.devicePixelRatio : 1), shadowMapSize: 1024, shadows: false, grassPerChunk: 180, grassRadius: 2, treeLodDistance: 32, fogFar: 280, antialias: false, detailDistance: 35 },
+  mobile: { pixelRatio: 1, shadowMapSize: 1024, shadows: false, grassPerChunk: 180, grassRadius: 2, treeLodDistance: 32, fogFar: 280, antialias: false, detailDistance: 35 },
   low: { pixelRatio: 0.75, shadowMapSize: 1024, shadows: false, grassPerChunk: 380, grassRadius: 3, treeLodDistance: 45, fogFar: 380, antialias: false, detailDistance: 50 },
   medium: { pixelRatio: 1, shadowMapSize: 2048, shadows: true, grassPerChunk: 700, grassRadius: 3, treeLodDistance: 70, fogFar: 520, antialias: true, detailDistance: 70 },
   high: { pixelRatio: Math.min(2, typeof window !== "undefined" ? window.devicePixelRatio : 1), shadowMapSize: 4096, shadows: true, grassPerChunk: 1000, grassRadius: 4, treeLodDistance: 110, fogFar: 700, antialias: true, detailDistance: 90 },

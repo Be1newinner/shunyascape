@@ -1,66 +1,88 @@
-import { Match, type HumanResult, type Peer } from "./Match";
-import { MAX_HUMANS, QUEUE_WAIT_MS } from "./rules";
+import { Match, type MatchEvents, type Peer } from "./Match";
+import { MAX_HUMANS, MAX_MATCHES, QUEUE_WAIT_MS } from "./rules";
 
 /**
  * Groups queued players into matches. A match starts as soon as 25 players
  * are in, or 60 seconds after the first one queued; bots fill the rest.
+ * At most MAX_MATCHES run at once: everyone else waits in line, in order,
+ * and the next match forms as soon as one ends.
  */
 export class Matchmaker {
-  private forming: { peers: Set<Peer>; deadline: number; timer: NodeJS.Timeout } | null = null;
+  private line: Peer[] = [];
+  /** When the next match starts even if it isn't full (set by the first player in line). */
+  private deadline = 0;
   private matches = new Set<Match>();
   private ticker: NodeJS.Timeout;
 
-  constructor(private onHumanResult: (userId: string, result: HumanResult) => void) {
-    this.ticker = setInterval(() => this.announce(), 1000);
+  constructor(private events: MatchEvents) {
+    this.ticker = setInterval(() => this.tick(), 1000);
   }
 
   queue(peer: Peer) {
-    if (peer.match) return;
-    if (!this.forming) {
-      const deadline = Date.now() + QUEUE_WAIT_MS;
-      this.forming = { peers: new Set(), deadline, timer: setTimeout(() => this.launch(), QUEUE_WAIT_MS) };
-    }
-    this.forming.peers.add(peer);
-    if (this.forming.peers.size >= MAX_HUMANS) this.launch();
-    else this.announce();
+    if (peer.match || this.line.includes(peer)) return;
+    if (this.line.length === 0) this.deadline = Date.now() + QUEUE_WAIT_MS;
+    this.line.push(peer);
+    this.tick();
   }
 
   cancel(peer: Peer) {
-    if (!this.forming?.peers.delete(peer)) return;
+    const i = this.line.indexOf(peer);
+    if (i < 0) return;
+    this.line.splice(i, 1);
     peer.send({ t: "queue-left" });
-    if (this.forming.peers.size === 0) {
-      clearTimeout(this.forming.timer);
-      this.forming = null;
-    } else this.announce();
+    this.announce();
   }
 
-  /** Socket closed: leave the queue or the running match. */
+  /** Socket closed: leave the line or the running match. */
   disconnect(peer: Peer) {
     this.cancel(peer);
     peer.match?.leave(peer);
   }
 
+  /** Matches still being played (a finished one only shows results, so it frees its slot). */
+  private live() {
+    return [...this.matches].filter((m) => !m.ended);
+  }
+
+  private full() {
+    return this.live().length >= MAX_MATCHES;
+  }
+
+  private tick() {
+    if (this.line.length > 0 && !this.full() && (this.line.length >= MAX_HUMANS || Date.now() >= this.deadline)) this.launch();
+    this.announce();
+  }
+
   private announce() {
-    if (!this.forming) return;
-    const msg = {
-      t: "queue",
-      players: this.forming.peers.size,
-      max: MAX_HUMANS,
-      startsIn: Math.max(0, Math.ceil((this.forming.deadline - Date.now()) / 1000)),
-    };
-    for (const p of this.forming.peers) p.send(msg);
+    if (this.line.length === 0) return;
+    const full = this.full();
+    const startsIn = full ? null : Math.max(0, Math.ceil((this.deadline - Date.now()) / 1000));
+    const matches = this.status().matches;
+    this.line.forEach((p, i) => {
+      // Players beyond the next match's 25 seats wait for the one after.
+      const next = i < MAX_HUMANS;
+      p.send({
+        t: "queue",
+        players: Math.min(this.line.length, MAX_HUMANS),
+        max: MAX_HUMANS,
+        startsIn: next ? startsIn : null,
+        full: full || !next,
+        position: i + 1,
+        matches,
+      });
+    });
   }
 
   private launch() {
-    const f = this.forming;
-    if (!f) return;
-    clearTimeout(f.timer);
-    this.forming = null;
-    const peers = [...f.peers];
-    if (peers.length === 0) return;
+    const peers = this.line.splice(0, MAX_HUMANS);
+    // Whoever is still in line gets a fresh countdown for the next match.
+    this.deadline = Date.now() + QUEUE_WAIT_MS;
     // A broken match must never take the whole game server down with it.
     try {
-      const match = new Match(peers, this.onHumanResult, (m) => this.matches.delete(m));
+      const match = new Match(peers, this.events, (m) => {
+        this.matches.delete(m);
+        this.tick();
+      });
       this.matches.add(match);
       match.start();
     } catch (err) {
@@ -72,13 +94,17 @@ export class Matchmaker {
     }
   }
 
-  stats() {
-    return { queued: this.forming?.peers.size ?? 0, matches: this.matches.size };
+  /** Live matches for the lobby. */
+  status() {
+    return {
+      maxMatches: MAX_MATCHES,
+      waiting: this.line.length,
+      matches: this.live().map((m) => m.summary()),
+    };
   }
 
   dispose() {
     clearInterval(this.ticker);
-    if (this.forming) clearTimeout(this.forming.timer);
-    for (const m of this.matches) m.close();
+    for (const m of [...this.matches]) m.close();
   }
 }

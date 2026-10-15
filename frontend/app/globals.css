@@ -10,15 +10,14 @@
   --foreground: #f8fafc;
 }
 
+/* The game and admin screens size themselves (h-screen + overflow-hidden);
+   the body must stay scrollable for the landing page. */
 body {
   margin: 0;
   padding: 0;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
   background-color: var(--background);
   color: var(--foreground);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-family: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 
 /* Custom styled inputs for range sliders */
@@ -45,4 +44,11 @@ canvas {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
   }
+}
+
+/* Lock page scroll while the 3D game is on screen */
+html:has(.game-root),
+body:has(.game-root) {
+  overflow: hidden;
+  height: 100%;
 }

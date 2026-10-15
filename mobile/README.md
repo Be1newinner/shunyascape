@@ -1,56 +1,21 @@
-# Welcome to your Expo app 👋
+# ShunyaScape mobile app
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+The ShunyaScape battleground in a full-screen WebView (Expo SDK 57). The game itself is the website: on-screen controls and the phone graphics preset come from the site, so browser and app always match.
 
-## Get started
+## Setup
 
-1. Install dependencies
+1. `npm install`
+2. `mobile/.env` sets the site address: `EXPO_PUBLIC_GAME_URL=https://shunyascape.shipsar.in`
+3. `npx expo start`, then open it in Expo Go on a phone (WebView, orientation and keep-awake are all in Expo Go).
 
-   ```bash
-   npm install
-   ```
+For store builds use EAS: `npx eas-cli@latest build --platform android` (or `ios`).
 
-2. Start the app
+## How it fits together
 
-   ```bash
-   npx expo start
-   ```
+- The app opens `<EXPO_PUBLIC_GAME_URL>/battleground` and adds `ShunyaScapeApp` to the user agent.
+- Seeing that, the site sends signed-out players straight to sign-in and hides the Google button (Google blocks its sign-in inside web views). Email sign-in works.
+- Landscape is locked, the screen stays on, the status bar is hidden, and Android's back button goes back inside the game.
 
-In the output, you'll find options to open the app in a
+## Not done yet
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- Google sign-in in the app needs native Google sign-in (a development build plus Android/iOS OAuth clients in Google Cloud) passing the ID token to the site.

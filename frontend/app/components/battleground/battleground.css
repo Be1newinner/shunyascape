@@ -1055,3 +1055,74 @@ kbd {
   .bg-side-panel { top: 60px; bottom: 70px; padding: 12px; }
   .bg-outfit-swatch { height: 34px; }
 }
+
+/* ---------- live matches (server capacity) ---------- */
+.bg-live { display: flex; gap: 10px; }
+.bg-live-slot {
+  display: grid;
+  gap: 2px;
+  min-width: 170px;
+  padding: 10px 14px;
+  border: 1px solid hsl(0 0% 100% / 0.12);
+  border-radius: 12px;
+  background: hsl(220 30% 8% / 0.72);
+  text-align: left;
+}
+.bg-live-slot.on { border-color: hsl(4 90% 60% / 0.55); }
+.bg-live-slot b { font: 700 15px var(--hud-font); letter-spacing: 0.08em; text-transform: uppercase; }
+.bg-live-slot > span:last-child { font-size: 12px; color: var(--ink-dim); }
+.bg-live-tag {
+  justify-self: start;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: hsl(4 85% 55%);
+  color: #fff;
+  font: 700 10px var(--hud-font);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.bg-live-tag.free { background: hsl(140 55% 38%); }
+.bg-live.compact { justify-content: center; }
+.bg-live.compact .bg-live-slot { min-width: 0; flex: 1; }
+.bg-start.waiting { background: linear-gradient(180deg, hsl(210 15% 70%), hsl(210 12% 52%)); font-size: 20px; }
+@media (max-width: 900px) {
+  .bg-lobby-bottom .bg-live-slot { min-width: 0; padding: 8px 10px; }
+  .bg-lobby-bottom .bg-live-slot > span:last-child { font-size: 11px; }
+}
+.bg-lobby-go { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.bg-go-note { margin: 0; font-size: 12px; color: var(--ink-dim); text-align: right; }
+
+/* ---------- match timer + podium ---------- */
+.bg-counters .bg-timer b { font-variant-numeric: tabular-nums; }
+.bg-counters .bg-timer.low { background: hsl(4 80% 45% / 0.75); }
+.bg-counters .bg-timer.low span { color: #fff; }
+.bg-award { margin: 4px 0 0; font: 700 14px var(--hud-font); letter-spacing: 0.08em; color: hsl(45 100% 62%); }
+.bg-podium { margin-top: 12px; text-align: left; }
+.bg-podium ol { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.bg-podium li {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: hsl(0 0% 100% / 0.06);
+}
+.bg-podium li.me { outline: 1px solid hsl(45 100% 60% / 0.8); }
+.bg-podium-rank {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font: 700 14px var(--hud-font);
+  color: #1a1200;
+  background: hsl(0 0% 70%);
+}
+.bg-podium li.rank1 .bg-podium-rank { background: linear-gradient(180deg, hsl(48 100% 62%), hsl(36 100% 48%)); }
+.bg-podium li.rank2 .bg-podium-rank { background: linear-gradient(180deg, hsl(210 10% 85%), hsl(210 8% 62%)); }
+.bg-podium li.rank3 .bg-podium-rank { background: linear-gradient(180deg, hsl(28 70% 62%), hsl(24 60% 42%)); }
+.bg-podium-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-podium-name em { font-style: normal; font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+.bg-podium-xp { font: 700 12px var(--hud-font); color: hsl(45 100% 62%); }
+.bg-podium-wait { margin-top: 10px; font-size: 13px; }

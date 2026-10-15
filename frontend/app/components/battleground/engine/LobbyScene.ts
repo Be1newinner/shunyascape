@@ -3,7 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { CharacterVisual, type CharacterPose } from "./Character";
-import { ASSET_ROOT } from "./config";
+import { ASSET_ROOT, isTouchDevice } from "./config";
 import { createM416 } from "./Weapons";
 
 /** The lobby's 3D stage: your soldier on a platform, turnable by dragging. */
@@ -25,10 +25,13 @@ export class LobbyScene {
   async init(tint: string) {
     this.tint = tint;
     const forceWebGL = new URLSearchParams(window.location.search).get("renderer") === "webgl";
-    this.renderer = new THREE.WebGPURenderer({ antialias: true, alpha: true, forceWebGL });
+    // Phone and tablet GPUs: antialiasing and high-DPI rendering cost ~3x the frame time
+    // (measured on a Mali-G52: 18 fps -> 64 fps without them) for little visible gain.
+    const touch = isTouchDevice();
+    this.renderer = new THREE.WebGPURenderer({ antialias: !touch, alpha: true, forceWebGL });
     await this.renderer.init();
     if (this.disposed) return;
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    this.renderer.setPixelRatio(Math.min(touch ? 1 : 2, window.devicePixelRatio));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
@@ -150,6 +153,7 @@ export class LobbyScene {
   };
 
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     this.resizeObserver?.disconnect();
     window.removeEventListener("pointerup", this.onUp);

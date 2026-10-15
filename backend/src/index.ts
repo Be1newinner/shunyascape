@@ -604,6 +604,16 @@ app.get(
   },
 );
 
+/** Bonus XP the game server grants once a match is decided (top-3 killers). */
+async function awardXp(userId: string, xp: number) {
+  try {
+    await connectDB();
+    await User.updateOne({ _id: userId }, { $inc: { "stats.xp": xp } });
+  } catch (err) {
+    console.error("Failed to award XP:", err);
+  }
+}
+
 /** The game server reports each human's result; stats are written here, never by clients. */
 async function recordHumanResult(userId: string, match: HumanResult) {
   try {
@@ -725,7 +735,15 @@ app.post(
 );
 
 const server = http.createServer(app);
-attachMatchServer(server, recordHumanResult);
+const { matchmaker } = attachMatchServer(server, {
+  result: (userId, r) => void recordHumanResult(userId, r),
+  award: (userId, xp) => void awardXp(userId, xp),
+});
+
+// GET /api/match/status — live matches and the waiting line, for the lobby
+app.get("/api/match/status", (_req: express.Request, res: express.Response) => {
+  res.set("Cache-Control", "no-store").json(matchmaker.status());
+});
 
 // The bots' physics engine (WebAssembly) must be ready before any match starts.
 Promise.all([connectDB(), initPhysics()])

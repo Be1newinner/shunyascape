@@ -129,7 +129,6 @@ export default function GameView() {
       overScrollMode="never"
       setSupportMultipleWindows={false}
       contentInsetAdjustmentBehavior="never"
-      androidLayerType="hardware"
       webviewDebuggingEnabled={__DEV__}
       onShouldStartLoadWithRequest={onNavigate}
       onMessage={onMessage}

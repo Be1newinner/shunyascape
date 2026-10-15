@@ -17,7 +17,7 @@ import { Terrain } from "./Terrain";
 import { Vegetation } from "./Vegetation";
 import { WeaponFactory } from "./Weapons";
 import { Zone } from "./Zone";
-import { decodeState, encodeState, type MatchClient, type MatchStart, type ServerMessage } from "./MatchClient";
+import { decodeState, encodeState, type MatchClient, type MatchEnd, type MatchStart, type ServerMessage } from "./MatchClient";
 import { outfitTint } from "./outfits";
 import type { LootItem } from "./Loot";
 
@@ -68,6 +68,14 @@ export interface HudState {
   placement: number;
   damageDealt: number;
   survived: number;
+  /** Seconds until the match's time limit (online only). */
+  timeLeft: number | null;
+  /** Alive when the time limit ended the match. */
+  survivor: boolean;
+  /** How the match ended and its top killers, once it's decided. */
+  matchEnd: MatchEnd | null;
+  /** Our id in an online match. */
+  you: string | null;
   peaceful: number;
   online: boolean;
   total: number;
@@ -138,7 +146,11 @@ export class Game {
     peaceEndsAt: number;
     pendingPicks: Set<string>;
     unsubscribe: () => void;
-    result: { placement: number; kills: number; damage: number; survived: number } | null;
+    result: { placement: number; kills: number; damage: number; survived: number; survivor?: boolean } | null;
+    /** Server's match clock (seconds) and when we last heard it. */
+    elapsed: number;
+    elapsedAt: number;
+    end: MatchEnd | null;
   } | null = null;
 
   /** Rendering resolution right now (lowered automatically when frames run slow). */
@@ -166,6 +178,9 @@ export class Game {
         pendingPicks: new Set(),
         unsubscribe: () => {},
         result: null,
+        elapsed: 0,
+        elapsedAt: performance.now() / 1000,
+        end: null,
       };
     }
     const q = this.quality;
@@ -522,6 +537,10 @@ export class Game {
         break;
       case "zone":
         this.zone.sync(msg);
+        if (typeof msg.elapsed === "number") {
+          net.elapsed = msg.elapsed;
+          net.elapsedAt = performance.now() / 1000;
+        }
         break;
       case "fx": {
         const shooter = net.byId.get(msg.by);
@@ -576,9 +595,10 @@ export class Game {
         net.result = msg;
         this.deathTime = this.now;
         this.input?.exitLock();
-        this.setPhase(msg.placement === 1 ? "won" : "dead");
+        this.setPhase(msg.placement === 1 || msg.survivor ? "won" : "dead");
         break;
       case "end":
+        net.end = msg;
         if (msg.winner === net.start.you && this.phase !== "won") {
           this.deathTime = this.now;
           this.input?.exitLock();
@@ -1084,6 +1104,12 @@ export class Game {
         : Math.max(0, Math.ceil(30 - (this.now - this.startTime))),
       online: !!this.net,
       total: this.net ? this.net.start.roster.length : this.combatants.length,
+      timeLeft: this.net?.start.limit
+        ? Math.max(0, Math.ceil(this.net.start.limit - this.net.elapsed - (this.net.end ? 0 : performance.now() / 1000 - this.net.elapsedAt)))
+        : null,
+      survivor: !!this.net?.result?.survivor,
+      matchEnd: this.net?.end ?? null,
+      you: this.net?.start.you ?? null,
     };
   }
 
@@ -1175,6 +1201,8 @@ export class Game {
   }
 
   dispose() {
+    // Safe to call twice (leaving a match and the screen unmounting both dispose).
+    if (this.disposed) return;
     this.disposed = true;
     this.net?.unsubscribe();
     this.renderer?.setAnimationLoop(null);

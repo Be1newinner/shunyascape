@@ -8,7 +8,15 @@ export const MIN_BOTS = 5;
 export const MATCH_SIZE = MAX_HUMANS + MIN_BOTS; // 30
 /** How long matchmaking waits for players (`MATCH_QUEUE_MS` overrides it for testing). */
 export const QUEUE_WAIT_MS = Number(process.env.MATCH_QUEUE_MS) || 60_000;
+/** Matches the server runs at once; more players wait in line (`MAX_MATCHES` overrides it). */
+export const MAX_MATCHES = Number(process.env.MAX_MATCHES) || 2;
 export const PEACE_SECONDS = 30;
+/** A match lasts at most this long (`MATCH_SECONDS` overrides it for testing). */
+export const MATCH_SECONDS = Number(process.env.MATCH_SECONDS) || 600;
+/** Bonus XP for still being alive when time runs out. */
+export const SURVIVOR_XP = 75;
+/** Bonus XP for the top 3 killers of a match. */
+export const PODIUM_XP = [150, 100, 50];
 export const MAX_HIT_DAMAGE = 19;
 export const MAX_HEALTH = 100;
 export const MAP_HALF = 320;

@@ -2,7 +2,7 @@ import type http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { verifyToken } from "../utils/auth";
 import { Matchmaker } from "./Matchmaker";
-import type { HumanResult, Peer } from "./Match";
+import type { MatchEvents, Peer } from "./Match";
 
 /** Close code telling a client its session was replaced by a newer connection. */
 const WS_CLOSE_REPLACED = 4001;
@@ -19,9 +19,9 @@ interface TicketClaims {
  * Game server on `/ws`. Clients authenticate with a short-lived ticket from
  * `GET /api/match/ticket` (works across domains, unlike cookies).
  */
-export function attachMatchServer(server: http.Server, onHumanResult: (userId: string, r: HumanResult) => void) {
+export function attachMatchServer(server: http.Server, events: MatchEvents) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
-  const matchmaker = new Matchmaker(onHumanResult);
+  const matchmaker = new Matchmaker(events);
   const sockets = new Map<string, WebSocket>();
   const alive = new WeakSet<WebSocket>();
 

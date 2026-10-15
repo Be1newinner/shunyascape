@@ -89,6 +89,12 @@ export default function Hud({ hud, minimap, onSlot }: { hud: HudState; minimap: 
       <div className="bg-topright">
         <Minimap hud={hud} src={minimap} />
         <div className="bg-counters">
+          {hud.timeLeft !== null && (
+            <div className={`bg-timer ${hud.timeLeft <= 60 ? "low" : ""}`} title="Match ends when time runs out">
+              <span>Time</span>
+              <b>{Math.floor(hud.timeLeft / 60)}:{String(hud.timeLeft % 60).padStart(2, "0")}</b>
+            </div>
+          )}
           <div><span>Alive</span><b>{hud.alive}</b></div>
           <div><span>Kills</span><b>{hud.kills}</b></div>
         </div>

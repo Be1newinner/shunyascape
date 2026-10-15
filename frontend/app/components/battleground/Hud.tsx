@@ -112,7 +112,11 @@ export default function Hud({ hud, minimap, onSlot }: { hud: HudState; minimap: 
       </div>
 
       <div className="bg-zone-info">
-        {hud.peaceful > 0 && <div className="bg-banner">Bots hold fire for {hud.peaceful}s, grab a gun</div>}
+        {hud.peaceful > 0 && (
+          <div className="bg-banner">
+            {hud.online ? `Bots ignore you for ${hud.peaceful}s · grab a gun (firing gives you away)` : `Bots hold fire for ${hud.peaceful}s, grab a gun`}
+          </div>
+        )}
         <div className={`bg-zone-pill ${hud.zone.shrinking ? "warn" : ""}`}>
           {hud.zone.shrinking ? "Zone shrinking" : `Zone ${hud.zone.phase} shrinks in`} <b>{fmtTime(hud.zone.timer)}</b>
         </div>
@@ -178,7 +182,7 @@ export default function Hud({ hud, minimap, onSlot }: { hud: HudState; minimap: 
               <kbd>{i + 1}</kbd>
               <div>
                 <b>{s ? s.name : i === 2 ? "Pistol" : "Empty"}</b>
-                <span>{s ? `${s.mag}/${s.magSize} · ${s.ammo}${s.scope ? ` · ${s.scope}` : ""}` : "—"}</span>
+                <span>{s ? `${s.mag}/${s.magSize} · ${s.ammo} · ${s.range} m${s.scope ? ` · ${s.scope}` : ""}` : "—"}</span>
               </div>
             </div>
           ))}

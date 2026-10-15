@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Chakra_Petch, Inter, Outfit } from "next/font/google";
 import "./globals.css";
+import InstallPrompt from "./components/InstallPrompt";
 import { KEYWORDS, SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL } from "./lib/site";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
@@ -44,7 +45,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${inter.variable} ${outfit.variable} ${hud.variable} antialiased`} suppressHydrationWarning>
-      <body className="min-h-full w-full bg-slate-950">{children}</body>
+      <body className="min-h-full w-full bg-slate-950">
+        {children}
+        <InstallPrompt />
+      </body>
     </html>
   );
 }

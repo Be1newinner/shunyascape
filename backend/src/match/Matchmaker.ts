@@ -3,7 +3,7 @@ import { MAX_HUMANS, MAX_MATCHES, QUEUE_WAIT_MS } from "./rules";
 
 /**
  * Groups queued players into matches. A match starts as soon as 25 players
- * are in, or 60 seconds after the first one queued; bots fill the rest.
+ * are in, or 30 seconds after the first one queued; bots fill the rest.
  * At most MAX_MATCHES run at once: everyone else waits in line, in order,
  * and the next match forms as soon as one ends.
  */

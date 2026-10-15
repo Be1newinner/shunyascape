@@ -7,6 +7,7 @@ import type { LobbyScene } from "./engine/LobbyScene";
 import { OUTFITS, outfitTint } from "./engine/outfits";
 import type { Profile } from "./profile";
 import LiveMatches, { serverFull, useServerStatus } from "./LiveMatches";
+import InstallPrompt from "../InstallPrompt";
 
 interface Props {
   profile: Profile | null;
@@ -99,6 +100,7 @@ export default function Lobby(props: Props) {
       <div className="bg-lobby-bg" aria-hidden="true" />
       <div ref={stageRef} className="bg-lobby-stage" />
       {stageError && <div className="bg-lobby-stage-error">3D preview unavailable</div>}
+      <InstallPrompt placement="lobby" />
 
       {/* Top bar: player card + level */}
       <header className="bg-lobby-top">

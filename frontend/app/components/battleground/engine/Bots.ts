@@ -4,6 +4,7 @@ import { wrapAngle } from "./Character";
 import type { MapLayout } from "./MapGen";
 import { mulberry32, range, clamp } from "./noise";
 import { LAYER, type Physics } from "./Physics";
+import { BOT_HEARING_RANGE, BOT_NOTICE_RANGE, BOT_NOTICE_RANGE_SNIPER, MAX_HUNTERS, NOTICE_STANCE } from "./config";
 import type { Zone } from "./Zone";
 
 type BotState = "roam" | "engage" | "chase";
@@ -18,17 +19,24 @@ export interface BotWorld {
   fire: (shooter: Combatant, origin: THREE.Vector3, dir: THREE.Vector3) => void;
   /** Grace period at match start where bots don't shoot. */
   peaceful: boolean;
+  /** How many bots are already hunting each player. */
+  hunters: Map<Combatant, number>;
 }
 
 const EYE = new THREE.Vector3();
 const TARGET = new THREE.Vector3();
 const DIR = new THREE.Vector3();
 
-/** Simple soldier AI: roam toward the safe zone, fight whoever it can see. */
+/**
+ * Simple soldier AI: roam toward the safe zone; notice players who come within
+ * notice range (and in sight), hear nearby gunfire, and once a player is
+ * noticed, hunt them until one of the two is dead.
+ */
 export class BotBrain {
   state: BotState = "roam";
   private waypoint = new THREE.Vector2();
-  private target: Combatant | null = null;
+  /** The player this bot has noticed and is hunting. */
+  target: Combatant | null = null;
   private lastSeen = new THREE.Vector3();
   private lastSeenTime = -100;
   private thinkTimer = 0;
@@ -65,7 +73,7 @@ export class BotBrain {
   }
 
   /** Can `me` see `other`? Ray from eye to chest, blocked by world geometry only. */
-  private canSee(w: BotWorld, other: Combatant, maxDist: number) {
+  private canSee(w: BotWorld, other: Combatant, maxDist: number, fov = true) {
     EYE.copy(this.me.position).y += this.me.eyeHeight;
     TARGET.copy(other.position).y += other.eyeHeight * 0.75;
     DIR.subVectors(TARGET, EYE);
@@ -76,7 +84,7 @@ export class BotBrain {
     const facing = new THREE.Vector3(Math.sin(this.me.aimYaw), 0, Math.cos(this.me.aimYaw));
     const flat = new THREE.Vector3(DIR.x, 0, DIR.z).normalize();
     const recentlyHit = w.now - this.me.lastDamageTime < 3;
-    if (!recentlyHit && facing.dot(flat) < Math.cos((75 * Math.PI) / 180) && d > 6) return false;
+    if (fov && !recentlyHit && facing.dot(flat) < Math.cos((75 * Math.PI) / 180) && d > 6) return false;
     // Tall grass / prone targets are harder to spot far away.
     if (other.stance === "prone" && d > 60) return false;
     if (other.stance === "crouch" && d > 140 && this.rng() < 0.5) return false;
@@ -92,44 +100,7 @@ export class BotBrain {
 
     if (this.thinkTimer <= 0) {
       this.thinkTimer = 0.25 + this.rng() * 0.1;
-      // Bots only hunt humans: the nearest one they can actually see.
-      let best: Combatant | null = null;
-      const maxD = range > 400 ? 220 : 140;
-      const humans = w.combatants
-        .filter((c) => !c.isBot && c.alive)
-        .map((c) => ({ c, d: c.position.distanceTo(me.position) }))
-        .filter((e) => e.d < maxD)
-        .sort((a, b) => a.d - b.d)
-        .slice(0, 3);
-      // Whoever just shot us gets priority.
-      const attacker = me.lastDamageFrom;
-      if (attacker && !attacker.isBot && attacker.alive && w.now - me.lastDamageTime < 4 && this.canSee(w, attacker, maxD * 1.3)) best = attacker;
-      for (const { c } of humans) {
-        if (best) break;
-        if (this.canSee(w, c, maxD)) best = c;
-      }
-      if (best && !w.peaceful) {
-        if (this.target !== best) {
-          this.reaction = (range > 400 ? 1.1 : 0.7) + (1 - this.skill) * 0.9 + this.rng() * 0.4;
-          this.crouchPref = this.rng() < 0.35;
-        }
-        this.target = best;
-        this.state = "engage";
-        this.lastSeen.copy(best.position);
-        this.lastSeenTime = w.now;
-      } else if (this.state === "engage") {
-        this.state = "chase";
-      } else if (attacker && !attacker.isBot && w.now - me.lastDamageTime < 1 && !w.peaceful) {
-        // Shot from somewhere unseen: head toward the shooter.
-        this.state = "chase";
-        this.lastSeen.copy(attacker.position);
-        this.lastSeenTime = w.now;
-      }
-      if (this.state === "chase" && w.now - this.lastSeenTime > 9) {
-        this.state = "roam";
-        this.target = null;
-        this.pickWaypoint(w);
-      }
+      this.think(w, range);
     }
 
     let vx = 0;
@@ -211,8 +182,8 @@ export class BotBrain {
       const dz = this.waypoint.y - me.position.z;
       const d = Math.hypot(dx, dz);
       if (d < 3) {
-        if (this.state === "chase") this.state = "roam";
-        this.pickWaypoint(w);
+        // Reached the hunted player's spot without a clear shot: wait for the next look.
+        if (this.state !== "chase") this.pickWaypoint(w);
       } else {
         let yaw = Math.atan2(dx, dz);
         yaw = this.avoid(w, yaw);
@@ -244,6 +215,48 @@ export class BotBrain {
       this.stuckTimer = 0;
       this.lastPos.copy(me.position);
     }
+  }
+
+  /** Pick a target and keep it until one of us is dead. */
+  private think(w: BotWorld, range: number) {
+    const me = this.me;
+    if (this.target && !this.target.alive) {
+      w.hunters.set(this.target, Math.max(0, (w.hunters.get(this.target) ?? 1) - 1));
+      this.target = null;
+      this.state = "roam";
+      this.pickWaypoint(w);
+    }
+    if (w.peaceful) return;
+    if (!this.target) {
+      // Bots only hunt humans. Whoever just shot us comes first.
+      const attacker = me.lastDamageFrom;
+      let pick: Combatant | null =
+        attacker && !attacker.isBot && attacker.alive && w.now - me.lastDamageTime < 4 ? attacker : null;
+      if (!pick) {
+        const notice = range > 400 ? BOT_NOTICE_RANGE_SNIPER : BOT_NOTICE_RANGE;
+        let bestD = Infinity;
+        for (const c of w.combatants) {
+          if (c.isBot || !c.alive || (w.hunters.get(c) ?? 0) >= MAX_HUNTERS) continue;
+          const d = c.position.distanceTo(me.position);
+          if (d >= bestD) continue;
+          const reach = notice * NOTICE_STANCE[c.stance];
+          const heard = w.now - c.lastShotTime < 0.6 && d < BOT_HEARING_RANGE;
+          if (heard || (d < reach && this.canSee(w, c, reach))) {
+            pick = c;
+            bestD = d;
+          }
+        }
+      }
+      if (!pick) return;
+      this.target = pick;
+      w.hunters.set(pick, (w.hunters.get(pick) ?? 0) + 1);
+      this.reaction = (range > 400 ? 1.1 : 0.7) + (1 - this.skill) * 0.9 + this.rng() * 0.4;
+      this.crouchPref = this.rng() < 0.35;
+    }
+    // Locked on: fight when they're in sight and in range, otherwise go after them.
+    this.lastSeen.copy(this.target.position);
+    this.lastSeenTime = w.now;
+    this.state = this.canSee(w, this.target, range, false) ? "engage" : "chase";
   }
 
   /** Steer around obstacles with three short feeler rays. */

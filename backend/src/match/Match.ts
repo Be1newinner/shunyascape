@@ -1,6 +1,7 @@
 import { BotSim, type Target } from "./BotSim";
 import {
-  BOT_NAMES, MATCH_SIZE, MAX_HEALTH, MAX_HIT_DAMAGE, PEACE_SECONDS, ServerZone, WEAPONS, isWeapon, mulberry32, type WeaponId, MATCH_SECONDS, PODIUM_XP } from "./rules";
+  BOT_NAMES, IDLE_GRACE_SECONDS, MATCH_SIZE, MAX_HEALTH, MAX_HIT_DAMAGE, PEACE_SECONDS, SPAWN_GRACE_SECONDS, ServerZone, WEAPONS,
+  isWeapon, mulberry32, rangeFalloff, type WeaponId, MATCH_SECONDS, PODIUM_XP } from "./rules";
 
 /** A connected human, as the match sees them. */
 export interface Peer {
@@ -56,6 +57,10 @@ interface Participant {
   diedAt: number;
   /** Result already recorded (so it's never written twice). */
   finished: boolean;
+  /** When the player left the loading/ready screen and started playing (ms). */
+  activeAt: number | null;
+  /** When they last fired (ms); 0 = never. Firing ends spawn protection. */
+  lastShotAt: number;
 }
 
 const SNAPSHOT_MS = 66;
@@ -99,6 +104,7 @@ export class Match {
       this.participants.set(id, {
         id, name, outfit, bot, alive: true, hp: MAX_HEALTH, kills: 0, damage: 0,
         state: null, stateAt: 0, pos: null, ammoBucket: new Map(), diedAt: 0, finished: false,
+        activeAt: null, lastShotAt: 0,
       });
     for (const p of humans) {
       add(p.userId, p.name, p.outfit, false);
@@ -134,17 +140,25 @@ export class Match {
   /** Humans as the bots see them (connected or not: everyone in the world is fair game). */
   private targets(): Target[] {
     const out: Target[] = [];
+    const now = Date.now();
     for (const p of this.participants.values()) {
       if (p.bot || !p.alive || !p.pos) continue;
       const st = p.state ?? [];
       const stance = st[5] === "c" ? "c" : st[5] === "p" ? "p" : "s";
-      const stale = Date.now() - p.stateAt > STALE_MS;
+      const stale = now - p.stateAt > STALE_MS;
       out.push({
         id: p.id, alive: true, pos: p.pos, stance,
         vx: stale ? 0 : Number(st[7]) || 0, vz: stale ? 0 : Number(st[8]) || 0,
+        shielded: p.lastShotAt === 0 && now < this.graceEnds(p),
+        sinceShot: p.lastShotAt ? (now - p.lastShotAt) / 1000 : Infinity,
       });
     }
     return out;
+  }
+
+  /** End of a player's spawn protection (ms): a short while after they start playing. */
+  private graceEnds(p: Participant) {
+    return p.activeAt !== null ? p.activeAt + SPAWN_GRACE_SECONDS * 1000 : this.startedAt + IDLE_GRACE_SECONDS * 1000;
   }
 
   private roster() {
@@ -165,7 +179,7 @@ export class Match {
     this.startedAt = Date.now();
     const roster = this.roster();
     for (const peer of this.peers.values()) {
-      peer.send({ t: "start", match: this.id, seed: this.seed, you: peer.userId, host: null, roster, peace: PEACE_SECONDS, limit: MATCH_SECONDS });
+      peer.send({ t: "start", match: this.id, seed: this.seed, you: peer.userId, host: null, roster, peace: PEACE_SECONDS, grace: SPAWN_GRACE_SECONDS, limit: MATCH_SECONDS });
     }
     let last = Date.now();
     // An error in one tick is logged, never allowed to crash the game server.
@@ -252,6 +266,10 @@ export class Match {
       case "shot":
         this.humanShot(peer, me, msg);
         break;
+      case "play":
+        // Left the loading / ready screen: spawn protection runs out shortly.
+        me.activeAt ??= Date.now();
+        break;
       case "pick": {
         const id = String(msg.id ?? "");
         if (!me.alive || !id || id.length > 32) return;
@@ -298,6 +316,7 @@ export class Match {
     const o = vec3(msg.o);
     const e = vec3(msg.e);
     if (!o || !e || !this.allowShot(shooter, w)) return;
+    shooter.lastShotAt = Date.now();
     const hit = msg.hit as { id?: unknown; head?: unknown } | undefined;
     this.broadcast({ t: "fx", by: shooter.id, w, o, e, h: hit ? 1 : 0 }, peer.userId);
     if (!hit || typeof hit.id !== "string") return;
@@ -306,10 +325,12 @@ export class Match {
     // The claimed impact point has to be on the target, within the gun's range.
     const [tx, ty, tz] = target.pos;
     if (Math.hypot(e[0] - tx, e[2] - tz) > 3 || e[1] < ty - 0.8 || e[1] > ty + 2.6) return;
-    if (Math.hypot(o[0] - tx, o[1] - ty, o[2] - tz) > WEAPONS[w].range + 15) return;
+    const dist = Math.hypot(o[0] - tx, o[1] - ty, o[2] - tz);
+    if (dist > WEAPONS[w].range + 15) return;
     const head = hit.head === true;
     if (target.bot) this.bots.wasHit(target.id, shooter.id);
-    this.applyDamage(target, Math.min(MAX_HIT_DAMAGE, WEAPONS[w].damage * (head ? WEAPONS[w].head : 1)), shooter, head, w);
+    const dmg = WEAPONS[w].damage * (head ? WEAPONS[w].head : 1) * rangeFalloff(w, dist);
+    this.applyDamage(target, Math.min(MAX_HIT_DAMAGE, dmg), shooter, head, w);
   }
 
   private botShot(botId: string, w: WeaponId, o: number[], e: number[], hit: { id: string; head: boolean } | null) {
@@ -320,7 +341,9 @@ export class Match {
     if (!hit) return;
     const target = this.participants.get(hit.id);
     if (!target || target.bot || !target.alive) return;
-    this.applyDamage(target, Math.min(MAX_HIT_DAMAGE, WEAPONS[w].damage * (hit.head ? WEAPONS[w].head : 1)), bot, hit.head, w);
+    const dist = Math.hypot(e[0] - o[0], e[1] - o[1], e[2] - o[2]);
+    const dmg = WEAPONS[w].damage * (hit.head ? WEAPONS[w].head : 1) * rangeFalloff(w, dist);
+    this.applyDamage(target, Math.min(MAX_HIT_DAMAGE, dmg), bot, hit.head, w);
   }
 
   private applyDamage(target: Participant, dmg: number, by: Participant | null, head: boolean, weapon: string) {

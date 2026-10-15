@@ -1,0 +1,88 @@
+/* "Install the app" card (components/InstallPrompt.tsx) */
+
+.ip-card {
+  position: fixed;
+  left: 50%;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(520px, calc(100vw - 32px));
+  padding: 12px 12px 12px 14px;
+  border: 1px solid hsl(256 60% 70% / 0.28);
+  border-radius: 18px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, hsl(262 80% 60% / 0.28), transparent 60%),
+    linear-gradient(160deg, hsl(258 45% 14% / 0.94), hsl(252 50% 8% / 0.96));
+  box-shadow: 0 18px 50px hsl(255 60% 4% / 0.6), inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  backdrop-filter: blur(10px);
+  color: hsl(250 40% 97%);
+  font-family: var(--font-outfit), var(--font-inter), system-ui, sans-serif;
+  transform: translateX(-50%);
+  animation: ip-in 0.45s cubic-bezier(0.2, 0.9, 0.25, 1.15) both;
+  touch-action: manipulation;
+}
+.ip-bottom { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+.ip-lobby { top: calc(70px + env(safe-area-inset-top, 0px)); }
+
+@keyframes ip-in {
+  from { opacity: 0; transform: translate(-50%, 18px) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ip-card { animation: none; }
+}
+
+.ip-icon {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px hsl(260 70% 30% / 0.5);
+}
+.ip-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.ip-text b { font-size: 16px; font-weight: 700; letter-spacing: 0.01em; }
+.ip-text span { font-size: 13px; line-height: 1.35; color: hsl(250 25% 80%); }
+.ip-text em { font-style: normal; font-weight: 600; color: hsl(45 100% 70%); }
+.ip-inline { display: inline; width: 14px; height: 14px; vertical-align: -2px; }
+
+.ip-actions { display: flex; flex: none; gap: 8px; }
+.ip-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font: 700 14px var(--font-outfit), system-ui, sans-serif;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ip-actions svg { width: 16px; height: 16px; }
+.ip-install {
+  border: 0;
+  background: linear-gradient(180deg, hsl(45 100% 64%), hsl(36 100% 50%));
+  color: hsl(30 70% 10%);
+  box-shadow: 0 8px 22px hsl(40 100% 50% / 0.3);
+}
+.ip-install:active { transform: translateY(1px); }
+.ip-skip {
+  border: 1px solid hsl(0 0% 100% / 0.16);
+  background: hsl(0 0% 100% / 0.06);
+  color: hsl(250 30% 92%);
+}
+.ip-skip:hover, .ip-install:hover { filter: brightness(1.08); }
+
+/* Narrow phones (portrait): buttons go under the text. */
+@media (max-width: 440px) {
+  .ip-card { flex-wrap: wrap; }
+  .ip-actions { width: 100%; }
+  .ip-actions button { flex: 1; justify-content: center; }
+}
+/* Short screens (phones held sideways): slimmer card. */
+@media (max-height: 520px) {
+  .ip-card { padding: 8px 8px 8px 10px; gap: 10px; }
+  .ip-icon { width: 38px; height: 38px; border-radius: 10px; }
+  .ip-text b { font-size: 14px; }
+  .ip-text span { font-size: 12px; }
+  .ip-lobby { top: calc(56px + env(safe-area-inset-top, 0px)); }
+}

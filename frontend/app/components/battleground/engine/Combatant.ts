@@ -31,6 +31,8 @@ export class Combatant {
   sprinting = false;
   aiming = false;
   recoil = 0;
+  /** Game time of this soldier's last shot (bots nearby hear it). */
+  lastShotTime = -100;
 
   slots: [Gun | null, Gun | null, Gun | null] = [null, null, null];
   active: SlotIndex = 2;

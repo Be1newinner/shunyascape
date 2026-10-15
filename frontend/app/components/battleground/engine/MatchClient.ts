@@ -18,6 +18,8 @@ export interface MatchStart {
   host: string | null;
   roster: RosterEntry[];
   peace: number;
+  /** Spawn protection: bots ignore you this long after you start playing (or until you fire). */
+  grace?: number;
   /** Match length limit in seconds. */
   limit?: number;
 }

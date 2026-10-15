@@ -93,7 +93,7 @@ jobs:
               --name "${CONTAINER_NAME}" \
               --restart unless-stopped \
               -p "127.0.0.1:${HOST_PORT}:8005" \
-              --env-file "$HOME/projects/unthikable-backend/.env" \
+              --env-file "$HOME/projects/shunyascape.env" \
               "${IMAGE}:${TAG}"
 
             echo "🧹 Pruning old images..."

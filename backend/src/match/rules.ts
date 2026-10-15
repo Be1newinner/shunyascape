@@ -61,6 +61,35 @@ export function rangeFalloff(w: WeaponId, dist: number) {
   return Math.max(0.6, 1 - (0.4 * (dist - s.falloff)) / Math.max(1, s.range - s.falloff));
 }
 
+/** Body armour (level 0 = none). Keep in sync with the client's config.ts. */
+export const ARMOR = {
+  vest: { reduce: [0, 0.3, 0.4, 0.55], durability: [0, 80, 120, 170] },
+  helmet: { reduce: [0, 0.3, 0.4, 0.55], durability: [0, 60, 90, 130] },
+} as const;
+
+export interface Gear {
+  vest: number;
+  vestDur: number;
+  helmet: number;
+  helmetDur: number;
+}
+
+/** Damage after armour, and the wear on each piece (see the client's `armorHit`). */
+export function armorHit(raw: number, gear: Gear, part: "head" | "body" | "blast") {
+  const slot = part === "head" ? "helmet" : "vest";
+  const level = gear[slot];
+  if (!level) return { damage: raw, vestWear: 0, helmetWear: 0 };
+  const reduce = ARMOR[slot].reduce[level] * (part === "blast" ? 0.5 : 1);
+  const wear = raw * (part === "blast" ? 0.5 : 1);
+  return { damage: raw * (1 - reduce), vestWear: slot === "vest" ? wear : 0, helmetWear: slot === "helmet" ? wear : 0 };
+}
+
+export const GRENADE = { fuse: 3.6, radius: 7.5, maxDamage: 78, throwSpeed: 19, carry: 4 } as const;
+export function blastDamage(dist: number) {
+  if (dist >= GRENADE.radius) return 0;
+  return GRENADE.maxDamage * Math.pow(1 - dist / GRENADE.radius, 1.3);
+}
+
 /** Soldier heights by stance (feet to top of head), as on the client. */
 export const STANCE_HEIGHT = { s: 1.8, c: 1.25, p: 0.62 } as const;
 export const EYE_HEIGHT = { s: 1.62, c: 1.12, p: 0.42 } as const;
@@ -193,3 +222,24 @@ export const BOT_NAMES = [
   "Mamba_Riya", "Bullseye_Yash", "IronKaran", "Nova_Sana", "Reaper_Jay", "Hawk_Neel", "Saber_Isha",
   "Tusker_Ajay", "Blitz_Kiara",
 ];
+
+/** Airdrops land at these points of the match clock (seconds), inside the next zone. */
+export const AIRDROP_AT = [140, 290];
+/** Seconds from the announcement until the crate touches down (the client's plane + parachute). */
+export const AIRDROP_LAND = 32;
+
+/** What's in airdrop crate number `n` (same as the client's `airdropItems`). */
+export function airdropItems(n: number): object[] {
+  const gun =
+    n % 2 === 1
+      ? [{ kind: "weapon", weapon: "kar98k", mag: 5, scope: "6x" }, { kind: "ammo", ammo: "7.62mm", amount: 30 }]
+      : [{ kind: "weapon", weapon: "m416", mag: 30, scope: "4x" }, { kind: "ammo", ammo: "5.56mm", amount: 120 }];
+  return [
+    ...gun,
+    { kind: "armor", slot: "vest", level: 3 },
+    { kind: "armor", slot: "helmet", level: 3 },
+    { kind: "grenade", count: 2 },
+    { kind: "medkit" },
+    { kind: "medkit" },
+  ];
+}

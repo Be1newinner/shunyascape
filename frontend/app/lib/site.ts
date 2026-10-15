@@ -55,6 +55,7 @@ export const CONTROLS = [
   { keys: ["J", "K"], action: "Crouch / prone" },
   { keys: ["O"], action: "Switch weapon" },
   { keys: ["L"], action: "Use med kit" },
+  { keys: ["G"], action: "Throw grenade" },
 ] as const;
 
 export const FAQ = [

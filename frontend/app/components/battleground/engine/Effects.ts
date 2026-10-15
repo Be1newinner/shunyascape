@@ -125,6 +125,11 @@ export class Effects {
   private lightLife = 0;
   private soft = softTexture();
   private idx = { tracer: 0, particle: 0, flash: 0, spark: 0, hole: 0, brass: 0 };
+  /** Where the camera is: tracers that pass right by it are hidden (up close they read as giant white streaks). */
+  camera: THREE.Vector3 | null = null;
+  /** No tracers at all (the kill-cam zooms in and would blow them up). */
+  hideTracers = false;
+  private tmpA = new THREE.Vector3();
 
   constructor() {
     // A short glowing slug, not a beam: it flies along the shot and is gone in a few frames.
@@ -279,6 +284,42 @@ export class Effects {
     h.mesh.visible = true;
   }
 
+  /** Frag grenade burst: white-hot flash, a big light pop, a fireball, smoke and debris. */
+  explosion(at: THREE.Vector3) {
+    const f = this.flashes[this.idx.flash++ % this.flashes.length];
+    f.sprite.position.copy(at).y += 0.4;
+    f.sprite.scale.setScalar(5.5);
+    f.sprite.visible = true;
+    f.life = 0.12;
+    this.light.position.copy(at).y += 1;
+    this.light.distance = 30;
+    this.light.intensity = 900;
+    this.lightLife = 0.16;
+    const r = (k: number) => (Math.random() - 0.5) * k;
+    for (let i = 0; i < 8; i++) {
+      this.particle(at, i % 2 ? "#ffb347" : "#ff7a1f", 0.8 + Math.random() * 0.6, { x: r(6), y: 2 + Math.random() * 4, z: r(6) }, 0.35, { grow: 4, drag: 4, alpha: 0.9 });
+    }
+    for (let i = 0; i < 10; i++) {
+      this.particle(at, i % 3 ? "#5a554e" : "#8c847a", 1.1 + Math.random() * 0.8, { x: r(4), y: 1 + Math.random() * 3, z: r(4) }, 2.6 + Math.random() * 1.4, { grow: 1.6, drag: 1.4, alpha: 0.55 });
+    }
+    for (let i = 0; i < 14; i++) {
+      this.particle(at, "#3a2f24", 0.06 + Math.random() * 0.06, { x: r(16), y: 4 + Math.random() * 7, z: r(16) }, 1.2, { grow: 0, gravity: 14, drag: 0.3 });
+    }
+    for (let i = 0; i < 18; i++) {
+      const s = this.sparks[this.idx.spark++ % this.sparks.length];
+      s.mesh.position.copy(at);
+      s.vel.set(r(26), 3 + Math.random() * 12, r(26));
+      s.life = 0.3 + Math.random() * 0.4;
+      s.mesh.visible = true;
+    }
+  }
+
+  /** Coloured smoke rising from an airdrop crate (call every frame or so while it should smoke). */
+  smoke(at: THREE.Vector3, color: THREE.ColorRepresentation) {
+    const r = (k: number) => (Math.random() - 0.5) * k;
+    this.particle(at, color, 0.5, { x: r(0.6) + 0.4, y: 2.6 + Math.random(), z: r(0.6) }, 3.4, { grow: 1.3, drag: 0.5, alpha: 0.5 });
+  }
+
   update(dt: number) {
     const speed = 900;
     for (const t of this.tracers) {
@@ -293,6 +334,14 @@ export class Effects {
       t.mesh.position.copy(t.from).addScaledVector(t.dir, tail);
       t.mesh.lookAt(t.mesh.position.clone().add(t.dir));
       t.mesh.scale.set(1, 1, Math.max(0.01, head - tail));
+      if (this.hideTracers) t.mesh.scale.z = 0.0001;
+      else if (this.camera) {
+        // Closest point of the slug to the camera: rounds flying at you aren't drawn.
+        const c = this.tmpA.copy(this.camera).sub(t.from);
+        const along = Math.max(tail, Math.min(head, c.dot(t.dir)));
+        const near = c.addScaledVector(t.dir, -along).length();
+        if (near < 4) t.mesh.scale.z = 0.0001;
+      }
     }
     for (const p of this.particles) {
       if (!p.sprite.visible) continue;
@@ -350,7 +399,10 @@ export class Effects {
     }
     if (this.lightLife > 0) {
       this.lightLife -= dt;
-      if (this.lightLife <= 0) this.light.intensity = 0;
+      if (this.lightLife <= 0) {
+        this.light.intensity = 0;
+        this.light.distance = 10;
+      }
     }
   }
 }

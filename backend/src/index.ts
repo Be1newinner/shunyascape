@@ -8,10 +8,12 @@ import http from "http";
 import { connectDB } from "./config/db";
 import User from "./models/User";
 import { hashPassword, verifyPassword, signToken } from "./utils/auth";
-import { authMiddleware, requireAuth, requireAdmin, AuthenticatedRequest } from "./middlewares/auth";
+import { authMiddleware, requireAuth, requireAdmin, AuthenticatedRequest, setSessionCookies, signRefreshToken } from "./middlewares/auth";
 import { sendOtpEmail } from "./utils/mailer";
 import { googleClientId, verifyGoogleIdToken } from "./utils/google";
 import { OUTFITS, levelFor, matchXp } from "./game/profile";
+import { STREAK_OUTFITS, applyResult, checkIn, claim, describe, ensureDaily } from "./game/missions";
+import { CONQUEROR_TOP, applyRanked, ensureSeason, seasonEnds, seasonId, tierFor, type RankedState } from "./game/ranked";
 import { attachMatchServer } from "./match/socket";
 import { initPhysics } from "./match/World";
 import type { HumanResult } from "./match/Match";
@@ -59,32 +61,19 @@ function randomOtp(): string {
 // SESSIONS
 // ==========================================
 
-const ACCESS_TOKEN_MS = 24 * 60 * 60 * 1000;
-const REFRESH_TOKEN_MS = 30 * 24 * 60 * 60 * 1000;
-
 /**
  * Start a new single-device session: rotate the session id, store the
  * refresh token and set the auth cookies.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function startSession(user: any, res: express.Response) {
-  const sessionId = crypto.randomUUID();
-  const claims = { userId: user._id, email: user.email, role: user.role, sessionId };
-  const accessToken = signToken(claims, "1d");
-  const refreshToken = signToken(claims, "30d");
-
-  user.currentSessionId = sessionId;
+  user.currentSessionId = crypto.randomUUID();
+  const refreshToken = signRefreshToken(user);
   user.currentRefreshToken = refreshToken;
+  user.previousRefreshToken = null;
+  user.refreshRotatedAt = null;
   await user.save();
-
-  const cookie = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    path: "/",
-  };
-  res.cookie("accessToken", accessToken, { ...cookie, maxAge: ACCESS_TOKEN_MS });
-  res.cookie("refreshToken", refreshToken, { ...cookie, maxAge: REFRESH_TOKEN_MS });
+  setSessionCookies(res, user, refreshToken);
   return refreshToken;
 }
 
@@ -258,6 +247,7 @@ app.post(
       const user = req.user;
       if (user) {
         user.currentRefreshToken = null;
+        user.previousRefreshToken = null;
         user.currentSessionId = null;
         await user.save();
       }
@@ -499,9 +489,62 @@ app.patch(
   }
 );
 
+/** This season's leaderboard position (1 = top), or null without a ranked match yet. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function seasonRank(user: any) {
+  const r = user.ranked as RankedState | undefined;
+  if (!r || r.season !== seasonId() || !r.matches) return null;
+  return (await User.countDocuments({ "ranked.season": r.season, "ranked.points": { $gt: r.points } })) + 1;
+}
+
+/** Ranked record for the lobby: tier, division, progress, this season's end, last season's tier. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rankedOf(user: any, rank: number | null) {
+  const r = ensureSeason(user.ranked?.season ? (user.ranked as RankedState) : null);
+  return {
+    season: r.season,
+    endsAt: seasonEnds().toISOString(),
+    points: r.points,
+    matches: r.matches,
+    peak: r.peak,
+    rank,
+    ...tierFor(r.points, rank ?? undefined),
+    last: r.last ?? null,
+  };
+}
+
+/**
+ * Load-time upkeep for the lobby: start today's missions, roll the ranked
+ * season, and count the daily login (streak + XP + streak outfits).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function dailyUpkeep(user: any) {
+  const daily = ensureDaily(user.daily, user._id.toString());
+  const ranked = ensureSeason(user.ranked?.season ? (user.ranked as RankedState) : null);
+  const { streak, reward } = checkIn(user.streak);
+  // Atomic: a match result may be adding XP at this very moment.
+  await User.updateOne(
+    { _id: user._id },
+    {
+      $set: { daily, ranked, streak },
+      $inc: { "stats.xp": reward?.xp ?? 0 },
+      ...(reward?.unlocked.length ? { $addToSet: { unlockedOutfits: { $each: reward.unlocked } } } : {}),
+    },
+  );
+  // Mirror it in memory for this response.
+  user.daily = daily;
+  user.ranked = ranked;
+  user.streak = streak;
+  if (reward) {
+    user.stats.xp = (user.stats?.xp ?? 0) + reward.xp;
+    for (const id of reward.unlocked) if (!user.unlockedOutfits.includes(id)) user.unlockedOutfits.push(id);
+  }
+  return reward;
+}
+
 /** The player's battleground profile: outfit, lifetime stats and level. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function profileOf(user: any) {
+function profileOf(user: any, extra: { rank?: number | null; checkIn?: unknown } = {}) {
   const st = user.stats ?? {};
   const stats = {
     matches: st.matches ?? 0,
@@ -513,15 +556,114 @@ function profileOf(user: any) {
     timePlayed: st.timePlayed ?? 0,
     xp: st.xp ?? 0,
   };
-  return { name: user.name, outfit: user.outfit ?? "classic", stats, ...levelFor(stats.xp) };
+  const daily = ensureDaily(user.daily, user._id.toString());
+  return {
+    name: user.name,
+    outfit: user.outfit ?? "classic",
+    stats,
+    ...levelFor(stats.xp),
+    missions: describe(daily),
+    streak: { count: user.streak?.count ?? 0, best: user.streak?.best ?? 0 },
+    unlocked: user.unlockedOutfits ?? [],
+    lockedOutfits: STREAK_OUTFITS,
+    ranked: rankedOf(user, extra.rank ?? null),
+    lastMatchReward: user.lastMatchReward ?? null,
+    checkIn: extra.checkIn ?? null,
+  };
 }
 
 // GET /api/profile — battleground profile for the lobby
 app.get(
   "/api/profile",
   requireAuth as express.RequestHandler,
-  (req: AuthenticatedRequest, res: express.Response) => {
-    res.status(200).json({ profile: profileOf(req.user) });
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      await connectDB();
+      const user = await User.findById(req.user._id);
+      if (!user) {
+        res.status(404).json({ error: "Account not found" });
+        return;
+      }
+      const reward = await dailyUpkeep(user);
+      res.status(200).json({ profile: profileOf(user, { rank: await seasonRank(user), checkIn: reward }) });
+    } catch (error) {
+      console.error("Profile error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// POST /api/missions/claim — collect the XP of a finished daily mission
+app.post(
+  "/api/missions/claim",
+  requireAuth as express.RequestHandler,
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      await connectDB();
+      const user = await User.findById(req.user._id);
+      if (!user) {
+        res.status(404).json({ error: "Account not found" });
+        return;
+      }
+      const daily = ensureDaily(user.daily, user._id.toString());
+      const out = claim(daily, String(req.body?.id ?? ""));
+      if ("error" in out) {
+        res.status(400).json({ error: out.error });
+        return;
+      }
+      // Only claim it if it wasn't claimed by a parallel request in the meantime.
+      const done = await User.updateOne(
+        { _id: user._id, "daily.day": daily.day, "daily.missions": { $elemMatch: { id: req.body.id, claimed: false } } },
+        { $set: { daily }, $inc: { "stats.xp": out.xp } },
+      );
+      if (!done.modifiedCount && user.daily?.day === daily.day) {
+        res.status(400).json({ error: "Already claimed" });
+        return;
+      }
+      if (!done.modifiedCount) await User.updateOne({ _id: user._id }, { $set: { daily }, $inc: { "stats.xp": out.xp } });
+      user.daily = daily;
+      user.stats.xp = (user.stats?.xp ?? 0) + out.xp;
+      res.status(200).json({ xp: out.xp, profile: profileOf(user, { rank: await seasonRank(user) }) });
+    } catch (error) {
+      console.error("Mission claim error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// GET /api/leaderboard — this ranked season's top 50 (and where you are)
+app.get(
+  "/api/leaderboard",
+  requireAuth as express.RequestHandler,
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      await connectDB();
+      const season = seasonId();
+      const top = await User.find({ "ranked.season": season, "ranked.matches": { $gt: 0 } }, { name: 1, outfit: 1, ranked: 1, "stats.xp": 1 })
+        .sort({ "ranked.points": -1, "ranked.matches": 1 })
+        .limit(50)
+        .lean();
+      const me = req.user._id.toString();
+      res.status(200).json({
+        season,
+        endsAt: seasonEnds().toISOString(),
+        conquerorTop: CONQUEROR_TOP,
+        players: top.map((u, i) => ({
+          rank: i + 1,
+          name: u.name,
+          outfit: u.outfit ?? "classic",
+          points: u.ranked?.points ?? 0,
+          matches: u.ranked?.matches ?? 0,
+          level: levelFor(u.stats?.xp ?? 0).level,
+          tier: tierFor(u.ranked?.points ?? 0, i + 1).tier,
+          you: u._id.toString() === me,
+        })),
+        you: rankedOf(req.user, await seasonRank(req.user)),
+      });
+    } catch (error) {
+      console.error("Leaderboard error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
   },
 );
 
@@ -534,6 +676,10 @@ app.patch(
       const outfit = req.body?.outfit;
       if (!OUTFITS.includes(outfit)) {
         res.status(400).json({ error: "Unknown outfit" });
+        return;
+      }
+      if (outfit in STREAK_OUTFITS && !(req.user.unlockedOutfits ?? []).includes(outfit)) {
+        res.status(403).json({ error: `Unlocked with a ${STREAK_OUTFITS[outfit]}-day login streak` });
         return;
       }
       await connectDB();
@@ -582,7 +728,10 @@ app.post(
     for (const [c, v] of handoffCodes) if (v.expires < now) handoffCodes.delete(c);
     const code = crypto.randomBytes(24).toString("base64url");
     handoffCodes.set(code, { userId: req.user._id.toString(), sessionId: req.user.currentSessionId, expires: now + HANDOFF_MS });
-    res.status(200).json({ code });
+    // A fresh 30-day token for the app each launch, so an app that's opened keeps its session.
+    const u = req.user;
+    const appToken = signToken({ userId: u._id, email: u.email, role: u.role, sessionId: u.currentSessionId, kind: "app" }, "30d");
+    res.status(200).json({ code, appToken });
   },
 );
 
@@ -601,10 +750,7 @@ app.get("/api/auth/handoff", async (req: express.Request, res: express.Response)
     const user = await User.findById(entry.userId);
     // Still the same session (no sign-in elsewhere in the meantime).
     if (!user || user.currentSessionId !== entry.sessionId || !user.currentRefreshToken) throw new Error("stale");
-    const claims = { userId: user._id, email: user.email, role: user.role, sessionId: user.currentSessionId };
-    const cookie = { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax" as const, path: "/" };
-    res.cookie("accessToken", signToken(claims, "1d"), { ...cookie, maxAge: ACCESS_TOKEN_MS });
-    res.cookie("refreshToken", user.currentRefreshToken, { ...cookie, maxAge: REFRESH_TOKEN_MS });
+    setSessionCookies(res, user, user.currentRefreshToken);
     res.redirect(302, target);
   } catch {
     res.redirect(302, `${target}${target.includes("?") ? "&" : "?"}handoff=failed`);
@@ -617,7 +763,8 @@ app.get(
   requireAuth as express.RequestHandler,
   (req: AuthenticatedRequest, res: express.Response) => {
     const u = req.user;
-    const ticket = signToken({ kind: "match", userId: u._id.toString(), name: u.name, outfit: u.outfit ?? "classic" }, "90s");
+    const level = levelFor(u.stats?.xp ?? 0).level;
+    const ticket = signToken({ kind: "match", userId: u._id.toString(), name: u.name, outfit: u.outfit ?? "classic", level }, "90s");
     res.status(200).json({ ticket });
   },
 );
@@ -632,13 +779,22 @@ async function awardXp(userId: string, xp: number) {
   }
 }
 
-/** The game server reports each human's result; stats are written here, never by clients. */
+/**
+ * The game server reports each human's result; stats, daily missions and
+ * ranked points are written here, never by clients.
+ */
 async function recordHumanResult(userId: string, match: HumanResult) {
   try {
     await connectDB();
     const user = await User.findById(userId);
     if (!user) return;
+    const xp = matchXp(match);
     const best = user.stats?.bestPlacement;
+    const daily = ensureDaily(user.daily, userId);
+    applyResult(daily, match);
+    const ranked = ensureSeason(user.ranked?.season ? (user.ranked as RankedState) : null);
+    const rp = applyRanked(ranked, match);
+    // Counters with $inc so a podium bonus landing at the same moment isn't lost.
     await User.updateOne(
       { _id: userId },
       {
@@ -649,11 +805,14 @@ async function recordHumanResult(userId: string, match: HumanResult) {
           "stats.damage": match.damage,
           "stats.top10": match.placement <= 10 ? 1 : 0,
           "stats.timePlayed": match.survived,
-          "stats.xp": matchXp(match),
+          "stats.xp": xp,
         },
         $set: {
           lastMatchAt: new Date(),
           "stats.bestPlacement": best ? Math.min(best, match.placement) : match.placement,
+          daily,
+          ranked,
+          lastMatchReward: { xp, rp, points: ranked.points, at: new Date().toISOString() },
         },
       },
     );

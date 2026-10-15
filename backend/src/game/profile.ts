@@ -1,7 +1,8 @@
 import { SURVIVOR_XP } from "../match/rules";
 /** Battleground profile rules: outfits, match rewards and levels. */
 
-export const OUTFITS = ["classic", "desert", "woodland", "urban", "night", "crimson", "arctic", "royal"] as const;
+// "ember" and "gold" are earned with the login streak (game/missions.ts STREAK_OUTFITS).
+export const OUTFITS = ["classic", "desert", "woodland", "urban", "night", "crimson", "arctic", "royal", "ember", "gold"] as const;
 export type Outfit = (typeof OUTFITS)[number];
 
 export interface MatchResult {

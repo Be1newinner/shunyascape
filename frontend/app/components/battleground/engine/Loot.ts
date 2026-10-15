@@ -1,7 +1,8 @@
 import * as THREE from "three/webgpu";
 import type { Assets } from "./Assets";
 import type { LootSpot } from "./Buildings";
-import { AMMO_PICKUP, SCOPES, WEAPONS, type AmmoType, type ScopeId, type WeaponId } from "./config";
+import { AMMO_PICKUP, SCOPES, WEAPONS, type AmmoType, type GearLevel, type GearSlot, type ScopeId, type WeaponId } from "./config";
+import { gearLootMesh, gearName } from "./Gear";
 import { mulberry32, pick } from "./noise";
 import { scopeLootMesh, type WeaponFactory } from "./Weapons";
 
@@ -9,7 +10,10 @@ export type LootItem =
   | { kind: "weapon"; weapon: WeaponId; mag: number; scope?: ScopeId | null }
   | { kind: "scope"; scope: ScopeId }
   | { kind: "ammo"; ammo: AmmoType; amount: number }
-  | { kind: "medkit" };
+  | { kind: "medkit" }
+  /** `dur`: durability left, for armour someone dropped (fresh when missing). */
+  | { kind: "armor"; slot: GearSlot; level: GearLevel; dur?: number }
+  | { kind: "grenade"; count: number };
 
 export interface LootEntity {
   /** "L<n>" for map loot (same on every client), "d<n>" for drops the server numbers. */
@@ -23,6 +27,8 @@ export function lootLabel(item: LootItem) {
   if (item.kind === "weapon") return WEAPONS[item.weapon].name;
   if (item.kind === "ammo") return `${item.ammo} ×${item.amount}`;
   if (item.kind === "scope") return SCOPES[item.scope].name;
+  if (item.kind === "armor") return gearName(item.slot, item.level);
+  if (item.kind === "grenade") return item.count > 1 ? `Frag Grenade ×${item.count}` : "Frag Grenade";
   return "Med Kit";
 }
 
@@ -53,11 +59,18 @@ export class Loot {
       } else if (roll < 0.52) {
         const scope = pick(rng, ["reddot", "reddot", "2x", "2x", "4x", "4x", "6x"] as ScopeId[]);
         this.spawn({ kind: "scope", scope }, pos);
-      } else if (roll < 0.82) {
+      } else if (roll < 0.74) {
         const a = pick(rng, ["5.56mm", "5.56mm", "7.62mm", "9mm"] as AmmoType[]);
         this.spawn({ kind: "ammo", ammo: a, amount: AMMO_PICKUP[a] }, pos);
-      } else {
+      } else if (roll < 0.85) {
         this.spawn({ kind: "medkit" }, pos);
+      } else if (roll < 0.95) {
+        // Armour: mostly level 1, rarely level 3.
+        const lv = rng();
+        const level: GearLevel = lv < 0.58 ? 1 : lv < 0.9 ? 2 : 3;
+        this.spawn({ kind: "armor", slot: rng() < 0.5 ? "vest" : "helmet", level }, pos);
+      } else {
+        this.spawn({ kind: "grenade", count: 1 }, pos);
       }
     }
   }
@@ -79,6 +92,14 @@ export class Loot {
       object.add(model.object);
     } else if (item.kind === "ammo") {
       object = this.assets.instance("ammoBox", 0.32);
+    } else if (item.kind === "armor") {
+      object = gearLootMesh(item.slot, item.level);
+    } else if (item.kind === "grenade") {
+      object = new THREE.Group();
+      const nade = this.assets.instance("grenade", 0.34);
+      nade.rotation.z = Math.PI / 2;
+      nade.position.y = 0.03;
+      object.add(nade);
     } else {
       object = this.assets.instance("medkit", 0.42);
     }

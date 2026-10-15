@@ -50,9 +50,10 @@ export class BotBrain {
   /** 0 (bad) .. 1 (sharp) */
   readonly skill: number;
 
-  constructor(readonly me: Combatant, seed: number) {
+  /** `difficulty` 0 (rookie lobby) .. 1 (elite): sharper aim, faster reactions, keener eyes. */
+  constructor(readonly me: Combatant, seed: number, private difficulty = 0.35) {
     this.rng = mulberry32(seed);
-    this.skill = range(this.rng, 0.25, 0.85);
+    this.skill = range(this.rng, 0.12 + difficulty * 0.35, 0.5 + difficulty * 0.45);
     this.thinkTimer = this.rng() * 0.3;
     this.lastPos.copy(me.position);
   }
@@ -233,7 +234,7 @@ export class BotBrain {
       let pick: Combatant | null =
         attacker && !attacker.isBot && attacker.alive && w.now - me.lastDamageTime < 4 ? attacker : null;
       if (!pick) {
-        const notice = range > 400 ? BOT_NOTICE_RANGE_SNIPER : BOT_NOTICE_RANGE;
+        const notice = (range > 400 ? BOT_NOTICE_RANGE_SNIPER : BOT_NOTICE_RANGE) * (0.8 + this.difficulty * 0.35);
         let bestD = Infinity;
         for (const c of w.combatants) {
           if (c.isBot || !c.alive || (w.hunters.get(c) ?? 0) >= MAX_HUNTERS) continue;

@@ -13,6 +13,7 @@ interface TicketClaims {
   userId?: string;
   name?: string;
   outfit?: string;
+  level?: number;
 }
 
 /**
@@ -65,6 +66,7 @@ export function attachMatchServer(server: http.Server, events: MatchEvents) {
       userId,
       name: String(claims.name ?? "Player").slice(0, 24),
       outfit: String(claims.outfit ?? "classic").slice(0, 16),
+      level: Math.max(1, Math.min(200, Number(claims.level) || 1)),
       match: null,
       send: (msg) => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -86,6 +88,14 @@ export function attachMatchServer(server: http.Server, events: MatchEvents) {
       if (!msg || typeof msg !== "object") return;
       if (msg.t === "queue") matchmaker.queue(peer);
       else if (msg.t === "cancel") matchmaker.cancel(peer);
+      else if (msg.t === "party-create") matchmaker.parties.create(peer);
+      else if (msg.t === "party-join") {
+        const error = matchmaker.parties.join(peer, String(msg.code ?? "").slice(0, 8));
+        if (error) peer.send({ t: "party-error", error });
+      } else if (msg.t === "party-leave") {
+        matchmaker.cancel(peer);
+        matchmaker.parties.leave(peer);
+      }
       else if (msg.t === "leave") peer.match?.leave(peer);
       else peer.match?.handle(peer, msg);
     });

@@ -1,8 +1,8 @@
 import type RAPIER_T from "@dimforge/rapier3d-compat";
 import { BOT_GROUP, RAPIER, createWorld, heightAt, openPoints, sites } from "./World";
 import {
-  BOT_HEARING_RANGE, BOT_NOTICE_RANGE, BOT_NOTICE_RANGE_SNIPER, EYE_HEIGHT, MAX_HUNTERS, NOTICE_STANCE, STANCE_HEIGHT, WEAPONS,
-  mulberry32, type ServerZone, type WeaponId,
+  ARMOR, BOT_HEARING_RANGE, BOT_NOTICE_RANGE, BOT_NOTICE_RANGE_SNIPER, EYE_HEIGHT, MAX_HUNTERS, NOTICE_STANCE, STANCE_HEIGHT, WEAPONS,
+  mulberry32, type Gear, type ServerZone, type WeaponId,
 } from "./rules";
 
 /** A soldier the bots can see and shoot (a human, as the match knows them). */
@@ -86,6 +86,8 @@ interface Bot {
   lastZ: number;
   lastHitBy: string | null;
   lastHitAt: number;
+  /** Bots wear armour too (more of it in tougher lobbies). */
+  gear: Gear;
 }
 
 /**
@@ -98,7 +100,11 @@ export class BotSim {
   private bots = new Map<string, Bot>();
   private now = 0;
 
-  constructor(private host: BotHost, seed: number, ids: string[]) {
+  /**
+   * `difficulty` 0 (new players) .. 1 (veterans): bots aim better, react
+   * faster, notice you from further away and wear more armour.
+   */
+  constructor(private host: BotHost, seed: number, ids: string[], private difficulty = 0.35) {
     this.world = createWorld();
     this.ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 });
     const rng = mulberry32(seed ^ 0xb075);
@@ -132,8 +138,18 @@ export class BotSim {
     controller.setMaxSlopeClimbAngle((52 * Math.PI) / 180);
     controller.setMinSlopeSlideAngle((40 * Math.PI) / 180);
     const rng = mulberry32(seed);
+    const d = this.difficulty;
+    const gear: Gear = { vest: 0, vestDur: 0, helmet: 0, helmetDur: 0 };
+    if (rng() < 0.15 + d * 0.55) {
+      gear.vest = rng() < d * 0.6 ? 2 : 1;
+      gear.vestDur = ARMOR.vest.durability[gear.vest];
+    }
+    if (rng() < 0.1 + d * 0.5) {
+      gear.helmet = rng() < d * 0.5 ? 2 : 1;
+      gear.helmetDur = ARMOR.helmet.durability[gear.helmet];
+    }
     this.bots.set(id, {
-      id, alive: true, rng, skill: 0.25 + rng() * 0.6, body, collider, controller,
+      id, alive: true, rng, skill: 0.12 + d * 0.35 + rng() * (0.38 + d * 0.1), body, collider, controller, gear,
       x, y, z, vx: 0, vy: 0, vz: 0, yaw: rng() * Math.PI * 2, pitch: 0, stance: "s",
       sprint: false, aim: false, grounded: true, weapon, scope, mag: WEAPONS[weapon].mag,
       reloadLeft: 0, fireCooldown: 0, state: "roam", wx: x, wz: z, target: null,
@@ -154,7 +170,29 @@ export class BotSim {
     if (!b) return null;
     const r = (n: number) => Math.round(n * 100) / 100;
     const flags = (b.sprint ? 1 : 0) | (b.aim ? 2 : 0) | (b.grounded ? 4 : 0) | (b.reloadLeft > 0 ? 8 : 0);
-    return [r(b.x), r(b.y), r(b.z), r(b.yaw), r(b.pitch), b.stance, flags, r(b.vx), r(b.vz), b.weapon, b.scope];
+    return [r(b.x), r(b.y), r(b.z), r(b.yaw), r(b.pitch), b.stance, flags, r(b.vx), r(b.vz), b.weapon, b.scope, b.gear.vest + b.gear.helmet * 4];
+  }
+
+  /** A bot's armour (the match wears it down when the bot is hit). */
+  gear(id: string): Gear | null {
+    return this.bots.get(id)?.gear ?? null;
+  }
+
+  /** Nothing solid between two points (grenade blasts). */
+  lineOfSight(a: V3, b: V3) {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const d = Math.hypot(dx, dy, dz);
+    if (d < 0.5) return true;
+    return this.castWorld(a, { x: dx / d, y: dy / d, z: dz / d }, d - 0.3) === null;
+  }
+
+  /** Something worth a look (an airdrop): roaming bots nearby may head over. */
+  addPoi(x: number, z: number) {
+    for (const b of this.bots.values()) {
+      if (!b.alive || b.state !== "roam" || Math.hypot(b.x - x, b.z - z) > 220 || b.rng() > 0.45) continue;
+      b.wx = x + (b.rng() - 0.5) * 6;
+      b.wz = z + (b.rng() - 0.5) * 6;
+    }
   }
 
   loadout(id: string) {
@@ -277,7 +315,7 @@ export class BotSim {
       const attacker = b.lastHitBy && this.now - b.lastHitAt < 4 ? humans.find((h) => h.id === b.lastHitBy && h.alive && h.pos) : undefined;
       let pick: Target | undefined = attacker;
       if (!pick) {
-        const notice = range > 400 ? BOT_NOTICE_RANGE_SNIPER : BOT_NOTICE_RANGE;
+        const notice = (range > 400 ? BOT_NOTICE_RANGE_SNIPER : BOT_NOTICE_RANGE) * (0.8 + this.difficulty * 0.35);
         let bestD = Infinity;
         for (const h of humans) {
           if (!h.alive || !h.pos || h.shielded || (hunters.get(h.id) ?? 0) >= MAX_HUNTERS) continue;

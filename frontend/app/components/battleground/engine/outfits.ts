@@ -8,6 +8,9 @@ export const OUTFITS = [
   { id: "crimson", name: "Crimson", tint: "#c0625a" },
   { id: "arctic", name: "Arctic", tint: "#dde9f4" },
   { id: "royal", name: "Royal Blue", tint: "#7d8fd6" },
+  // Earned with the login streak (3 and 7 days in a row).
+  { id: "ember", name: "Ember", tint: "#e0773a" },
+  { id: "gold", name: "Gold Elite", tint: "#e8c25a" },
 ] as const;
 
 export type OutfitId = (typeof OUTFITS)[number]["id"];

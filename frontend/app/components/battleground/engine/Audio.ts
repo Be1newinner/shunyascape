@@ -203,6 +203,113 @@ export class GameAudio {
     if (this.ctx) this.click(160, this.ctx.currentTime, 0.4, 0.12);
   }
 
+  /** Grenade burst: a deep thump with a crack on top, softer and later far away. */
+  explosion(distance = 0, pan = 0) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime + Math.min(distance / 343, 1.2);
+    const near = 1 / (1 + distance / 22);
+    const out = ctx.createStereoPanner();
+    out.pan.value = Math.max(-1, Math.min(1, pan));
+    out.connect(this.master);
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(distance > 60 ? 600 : 2400, t);
+    lp.frequency.exponentialRampToValueAtTime(120, t + 0.9);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(1.6 * near, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+    src.connect(lp).connect(g).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 1.5);
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.6);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(1.1 * near, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    o.connect(og).connect(out);
+    o.start(t);
+    o.stop(t + 0.8);
+  }
+
+  /** Pin pulled and thrown. */
+  grenadeThrow() {
+    if (!this.ctx) return;
+    this.click(2600, this.ctx.currentTime, 0.12, 0.03);
+    this.click(700, this.ctx.currentTime + 0.12, 0.1, 0.05);
+  }
+
+  /** Rising sting for a kill streak (`n` = kills in the streak). */
+  streak(n: number) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const base = 520 * Math.pow(1.12, Math.min(n, 6));
+    [0, 4, 7, 12].slice(0, Math.min(4, n + 1)).forEach((semi, i) => {
+      const o = ctx.createOscillator();
+      o.type = "triangle";
+      o.frequency.value = base * Math.pow(2, semi / 12);
+      const g = ctx.createGain();
+      const t = ctx.currentTime + i * 0.07;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.13, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 0.4);
+    });
+  }
+
+  /** Airdrop / announcement chime. */
+  chime() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    [880, 1320].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      o.type = "sine";
+      o.frequency.value = f;
+      const g = ctx.createGain();
+      const t = ctx.currentTime + i * 0.16;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 0.7);
+    });
+  }
+
+  private drone: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  /** Engine drone of the transport plane (0 = off). */
+  setDrone(level: number) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (!this.drone && level > 0) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 220;
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      src.connect(lp).connect(gain).connect(this.master);
+      src.start();
+      this.drone = { src, gain };
+    }
+    if (!this.drone) return;
+    this.drone.gain.gain.setTargetAtTime(level * 0.5, ctx.currentTime, 0.3);
+    if (level <= 0) {
+      const d = this.drone;
+      this.drone = null;
+      setTimeout(() => d.src.stop(), 1500);
+    }
+  }
+
   setVolume(v: number) {
     this.volume = v;
     if (this.ctx) this.master.gain.value = v;
@@ -210,6 +317,7 @@ export class GameAudio {
 
   dispose() {
     this.wind?.stop();
+    this.drone?.src.stop();
     void this.ctx?.close();
     this.ctx = null;
   }
